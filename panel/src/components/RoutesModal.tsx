@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import Tooltip from '@/components/ui/Tooltip';
 import CopyText from '@/components/ui/CopyText';
 import {
     getServerRoutes, createServerRouteWithStatus, deleteServerRoute, checkDomainAvailability, getServerBedrock,
@@ -12,6 +13,7 @@ import ModalPanel from '@/components/ui/ModalPanel';
 import ServerProxyMode from '@/components/ServerProxyMode';
 import VoiceChatSwitch from '@/components/VoiceChatSwitch';
 import Segmented from '@/components/ui/Segmented';
+import Select from '@/components/ui/Select';
 import { BedrockSummary, RouteEdition } from '@/components/BedrockRoutes';
 import { bedrockTakenElsewhere, canAddBedrock, editionFlags, editionOptions, saveEdition, showBedrock, type Edition } from '@/lib/bedrock';
 import { useAppData } from '@/lib/AppDataContext';
@@ -263,12 +265,12 @@ export default function RoutesModal({ serverId, serverName, server, onClose, onR
                 <div className="modal-header flex items-center justify-between">
                     <div>
                         <h3 className="modal-title flex items-center gap-2">
-                            <Globe size={16} className="text-(--accent-light)" />
+                            <Globe size={16} className="text-(--base-06)" aria-hidden="true" />
                             Routes &amp; Domains
                         </h3>
                         <p className="text-xs text-(--base-07) mt-1">{serverName}</p>
                     </div>
-                    <button onClick={onClose} className="p-1 text-(--base-06) hover:text-(--base-09) transition-colors">
+                    <button onClick={onClose} className="app-icon-btn size-8!" aria-label="Close">
                         <X size={18} />
                     </button>
                 </div>
@@ -277,7 +279,7 @@ export default function RoutesModal({ serverId, serverName, server, onClose, onR
                     <p className="text-sm text-(--base-07)">The addresses players use to join this server. Each one reaches it through the gateway.</p>
 
                     {showProxySwitch && (
-                        <div className="bg-(--base-02) rounded-md border border-(--base-03) px-3 py-2.5">
+                        <div className="bg-(--base-02) rounded-lg px-4 py-3">
                             {/* The write routes refuse a member without network.write; the
                                 control shows the answer as its error. */}
                             <ServerProxyMode
@@ -295,19 +297,19 @@ export default function RoutesModal({ serverId, serverName, server, onClose, onR
                     {bedrockShown && bedrock && <BedrockSummary bedrock={bedrock} />}
 
                     {routesLoading ? (
-                        <p className="text-sm text-(--base-07)">Loading routes…</p>
+                        <p className="text-sm text-(--base-07)">Loading routes...</p>
                     ) : routes.length > 0 ? (
                         <div className="space-y-2">
                             {routes.map(route => (
-                                <div key={route.domain} className="flex items-center justify-between bg-(--base-02) rounded-md px-3 py-2 border border-(--base-03)">
+                                <div key={route.domain} className="app-row justify-between bg-(--base-02)">
                                     <div className="flex items-center gap-2.5">
-                                        <Globe size={12} className="text-(--accent-light) shrink-0" />
+                                        <Globe size={14} className="text-(--base-06) shrink-0" aria-hidden="true" />
                                         <div>
                                             <CopyText
                                                 value={route.domain}
                                                 className="text-sm font-medium text-(--base-09) max-w-full"
                                             />
-                                            <div className="mono-label">
+                                            <div className="srv-label">
                                                 Port {route.target_port}
                                                 {route.link_name && <> &middot; Link: {route.link_name}</>}
                                             </div>
@@ -316,13 +318,15 @@ export default function RoutesModal({ serverId, serverName, server, onClose, onR
                                             )}
                                         </div>
                                     </div>
-                                    <button
-                                        onClick={() => setDeleteTarget(route)}
-                                        className="text-(--error-light) hover:bg-(--error-ghost) rounded transition-colors p-1"
-                                        title="Delete route"
-                                    >
-                                        <Trash2 size={14} />
-                                    </button>
+                                    <Tooltip content="Delete route">
+                                        <button
+                                            onClick={() => setDeleteTarget(route)}
+                                            className="app-icon-btn size-8! text-(--error-light)!"
+                                            aria-label={`Delete route ${route.domain}`}
+                                        >
+                                            <Trash2 size={14} />
+                                        </button>
+                                    </Tooltip>
                                 </div>
                             ))}
                         </div>
@@ -330,21 +334,21 @@ export default function RoutesModal({ serverId, serverName, server, onClose, onR
                         <p className="alert alert-info text-xs">No routes configured yet. Add your first one below.</p>
                     )}
 
-                    <div className="bg-(--base-03) rounded-md border border-(--base-04) p-3 space-y-2">
-                        <div className="mono-label">Add Route</div>
+                    <div className="bg-(--base-03) rounded-lg p-4 space-y-2">
+                        <div className="srv-label">Add Route</div>
                         <RouteDomainPicker
                             value={newRoute}
                             onChange={next => { setNewRoute(next); setRouteError(''); setRouteNotice(''); }}
                             error={routeError}
                             portChildren={
                                 <div className="flex gap-2">
-                                    <select
-                                        value={newRoute.targetPort}
-                                        onChange={e => setNewRoute(r => ({ ...r, targetPort: Number(e.target.value) }))}
-                                        className="input-field text-sm w-32"
-                                    >
-                                        <option value={25565}>MC (25565)</option>
-                                    </select>
+                                    <Select
+                                        ariaLabel="Target port"
+                                        className="w-36"
+                                        value={String(newRoute.targetPort)}
+                                        onChange={v => setNewRoute(r => ({ ...r, targetPort: Number(v) }))}
+                                        options={[{ value: '25565', label: 'MC (25565)' }]}
+                                    />
                                     <button
                                         onClick={handleCreateRoute}
                                         disabled={routeCreating || !hasRouteInput || availability.status === 'taken' || availability.status === 'invalid'}

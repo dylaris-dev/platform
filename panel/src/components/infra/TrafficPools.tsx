@@ -229,7 +229,7 @@ export default function TrafficPools() {
         <div className="space-y-4">
             <div className="grid gap-4 lg:grid-cols-2">
                 {boxes.map(box => (
-                    <section key={box.kind} className="card p-5">
+                    <section key={box.kind} className="srv-surface p-5">
                         <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
                             <div className="flex items-start gap-2.5 min-w-0">
                                 <Gauge size={16} className="text-(--base-06) mt-0.5 shrink-0" />
@@ -246,7 +246,7 @@ export default function TrafficPools() {
                 ))}
             </div>
 
-            <div className="card p-5 space-y-3">
+            <div className="srv-surface p-5 space-y-3">
                 {traffic.warn !== undefined && traffic.warn >= 80 && (
                     <span
                         className={`flex items-center gap-1.5 text-xs ${

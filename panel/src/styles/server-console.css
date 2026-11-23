@@ -1,0 +1,10 @@
+/* Console tab: the log sits one step below the card, the input one step
+   below that, so no borders are needed. */
+.srv-console-log { background: var(--base-01); }
+.srv-console-input {
+  transition: box-shadow 0.15s ease-out;
+}
+.srv-console-input:focus-within { box-shadow: var(--focus-ring); }
+@media (prefers-reduced-motion: reduce) {
+  .srv-console-input { transition: none; }
+}

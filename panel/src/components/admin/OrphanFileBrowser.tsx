@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback } from 'react';
+import Tooltip from '@/components/ui/Tooltip';
 import { Folder, FileText, ChevronRight, ArrowLeft } from 'lucide-react';
 import { listOrphanFiles, getOrphanFileContent } from '@/lib/api/orphans';
 import { compareNames } from '@dylaris/ui-filebrowser/src/utils';
@@ -114,13 +115,14 @@ export function OrphanFileBrowser({ nodeId, uuid }: OrphanFileBrowserProps) {
       <div className="flex flex-col h-full">
         {/* Viewer header */}
         <div className="flex items-center gap-2 px-1 pb-3 border-b border-(--base-03)">
-          <button
-            onClick={closeFile}
-            className="p-1 rounded hover:bg-(--base-03) text-(--base-06) shrink-0"
-            title="Back to directory list"
-          >
-            <ArrowLeft size={14} />
-          </button>
+          <Tooltip content="Back to directory list">
+              <button aria-label="Back to directory list"
+                onClick={closeFile}
+                className="p-1 rounded hover:bg-(--base-03) text-(--base-06) shrink-0"
+              >
+                <ArrowLeft size={14} />
+              </button>
+          </Tooltip>
           <FileText size={13} className="text-(--accent-light) shrink-0" />
           <span className="font-mono text-[11px] text-(--base-06) break-all leading-tight">
             {openFilePath}

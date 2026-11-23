@@ -1,5 +1,6 @@
 "use client";
 
+import { Checkbox } from '@ui-sdk/react/checkbox';
 import { useState } from 'react';
 import { ExternalLink, FileText } from 'lucide-react';
 import ModalPanel from '@/components/ui/ModalPanel';
@@ -31,8 +32,8 @@ export default function MinecraftEulaDialog({ onAccept, onCancel }: { onAccept: 
                 >
                     Read the Minecraft EULA <ExternalLink size={13} aria-hidden="true" />
                 </a>
-                <label className="flex items-start gap-3 mt-4 rounded-md border border-(--base-03) p-3 cursor-pointer hover:border-(--accent)/40 transition-colors">
-                    <input type="checkbox" className="checkbox mt-0.5" checked={agreed} onChange={e => setAgreed(e.target.checked)} />
+                <label className="flex items-start gap-3 mt-4 rounded-md bg-(--base-03) p-3 cursor-pointer hover:bg-(--base-04) transition-colors">
+                    <Checkbox className="checkbox mt-0.5" checked={agreed} onCheckedChange={c => setAgreed(c === true)} />
                     <span className="text-sm text-(--base-09)">
                         I have read and accept the Minecraft End User License Agreement.
                     </span>

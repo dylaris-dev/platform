@@ -1,12 +1,14 @@
 'use client';
 
+import { SegmentedControl, SegmentedControlItem } from '@ui-sdk/react/segmented-control';
+
 /**
  * A small inline choice between a handful of mutually exclusive options.
  *
  * Not Tabs: Tabs is page-level sub-navigation and swaps what is on screen.
  * This is a form control that changes a parameter of what is already on screen,
- * so it sits next to a label like a select does and carries aria-pressed rather
- * than a tablist role.
+ * so it sits next to a label like a select does and is a radio group (the UI SDK
+ * Segmented Control) rather than a tablist.
  */
 export interface SegmentedOption<Id extends string = string> {
     id: Id;
@@ -30,31 +32,23 @@ export default function Segmented<Id extends string = string>({
     className?: string;
 }) {
     return (
-        <div
-            role="group"
+        <SegmentedControl
             aria-label={ariaLabel}
+            value={value}
+            onValueChange={v => { if (v != null) onChange(v as Id); }}
             className={`inline-flex items-center gap-1 p-1 rounded-md bg-(--base-02) border border-(--base-04) ${className}`}
         >
-            {options.map(({ id, label, hint, disabled }) => {
-                const active = id === value;
-                return (
-                    <button
-                        key={id}
-                        type="button"
-                        title={hint}
-                        disabled={disabled}
-                        aria-pressed={active}
-                        onClick={() => onChange(id)}
-                        className={`rounded px-2.5 py-1 text-xs transition-colors focus-visible:outline-none focus-visible:[box-shadow:var(--focus-ring)] disabled:opacity-40 disabled:cursor-not-allowed ${
-                            active
-                                ? 'bg-(--accent) text-(--base-00)'
-                                : 'text-(--base-07) hover:enabled:bg-(--base-03) hover:enabled:text-(--base-09)'
-                        }`}
-                    >
-                        {label}
-                    </button>
-                );
-            })}
-        </div>
+            {options.map(({ id, label, hint, disabled }) => (
+                <SegmentedControlItem
+                    key={id}
+                    value={id}
+                    title={hint}
+                    disabled={disabled}
+                    className="cursor-pointer rounded px-2.5 py-1 text-xs transition-colors focus-visible:outline-none focus-visible:[box-shadow:var(--focus-ring)] data-disabled:opacity-40 data-disabled:cursor-not-allowed data-checked:bg-(--accent) data-checked:text-(--base-00) data-unchecked:text-(--base-07) data-unchecked:not-data-disabled:hover:bg-(--base-03) data-unchecked:not-data-disabled:hover:text-(--base-09)"
+                >
+                    {label}
+                </SegmentedControlItem>
+            ))}
+        </SegmentedControl>
     );
 }

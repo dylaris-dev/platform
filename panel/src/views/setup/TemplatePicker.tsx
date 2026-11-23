@@ -1,5 +1,6 @@
 "use client";
 
+import '@/styles/server-setup.css';
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { AlertTriangle, Check, LayoutTemplate } from 'lucide-react';
@@ -47,14 +48,14 @@ export default function TemplatePicker({ selection, onSelect, serverType }: {
     if (selection) {
         return (
             <div className="min-h-[220px]">
-                <div className="card p-3 border-(--accent) bg-(--accent-ghost)/30 flex items-start gap-3">
+                <div className="srv-setup-selected">
                     <Check size={16} className="text-(--accent-light) shrink-0 mt-0.5" />
                     <div className="min-w-0 flex-1">
                         <div className="text-sm font-medium text-(--base-09) break-all">{templateSourceLabel(selection.name)}</div>
-                        <div className="text-xs text-(--base-06) font-mono mt-0.5">{versionLine(selection)}</div>
+                        <div className="srv-num text-xs text-(--base-06) mt-0.5">{versionLine(selection)}</div>
                         <div className="text-[11px] text-(--base-06) mt-1">The template&apos;s files go into the server folder and its software is installed over them.</div>
                     </div>
-                    <button type="button" onClick={() => onSelect(null)} className="text-xs text-(--base-06) hover:text-(--base-09)">Change</button>
+                    <button type="button" onClick={() => onSelect(null)} className="btn btn-ghost btn-sm">Change</button>
                 </div>
             </div>
         );
@@ -71,7 +72,7 @@ export default function TemplatePicker({ selection, onSelect, serverType }: {
             ) : list === null ? (
                 <div className="space-y-1.5" aria-busy="true">
                     {Array.from({ length: 3 }).map((_, i) => (
-                        <div key={i} className="card p-2 flex items-center gap-3">
+                        <div key={i} className="srv-setup-option">
                             <Skeleton className="w-8 h-8 rounded-md shrink-0" />
                             <div className="min-w-0 flex-1 space-y-1.5">
                                 <SkeletonText width="w-1/3" className="h-3" />
@@ -95,14 +96,14 @@ export default function TemplatePicker({ selection, onSelect, serverType }: {
                                 type="button"
                                 disabled={!installable}
                                 onClick={() => onSelect({ id: t.id, name: t.name, software: t.software, mcVersion: t.mcVersion, softwareVersion: t.softwareVersion })}
-                                className="w-full card p-2 flex items-center gap-3 text-left hover:border-(--accent-border) focus-visible:border-(--accent-border) disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:border-(--base-04)"
+                                className="srv-setup-option"
                             >
-                                <div className="w-8 h-8 rounded-md bg-(--base-03) flex items-center justify-center shrink-0">
+                                <div className="w-8 h-8 rounded-md bg-(--base-04) flex items-center justify-center shrink-0">
                                     <LayoutTemplate size={12} className="text-(--base-05)" />
                                 </div>
                                 <div className="min-w-0 flex-1">
                                     <div className="text-sm font-medium text-(--base-09) truncate">{t.name}</div>
-                                    <div className="text-[10px] font-mono text-(--base-06) truncate">
+                                    <div className="srv-num text-xs text-(--base-06) truncate">
                                         {installable ? versionLine(t) : 'No software set. Set it on the template first.'}
                                         {t.visibility !== 'personal' ? ` · ${t.visibility}` : t.shareLevel ? ` · by ${t.ownerName || 'unknown'}` : ''}
                                     </div>

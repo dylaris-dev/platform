@@ -1,5 +1,6 @@
 "use client";
 
+import Switch from '@/components/ui/Switch';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Terminal, Copy, RefreshCw, EyeOff, AlertTriangle, Play, RotateCcw } from 'lucide-react';
 import { getRconConfig, setRconConfig, execRcon, friendlyRconError } from '@/lib/api/rcon';
@@ -8,6 +9,7 @@ import { toast } from '@/components/ui/Toast';
 import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
 import SettingsCard from '@/components/settings/SettingsCard';
 import { SwitchRow } from '@/components/ui/Switch';
+import Callout from '@/components/server/Callout';
 
 // RCON enable/password card. Lives as the RCON sub-section of the Players
 // tab. Generates a 24-byte hex password on first enable, supports manual
@@ -271,17 +273,7 @@ export default function RconConfigCard({ serverId, onEnabledChange }: RconConfig
                         Applies within a few seconds, no restart.
                     </p>
                 </div>
-                <button
-                    type="button"
-                    role="switch"
-                    aria-checked={hideLogNoise}
-                    aria-label="Hide RCON connection lines from the console"
-                    onClick={() => handleFilterToggle(!hideLogNoise)}
-                    disabled={!loaded || savingFilter}
-                    className={`toggle-track shrink-0 mt-0.5 disabled:opacity-40 disabled:cursor-not-allowed ${hideLogNoise ? 'toggle-track-on' : 'toggle-track-off'}`}
-                >
-                    <span className={`toggle-knob ${hideLogNoise ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
-                </button>
+                <Switch checked={hideLogNoise} onChange={handleFilterToggle} ariaLabel="Hide RCON connection lines from the console" disabled={!loaded || savingFilter} className="shrink-0 mt-0.5" />
             </div>
 
             <div className="border-t border-(--base-03) pt-3">
@@ -291,16 +283,18 @@ export default function RconConfigCard({ serverId, onEnabledChange }: RconConfig
             </div>
 
             {needsRestart && (
-                <div className="flex items-center justify-between gap-3 px-3 py-2 rounded-md bg-(--warning-ghost) border border-(--warning)/30 text-(--base-08) text-xs">
-                    <span className="flex items-center gap-1.5">
-                        <AlertTriangle size={13} className="shrink-0 text-(--warning-light)" />
-                        RCON enabled - restart the server to apply.
-                    </span>
-                    <button onClick={handleRestart} className="btn btn-secondary btn-sm shrink-0" disabled={restarting}>
-                        <RotateCcw size={12} className={restarting ? 'animate-spin' : ''} />
-                        {restarting ? 'Restarting…' : 'Restart now'}
-                    </button>
-                </div>
+                <Callout
+                    tone="warning"
+                    icon={<AlertTriangle size={16} />}
+                    actions={
+                        <button onClick={handleRestart} className="btn btn-secondary btn-sm" disabled={restarting}>
+                            <RotateCcw size={14} className={restarting ? 'animate-spin motion-reduce:animate-none' : ''} />
+                            {restarting ? 'Restarting…' : 'Restart now'}
+                        </button>
+                    }
+                >
+                    RCON enabled. Restart the server to apply.
+                </Callout>
             )}
 
             {/* Test command — quick sanity check from inside the panel */}

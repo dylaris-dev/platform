@@ -149,7 +149,7 @@ function ResetPasswordInner() {
                         </p>
                         {questions.map((q, idx) => (
                             <div key={idx} className="flex flex-col gap-[5px]">
-                                <label className="input-label">{q}</label>
+                                <label className="srv-label">{q}</label>
                                 <input
                                     type="text"
                                     value={answers[idx] || ''}
@@ -168,7 +168,7 @@ function ResetPasswordInner() {
                     </div>
                 )}
                 <div className="flex flex-col gap-[5px]">
-                    <label className="input-label">New password</label>
+                    <label className="srv-label">New password</label>
                     <input
                         required
                         type="password"
@@ -183,7 +183,7 @@ function ResetPasswordInner() {
                     <p className="text-xs text-(--base-06)">At least {minLength} characters.</p>
                 </div>
                 <div className="flex flex-col gap-[5px]">
-                    <label className="input-label">Confirm new password</label>
+                    <label className="srv-label">Confirm new password</label>
                     <input
                         required
                         type="password"
@@ -209,8 +209,8 @@ function ResetPasswordInner() {
 
 function Shell({ children }: { children: React.ReactNode }) {
     return (
-        <div className="min-h-screen flex items-center justify-center p-4 bg-(--background)">
-            <div className="card w-full max-w-md p-8 text-center space-y-4">{children}</div>
+        <div className="app-auth">
+            <div className="app-auth-card text-center space-y-4">{children}</div>
         </div>
     );
 }
@@ -218,8 +218,8 @@ function Shell({ children }: { children: React.ReactNode }) {
 export default function ResetPasswordPage() {
     return (
         <Suspense fallback={
-            <div className="min-h-screen flex items-center justify-center p-4 bg-(--background)">
-                <div className="card w-full max-w-md p-8 space-y-4">
+            <div className="app-auth">
+                <div className="app-auth-card space-y-4">
                     <SkeletonHeader />
                     <SkeletonFormRow />
                     <SkeletonFormRow />

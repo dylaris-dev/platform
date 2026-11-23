@@ -27,7 +27,8 @@ export function UnlinkedContentWarning({
     const noun = context === 'pack' ? 'content' : 'jars';
     return (
         <div
-            className={`rounded-md border border-(--warning-light)/30 bg-(--warning-ghost) px-4 py-3 flex items-start gap-3 ${className}`}
+            className={`srv-callout items-start gap-3 ${className}`}
+            data-tone="warning"
             role="note"
         >
             <TriangleAlert size={16} className="text-(--warning-light) mt-0.5 shrink-0" />

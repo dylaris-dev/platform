@@ -3,7 +3,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
     AlertTriangle, Archive, Check, ChevronDown, ChevronRight, Download,
-    KeyRound, Play, Plus, Trash2,
+    KeyRound, MoreHorizontal, Pencil, Play, Plus, Trash2,
 } from 'lucide-react';
 import { listBackupStorages, type BackupStorage } from '@/lib/api';
 import {
@@ -26,6 +26,14 @@ import { scheduleWarning } from '@/lib/platformBackupSchedule';
 import BackupScheduleEditor from '@/components/BackupScheduleEditor';
 import { describeSchedule, editorZone, parseSchedule, usesTimeZone } from '@/lib/backupSchedule';
 import { fmtDateTime } from '@/lib/time';
+import Select from '@/components/ui/Select';
+import Checkbox from '@/components/ui/Checkbox';
+import Segmented from '@/components/ui/Segmented';
+import Menu from '@/components/ui/Menu';
+import EmptyState from '@/components/ui/EmptyState';
+import { RowList, Row } from '@/components/ui/RowList';
+import Callout from '@/components/server/Callout';
+import '@/styles/settings-storage.css';
 
 const MIN_PASSPHRASE = 12;
 
@@ -216,65 +224,97 @@ export default function PlatformBackupsTab() {
                 icon={Archive}
             >
                 {!passphraseSet && (
-                    <div className="alert alert-warning text-xs mb-3">
-                        <AlertTriangle size={13} className="text-(--warning-light) shrink-0 mt-0.5" />
-                        <p>Set a backup passphrase first. A run without one is refused, because a bundle nobody chose a passphrase for is one anybody can open.</p>
+                    <div className="mb-3">
+                        <Callout tone="warning" icon={<AlertTriangle size={14} />} role="alert">
+                            Set a backup passphrase first. A run without one is refused, because a bundle nobody chose a passphrase for is one anybody can open.
+                        </Callout>
                     </div>
                 )}
 
                 {jobs.length === 0 && !draft && (
-                    <p className="text-sm text-(--base-07) mb-3">No platform backup is configured yet.</p>
+                    <EmptyState
+                        bare
+                        icon={<Archive size={20} />}
+                        title="No platform backup is configured yet"
+                        description="Create a job to back up the database, Core storage and selected servers on a schedule."
+                    />
                 )}
 
-                <div className="space-y-2">
-                    {jobs.map(job => (
-                        <div key={job.id} className="border border-(--base-04) rounded-md bg-(--base-02)">
-                            <div className="flex items-center gap-3 p-3">
-                                <button
-                                    type="button"
-                                    onClick={() => toggleExpanded(job.id)}
-                                    aria-label={expanded === job.id ? 'Hide run history' : 'Show run history'}
-                                    className="text-(--base-06) hover:text-(--base-09) transition-colors"
-                                >
-                                    {expanded === job.id ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                                </button>
-                                <div className="flex-1 min-w-0">
-                                    <p className="text-sm text-(--base-09) truncate">
-                                        {job.name}
-                                        {!job.enabled && <span className="ml-2 text-xs text-(--base-06)">(disabled)</span>}
-                                    </p>
-                                    <p className="text-xs text-(--base-06) truncate">
-                                        {summarise(job.selection, targets)} &middot; {describeSchedule(job.schedule, job.timezone)} &middot; last run {formatWhen(job.lastRunAt)}
-                                        {job.enabled && job.schedule !== 'manual' && job.nextRunAt && <> &middot; next run {formatWhen(job.nextRunAt)}</>}
-                                    </p>
-                                    {scheduleWarning(job) && (
-                                        <p className="text-xs text-(--warning-light) flex items-center gap-1 mt-0.5">
-                                            <AlertTriangle size={12} className="shrink-0" /> {scheduleWarning(job)}
-                                        </p>
-                                    )}
-                                </div>
-                                <button type="button" onClick={() => runNow(job)} disabled={running || !passphraseSet}
-                                    className="btn btn-sm flex items-center gap-1.5">
-                                    <Play size={13} /> Run now
-                                </button>
-                                <button type="button" onClick={() => setDraft(draftFrom(job))} className="btn btn-sm">Edit</button>
-                                <button type="button" onClick={() => removeJob(job)}
-                                    aria-label={`Delete ${job.name}`}
-                                    className="text-(--base-06) hover:text-(--error-light) transition-colors">
-                                    <Trash2 size={15} />
-                                </button>
-                            </div>
-
-                            {expanded === job.id && (
-                                <RunHistory runs={runs[job.id]} />
-                            )}
+                {jobs.length > 0 && (
+                    <div className="-mx-1.5">
+                        <RowList label="Platform backup jobs">
+                            {jobs.map(job => (
+                                <Row
+                                    key={job.id}
+                                    leading={
+                                        <button
+                                            type="button"
+                                            onClick={() => toggleExpanded(job.id)}
+                                            aria-label={expanded === job.id ? 'Hide run history' : 'Show run history'}
+                                            aria-expanded={expanded === job.id}
+                                            className="app-icon-btn"
+                                        >
+                                            {expanded === job.id ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                                        </button>
+                                    }
+                                    title={
+                                        <>
+                                            {job.name}
+                                            {!job.enabled && <span className="ml-2 text-xs font-normal text-(--base-06)">(disabled)</span>}
+                                        </>
+                                    }
+                                    meta={
+                                        <>
+                                            {summarise(job.selection, targets)} &middot; {describeSchedule(job.schedule, job.timezone)} &middot; last run {formatWhen(job.lastRunAt)}
+                                            {job.enabled && job.schedule !== 'manual' && job.nextRunAt && <> &middot; next run {formatWhen(job.nextRunAt)}</>}
+                                        </>
+                                    }
+                                    actions={
+                                        <>
+                                            <button type="button" onClick={() => runNow(job)} disabled={running || !passphraseSet}
+                                                className="btn btn-secondary btn-sm flex items-center gap-1.5">
+                                                <Play size={13} /> Run now
+                                            </button>
+                                            <Menu
+                                                trigger={
+                                                    <button type="button" className="app-icon-btn" aria-label={`Actions for ${job.name}`}>
+                                                        <MoreHorizontal size={16} />
+                                                    </button>
+                                                }
+                                                items={[
+                                                    { label: 'Edit', icon: <Pencil size={14} />, onSelect: () => setDraft(draftFrom(job)) },
+                                                    { type: 'separator' },
+                                                    { label: 'Delete', icon: <Trash2 size={14} />, danger: true, onSelect: () => removeJob(job) },
+                                                ]}
+                                            />
+                                        </>
+                                    }
+                                />
+                            ))}
+                        </RowList>
+                        {/* Warnings and run history sit under the list: a list
+                            only holds rows, and history is open for one job at a time. */}
+                        <div className="set-sto-notes">
+                            {jobs.map(job => {
+                                const warning = scheduleWarning(job);
+                                if (!warning && expanded !== job.id) return null;
+                                return (
+                                    <div key={job.id} className="space-y-2">
+                                        <div className="srv-label">{job.name}</div>
+                                        {warning && (
+                                            <Callout tone="warning" icon={<AlertTriangle size={14} />}>{warning}</Callout>
+                                        )}
+                                        {expanded === job.id && <RunHistory runs={runs[job.id]} />}
+                                    </div>
+                                );
+                            })}
                         </div>
-                    ))}
-                </div>
+                    </div>
+                )}
 
                 {!draft && (
                     <button type="button" onClick={() => setDraft(emptyDraft())}
-                        className="btn btn-sm mt-3 flex items-center gap-1.5">
+                        className="btn btn-secondary btn-sm mt-3 flex items-center gap-1.5">
                         <Plus size={14} /> New backup job
                     </button>
                 )}
@@ -327,14 +367,13 @@ function PassphraseCard({ isSet, onChanged }: { isSet: boolean; onChanged: () =>
             description="Every platform bundle is encrypted with it, and nothing else can open one."
             icon={KeyRound}
         >
-            <div className="alert alert-warning text-xs mb-3">
-                <AlertTriangle size={13} className="text-(--warning-light) shrink-0 mt-0.5" />
-                <p>
+            <div className="mb-3">
+                <Callout tone="warning" icon={<AlertTriangle size={14} />}>
                     <strong>Write this down somewhere outside Dylaris.</strong> A bundle is restored on
                     machines that hold no copy of it - a fresh install, or a different instance - so
                     losing the passphrase loses every bundle taken under it. There is no recovery and
                     no reset: that is what makes a downloaded bundle safe to keep anywhere.
-                </p>
+                </Callout>
             </div>
 
             {isSet && !replacing ? (
@@ -342,18 +381,15 @@ function PassphraseCard({ isSet, onChanged }: { isSet: boolean; onChanged: () =>
                     <span className="flex items-center gap-1.5 text-sm text-(--base-08)">
                         <Check size={15} className="text-(--success-light)" /> A passphrase is set.
                     </span>
-                    <button type="button" onClick={() => setReplacing(true)} className="btn btn-sm ml-auto">Replace</button>
+                    <button type="button" onClick={() => setReplacing(true)} className="btn btn-secondary btn-sm ml-auto">Replace</button>
                 </div>
             ) : (
                 <div className="space-y-3">
                     {isSet && (
-                        <div className="alert alert-warning text-xs">
-                            <AlertTriangle size={13} className="text-(--warning-light) shrink-0 mt-0.5" />
-                            <p>
-                                Replacing it does not re-encrypt bundles already written. Those still
-                                need the old passphrase, so keep it as long as you keep them.
-                            </p>
-                        </div>
+                        <Callout tone="warning" icon={<AlertTriangle size={14} />}>
+                            Replacing it does not re-encrypt bundles already written. Those still
+                            need the old passphrase, so keep it as long as you keep them.
+                        </Callout>
                     )}
                     <div>
                         <label className="input-label mb-1 block" htmlFor="pb-pass">Passphrase</label>
@@ -378,7 +414,7 @@ function PassphraseCard({ isSet, onChanged }: { isSet: boolean; onChanged: () =>
                             {saving ? 'Saving...' : 'Save passphrase'}
                         </button>
                         {isSet && (
-                            <button type="button" className="btn btn-sm" onClick={() => { setReplacing(false); setValue(''); setRepeat(''); }}>
+                            <button type="button" className="btn btn-secondary btn-sm" onClick={() => { setReplacing(false); setValue(''); setRepeat(''); }}>
                                 Cancel
                             </button>
                         )}
@@ -431,7 +467,7 @@ function JobEditor({
     };
 
     return (
-        <div className="mt-4 border border-(--base-04) rounded-md p-4 space-y-4 bg-(--base-02)">
+        <div className="set-sto-editor space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <div>
                     <label className="input-label mb-1 block" htmlFor="pb-name">Name</label>
@@ -444,15 +480,11 @@ function JobEditor({
                 </div>
                 <div>
                     <label className="input-label mb-1 block" htmlFor="pb-storage">Destination</label>
-                    <select id="pb-storage" className="input-field w-full" value={draft.storageId ?? ''}
-                        onChange={e => onChange({ ...draft, storageId: e.target.value ? Number(e.target.value) : null })}>
-                        <option value="">Default storage</option>
-                        {/* Already platform-only: a tenant's own storages live
-                            behind /me/backup-storages and never appear here. */}
-                        {storages.map(s => (
-                            <option key={s.id} value={s.id}>{s.name}</option>
-                        ))}
-                    </select>
+                    {/* Already platform-only: a tenant's own storages live
+                        behind /me/backup-storages and never appear here. */}
+                    <Select id="pb-storage" ariaLabel="Destination" value={draft.storageId == null ? '' : String(draft.storageId)}
+                        onChange={v => onChange({ ...draft, storageId: v ? Number(v) : null })}
+                        options={[{ value: '', label: 'Default storage' }, ...storages.map(s => ({ value: String(s.id), label: s.name }))]} />
                 </div>
                 <div>
                     <label className="input-label mb-1 block" htmlFor="pb-retention">Keep</label>
@@ -465,14 +497,9 @@ function JobEditor({
                 <p className="input-label mb-2">What to include</p>
                 <div className="space-y-2">
                     {COMPONENTS.map(c => (
-                        <label key={c.key} className="flex items-start gap-2.5 cursor-pointer">
-                            <input type="checkbox" className="mt-0.5" checked={!!draft.selection[c.key]}
-                                onChange={e => setSel({ [c.key]: e.target.checked } as Partial<PlatformBackupSelection>)} />
-                            <span className="min-w-0">
-                                <span className="text-sm text-(--base-09)">{c.label}</span>
-                                <span className="block text-xs text-(--base-06)">{c.hint}</span>
-                            </span>
-                        </label>
+                        <Checkbox key={c.key} checked={!!draft.selection[c.key]}
+                            onChange={checked => setSel({ [c.key]: checked } as Partial<PlatformBackupSelection>)}
+                            label={c.label} hint={c.hint} />
                     ))}
                 </div>
             </div>
@@ -484,47 +511,38 @@ function JobEditor({
                     under its owner&apos;s quota and retention and stays individually restorable. One that
                     no longer exists is skipped and recorded, never an error.
                 </p>
-                <div className="flex flex-wrap gap-2 mb-2">
-                    {(['none', 'all', 'owner', 'list'] as PlatformBackupServerMode[]).map(m => (
-                        <button key={m} type="button" onClick={() => setMode(m)}
-                            className={`btn btn-sm ${draft.selection.servers.mode === m ? 'btn-primary' : ''}`}>
-                            {m === 'none' ? 'None' : m === 'all' ? 'All servers' : m === 'owner' ? 'By owner' : 'Pick individually'}
-                        </button>
-                    ))}
-                    {/* Only meaningful where BYON tenants exist. A self-hoster has none
-                        to tell apart, so the filter would be over an empty distinction. */}
-                    {byonOffered && (
-                        <button type="button" onClick={() => setMode('byon')}
-                            className={`btn btn-sm ${draft.selection.servers.mode === 'byon' ? 'btn-primary' : ''}`}>
-                            All BYON servers
-                        </button>
-                    )}
-                </div>
+                <Segmented<PlatformBackupServerMode> className="flex-wrap mb-2" ariaLabel="Servers to include"
+                    value={draft.selection.servers.mode} onChange={setMode}
+                    options={[
+                        { id: 'none', label: 'None' },
+                        { id: 'all', label: 'All servers' },
+                        { id: 'owner', label: 'By owner' },
+                        { id: 'list', label: 'Pick individually' },
+                        // Only meaningful where BYON tenants exist. A self-hoster has none
+                        // to tell apart, so the filter would be over an empty distinction.
+                        ...(byonOffered ? [{ id: 'byon' as const, label: 'All BYON servers' }] : []),
+                    ]} />
 
                 {draft.selection.servers.mode === 'owner' && (
-                    <select className="input-field w-full" value={draft.selection.servers.ownerId || ''}
-                        onChange={e => onChange({
+                    <Select ariaLabel="Owner" value={draft.selection.servers.ownerId || ''}
+                        onChange={v => onChange({
                             ...draft,
-                            selection: { ...draft.selection, servers: { ...draft.selection.servers, ownerId: e.target.value || undefined } },
-                        })}>
-                        <option value="">Pick a user</option>
-                        {owners.map(([id, count]) => (
-                            <option key={id} value={id}>{id} ({count} server{count === 1 ? '' : 's'})</option>
-                        ))}
-                    </select>
+                            selection: { ...draft.selection, servers: { ...draft.selection.servers, ownerId: v || undefined } },
+                        })}
+                        options={[{ value: '', label: 'Pick a user' }, ...owners.map(([id, count]) => ({ value: id, label: `${id} (${count} server${count === 1 ? '' : 's'})` }))]} />
                 )}
 
                 {draft.selection.servers.mode === 'list' && (
                     <div className="space-y-2">
                         <input className="input-field w-full" placeholder="Filter by name or UUID" value={filter}
                             onChange={e => setFilter(e.target.value)} />
-                        <div className="max-h-56 overflow-y-auto border border-(--base-04) rounded-md divide-y divide-(--base-03)">
+                        <div className="set-sto-picklist">
                             {visible.length === 0 && (
                                 <p className="text-xs text-(--base-06) p-3">No server matches.</p>
                             )}
                             {visible.map(t => (
-                                <label key={t.id} className="flex items-center gap-2.5 px-3 py-2 cursor-pointer hover:bg-(--base-03)">
-                                    <input type="checkbox"
+                                <label key={t.id} className="set-sto-pick">
+                                    <Checkbox ariaLabel={`Include ${t.name}`}
                                         checked={(draft.selection.servers.serverIds || []).includes(t.id)}
                                         onChange={() => toggleServer(t.id)} />
                                     <span className="flex-1 min-w-0">
@@ -539,11 +557,7 @@ function JobEditor({
                 )}
             </div>
 
-            <label className="flex items-center gap-2.5 cursor-pointer">
-                <input type="checkbox" checked={draft.enabled}
-                    onChange={e => onChange({ ...draft, enabled: e.target.checked })} />
-                <span className="text-sm text-(--base-09)">Enabled</span>
-            </label>
+            <Checkbox checked={draft.enabled} onChange={c => onChange({ ...draft, enabled: c })} label="Enabled" />
 
             {problem && <p className="text-xs text-(--error-light)">{problem}</p>}
 
@@ -551,7 +565,7 @@ function JobEditor({
                 <button type="button" className="btn btn-primary btn-sm" disabled={saving || !!problem} onClick={onSave}>
                     {saving ? 'Saving...' : 'Save job'}
                 </button>
-                <button type="button" className="btn btn-sm" onClick={onCancel}>Cancel</button>
+                <button type="button" className="btn btn-secondary btn-sm" onClick={onCancel}>Cancel</button>
             </div>
         </div>
     );
@@ -560,14 +574,14 @@ function JobEditor({
 // ───────────── Runs ─────────────
 
 function RunHistory({ runs }: { runs?: PlatformBackupRun[] }) {
-    if (!runs) return <div className="px-3 pb-3"><SkeletonList rows={2} /></div>;
+    if (!runs) return <SkeletonList rows={2} />;
     if (runs.length === 0) {
-        return <p className="px-3 pb-3 text-xs text-(--base-06)">This job has not run yet.</p>;
+        return <p className="text-xs text-(--base-06)">This job has not run yet.</p>;
     }
     return (
-        <div className="border-t border-(--base-03) divide-y divide-(--base-03)">
+        <div className="set-sto-runs">
             {runs.map(run => (
-                <div key={run.id} className="px-3 py-2.5">
+                <div key={run.id} className="set-sto-run">
                     <div className="flex items-center gap-3">
                         <span className={`mono-label shrink-0 ${
                             run.status === 'success' ? 'text-(--success-light)'
@@ -577,7 +591,7 @@ function RunHistory({ runs }: { runs?: PlatformBackupRun[] }) {
                             {formatWhen(run.startedAt)} &middot; {formatSize(run.sizeBytes)}
                         </span>
                         {run.status === 'success' && run.storageKey && (
-                            <a className="btn btn-sm flex items-center gap-1.5" href={platformBackupDownloadUrl(run.id)}>
+                            <a className="btn btn-secondary btn-sm flex items-center gap-1.5" href={platformBackupDownloadUrl(run.id)}>
                                 <Download size={13} /> Download
                             </a>
                         )}

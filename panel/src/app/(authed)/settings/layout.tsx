@@ -9,7 +9,10 @@ import {
     UnsavedDialog,
 } from '@/components/settings/UnsavedChanges';
 import SettingsSearch from '@/components/settings/SettingsSearch';
+import PageHeader from '@/components/ui/PageHeader';
 import { leavesPage } from '@/lib/navGuard';
+import EmptyState from '@/components/ui/EmptyState';
+import { ShieldAlert } from 'lucide-react';
 
 interface SettingsTab {
     slug: string;
@@ -195,16 +198,16 @@ function SettingsLayoutInner({
 
     return (
         <>
-            <div className="flex-1 flex gap-6 min-h-0 overflow-hidden">
-                {/* Left vertical grouped settings sidebar */}
-                <nav className="w-52 shrink-0 overflow-y-auto border-r border-(--base-03) pr-3 flex flex-col gap-7 pt-1">
+            <div className="flex-1 flex gap-8 min-h-0 overflow-hidden">
+                {/* Left vertical grouped settings navigation */}
+                <nav aria-label="Settings sections" className="w-56 shrink-0 overflow-y-auto flex flex-col gap-6 pt-1 pb-6">
                     {/* Over the page list rather than in it: what people look
                         for are individual settings, and the page name is the
                         one thing they do not know. */}
                     <SettingsSearch />
                     {groups.map(group => (
                         <div key={group.group} className="flex flex-col gap-1">
-                            <span className="mono-label px-3">{group.group}</span>
+                            <span className="app-side-group">{group.group}</span>
                             {group.tabs.map(tab => {
                                 const href = `/settings/${tab.slug}`;
                                 const isActive =
@@ -215,11 +218,8 @@ function SettingsLayoutInner({
                                         href={href}
                                         replace
                                         onClick={e => handleTabClick(e, href)}
-                                        className={`px-3 py-2 rounded-r-md text-sm font-medium transition-colors text-left border-l-[3px] ${
-                                            isActive
-                                                ? 'border-(--accent) bg-(--accent)/10 text-(--accent-light)'
-                                                : 'border-transparent text-(--base-07) hover:text-(--base-09) hover:bg-(--base-03)'
-                                        }`}
+                                        aria-current={isActive ? 'page' : undefined}
+                                        className="app-side-link"
                                     >
                                         {tab.label}
                                     </Link>
@@ -233,7 +233,7 @@ function SettingsLayoutInner({
                     see components/settings/SettingsCard.tsx for why a card is
                     the only place a save control lives. */}
                 <div className="flex-1 min-w-0 flex flex-col min-h-0">
-                    <div className="flex-1 overflow-y-auto">
+                    <div className="flex-1 overflow-y-auto pb-6">
                         {children}
                     </div>
                 </div>
@@ -269,8 +269,8 @@ export default function SettingsLayout({ children }: { children: React.ReactNode
     if (!ready) return null;
     if (!user?.isAdmin) {
         return (
-            <main className="flex-1 flex items-center justify-center text-(--error-light) font-semibold text-xl font-display">
-                Access denied. Administrator rights required.
+            <main className="flex-1 flex items-center justify-center p-6">
+                <EmptyState tone="error" icon={<ShieldAlert size={20} />} title="Access denied" description="Administrator rights required." />
             </main>
         );
     }
@@ -294,8 +294,8 @@ export default function SettingsLayout({ children }: { children: React.ReactNode
         .filter(g => g.tabs.length > 0);
 
     return (
-        <main className="flex-1 flex flex-col overflow-hidden relative z-10 p-6">
-            <h1 className="h-page mb-6">System Settings</h1>
+        <main className="app-page flex-1 flex flex-col overflow-hidden relative z-10">
+            <PageHeader title="System settings" description="Platform-wide configuration. Each card saves on its own." className="mb-6" />
 
             {/* UnsavedChangesProvider is mounted globally in (authed)/layout.tsx
                 so its beforeunload + GuardedLink coverage extends beyond the

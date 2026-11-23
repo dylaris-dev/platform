@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Info } from 'lucide-react';
 import { Skeleton } from '@/components/Skeleton';
+import '@/styles/server-setup.css';
 
 const SOFTWARE_META: Record<string, { desc: string; url: string }> = {
     paper:      { desc: 'High-performance Spigot fork with major optimizations.',    url: 'https://papermc.io' },
@@ -128,19 +129,17 @@ export default function VersionPicker({
     const BUILD_MAX_H = 'max-h-[260px]';    // ~10 entries @ 24px
 
     return (
-        <div className="grid grid-cols-3 gap-3 items-start">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 items-start">
             {/* Software column */}
-            <div className="flex flex-col gap-[5px]">
-                <label className="input-label">Software</label>
-                <div className={`border border-(--base-03) rounded-md overflow-y-auto bg-(--base-03) p-1 space-y-0.5 ${SOFTWARE_MAX_H}`}>
+            <div className="flex flex-col gap-2">
+                <span className="srv-label">Software</span>
+                <div className={`srv-setup-list space-y-0.5 ${SOFTWARE_MAX_H}`}>
                     {availableSoftware.map(s => {
                         const meta = SOFTWARE_META[s];
                         return (
                             <div key={s} className="flex items-center gap-1">
                                 <button type="button" onClick={() => onSoftwareChange(s)}
-                                    className={`flex-1 p-2 rounded-md text-left capitalize text-sm ${
-                                        software === s ? 'bg-(--accent) text-white font-medium' : 'hover:bg-(--base-04) text-(--base-07)'
-                                    }`}>
+                                    className="srv-setup-item flex-1 capitalize text-sm" data-selected={software === s} aria-pressed={software === s}>
                                     {s}
                                 </button>
                                 {meta && (
@@ -163,9 +162,7 @@ export default function VersionPicker({
                                                 window.open(meta.url, '_blank', 'noopener,noreferrer');
                                             }}
                                             className={`inline-flex items-center justify-center rounded p-0.5 transition-colors ${
-                                                software === s
-                                                    ? 'text-white/60 hover:text-white'
-                                                    : 'text-(--base-05) hover:text-(--base-08)'
+                                                'text-(--base-05) hover:text-(--base-08)'
                                             }`}
                                         >
                                             <Info size={13} />
@@ -179,9 +176,9 @@ export default function VersionPicker({
             </div>
 
             {/* Major Version column */}
-            <div className="flex flex-col gap-[5px]">
-                <label className="input-label">Version</label>
-                <div className={`border border-(--base-03) rounded-md overflow-y-auto bg-(--base-03) p-1 space-y-0.5 ${VERSION_MAX_H}`}>
+            <div className="flex flex-col gap-2">
+                <span className="srv-label">Version</span>
+                <div className={`srv-setup-list space-y-0.5 ${VERSION_MAX_H}`}>
                     {loading ? versionSkeleton : majorVersions.map(m => (
                         <button key={m} type="button" onClick={() => {
                             onMajorChange(m);
@@ -190,9 +187,7 @@ export default function VersionPicker({
                                 onBuildChange(builds[0]);
                             }
                         }}
-                            className={`w-full p-1.5 text-xs rounded-md text-left font-mono ${
-                                selectedMajor === m ? 'bg-(--accent) text-white font-medium' : 'hover:bg-(--base-04) text-(--base-07)'
-                            }`}>
+                            className="srv-setup-item srv-num text-xs" data-selected={selectedMajor === m} aria-pressed={selectedMajor === m}>
                             {m}
                         </button>
                     ))}
@@ -200,14 +195,12 @@ export default function VersionPicker({
             </div>
 
             {/* Build column */}
-            <div className="flex flex-col gap-[5px]">
-                <label className="input-label">Build</label>
-                <div className={`border border-(--base-03) rounded-md overflow-y-auto bg-(--base-03) p-1 space-y-0.5 ${BUILD_MAX_H}`}>
+            <div className="flex flex-col gap-2">
+                <span className="srv-label">Build</span>
+                <div className={`srv-setup-list space-y-0.5 ${BUILD_MAX_H}`}>
                     {loading ? buildSkeleton : buildsForMajor.map(b => (
                         <button key={b} type="button" onClick={() => onBuildChange(b)}
-                            className={`w-full p-1 text-xs rounded-md text-left font-mono ${
-                                selectedBuild === b ? 'bg-(--accent) text-white font-medium' : 'hover:bg-(--base-04) text-(--base-07)'
-                            }`}>
+                            className="srv-setup-item srv-num text-xs" data-selected={selectedBuild === b} aria-pressed={selectedBuild === b}>
                             {b}
                         </button>
                     ))}
@@ -226,7 +219,7 @@ export default function VersionPicker({
                 bottom-full right-0 positioning). */}
             {hoveredInfo && tooltipAt && portalRoot && SOFTWARE_META[hoveredInfo] && createPortal(
                 <div
-                    className="fixed z-1000 w-48 rounded-md bg-(--base-02) border border-(--base-03) px-2.5 py-1.5 text-[11px] text-(--base-07) leading-snug shadow-lg pointer-events-none whitespace-normal"
+                    className="fixed z-1000 w-48 rounded-md bg-(--base-03) px-2.5 py-1.5 text-[11px] text-(--base-07) leading-snug shadow-lg pointer-events-none whitespace-normal"
                     style={{ left: tooltipAt.x, top: tooltipAt.y, transform: 'translate(-100%, calc(-100% - 6px))' }}
                 >
                     {SOFTWARE_META[hoveredInfo].desc}

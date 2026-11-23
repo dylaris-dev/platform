@@ -3,16 +3,19 @@
 import { toast as notifyToast } from '@/components/ui/Toast';
 
 import React, { useEffect, useState } from 'react';
-import { MessageSquareQuote, Plus, Pencil, Trash2, X, Loader2, CircleCheck, CircleAlert } from 'lucide-react';
+import { MessageSquareQuote, Plus, Pencil, Trash2, X, Loader2, CircleAlert, MoreHorizontal } from 'lucide-react';
 import {
     adminListCannedResponses, createCannedResponse, updateCannedResponse, deleteCannedResponse,
     listTicketCategories,
     CannedResponse, TicketCategory,
 } from '@/lib/api/tickets';
-import { SkeletonHeader, SkeletonTable } from '@/components/Skeleton';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import SettingsPage from '@/components/settings/SettingsPage';
 import ModalPanel from '@/components/ui/ModalPanel';
+import Select from '@/components/ui/Select';
+import Menu from '@/components/ui/Menu';
+import EmptyState from '@/components/ui/EmptyState';
+import { RowList, Row } from '@/components/ui/RowList';
 
 const TEMPLATE_VARS = ['{{user_name}}', '{{ticket_id}}', '{{server_name}}', '{{actor_name}}'];
 
@@ -34,6 +37,7 @@ export default function CannedResponsesTab() {
     const [deleting, setDeleting] = useState<number | null>(null);
 
     const [error, setError] = useState('');
+    const [loadError, setLoadError] = useState<string | null>(null);
 
     const showToast = (msg: string, ok = true) => {
         notifyToast(msg, ok);
@@ -42,7 +46,8 @@ export default function CannedResponsesTab() {
 
     const load = async () => {
         const [a, b] = await Promise.all([adminListCannedResponses(), listTicketCategories()]);
-        if (a.success) setResponses(a.responses || []);
+        if (a.success) { setResponses(a.responses || []); setLoadError(null); }
+        else setLoadError(a.message || 'Failed to load canned responses.');
         if (b.success) setCategories(b.categories || []);
         setLoading(false);
     };
@@ -100,10 +105,7 @@ export default function CannedResponsesTab() {
     };
 
     if (loading) return (
-        <div className="space-y-6 max-w-4xl">
-            <SkeletonHeader />
-            <SkeletonTable rows={5} cols={4} showHeader />
-        </div>
+        <SettingsPage title="Canned responses" loading skeletonCards={2} width="4xl">{null}</SettingsPage>
     );
 
     return (
@@ -122,53 +124,46 @@ export default function CannedResponsesTab() {
                 </button>
             }
         >
-
-            <div className="card overflow-hidden">
-                <table className="w-full text-sm">
-                    <thead className="bg-(--base-03) text-(--base-06)">
-                        <tr>
-                            <th className="text-left font-mono text-[10px] uppercase tracking-[0.08em] px-4 py-2">Name</th>
-                            <th className="text-left font-mono text-[10px] uppercase tracking-[0.08em] px-4 py-2">Category</th>
-                            <th className="text-left font-mono text-[10px] uppercase tracking-[0.08em] px-4 py-2">Preview</th>
-                            <th className="text-right font-mono text-[10px] uppercase tracking-[0.08em] px-4 py-2 w-32">Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {responses.length === 0 && (
-                            <tr>
-                                <td colSpan={4} className="text-center py-8 text-(--base-06) text-sm">
-                                    No canned responses yet. Add some to speed up replies.
-                                </td>
-                            </tr>
-                        )}
+            {loadError ? (
+                <EmptyState tone="error" icon={<CircleAlert size={20} />} title="Canned responses could not be loaded" description={loadError} />
+            ) : responses.length === 0 ? (
+                <EmptyState
+                    icon={<MessageSquareQuote size={20} />}
+                    title="No canned responses yet"
+                    description="Add some to speed up replies."
+                    action={<button type="button" onClick={openCreate} className="btn btn-primary btn-sm inline-flex items-center gap-1.5"><Plus size={13} /> Add response</button>}
+                />
+            ) : (
+                <div className="srv-surface">
+                    <RowList label="Canned responses">
                         {responses.map(c => {
                             const cat = c.categoryId != null ? categories.find(x => x.id === c.categoryId) : undefined;
                             return (
-                                <tr key={c.id} className="border-t border-(--base-03)">
-                                    <td className="px-4 py-3 font-medium">{c.name}</td>
-                                    <td className="px-4 py-3 text-xs">
-                                        {cat ? <span className="font-mono">{cat.name}</span> : <span className="text-(--base-06)">global</span>}
-                                    </td>
-                                    <td className="px-4 py-3 text-xs text-(--base-06) line-clamp-1 max-w-xs">{c.body}</td>
-                                    <td className="px-4 py-3 text-right">
-                                        <div className="flex items-center justify-end gap-1">
-                                            <button type="button" onClick={() => openEdit(c)}
-                                                className="p-1.5 rounded text-(--base-07) hover:bg-(--base-04) hover:text-(--base-09)" title="Edit">
-                                                <Pencil size={13} />
-                                            </button>
-                                            <button type="button" onClick={() => handleDelete(c)}
-                                                disabled={deleting === c.id}
-                                                className="p-1.5 rounded text-(--error-light) hover:bg-(--error-ghost) disabled:opacity-40" title="Delete">
-                                                {deleting === c.id ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
-                                            </button>
-                                        </div>
-                                    </td>
-                                </tr>
+                                <Row
+                                    key={c.id}
+                                    title={c.name}
+                                    meta={c.body}
+                                    trailing={cat ? <span className="font-mono">{cat.name}</span> : 'Global'}
+                                    actions={
+                                        deleting === c.id
+                                            ? <Loader2 size={14} className="mx-2 animate-spin text-(--base-06)" aria-label="Deleting" />
+                                            : (
+                                                <Menu
+                                                    trigger={<button type="button" className="app-icon-btn" aria-label={`Actions for ${c.name}`}><MoreHorizontal size={16} /></button>}
+                                                    items={[
+                                                        { label: 'Edit', icon: <Pencil size={14} />, onSelect: () => openEdit(c) },
+                                                        { type: 'separator' },
+                                                        { label: 'Delete', icon: <Trash2 size={14} />, danger: true, onSelect: () => handleDelete(c) },
+                                                    ]}
+                                                />
+                                            )
+                                    }
+                                />
                             );
                         })}
-                    </tbody>
-                </table>
-            </div>
+                    </RowList>
+                </div>
+            )}
 
             {modal && (
                 <div className="modal-overlay">
@@ -186,12 +181,10 @@ export default function CannedResponsesTab() {
                             </div>
                             <div className="flex flex-col gap-[5px]">
                                 <label className="input-label">Category (optional)</label>
-                                <select value={form.categoryId}
-                                    onChange={e => setForm({ ...form, categoryId: e.target.value === '' ? '' : Number(e.target.value) })}
-                                    className="input-field w-full">
-                                    <option value="">— Global (any category) —</option>
-                                    {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                                </select>
+                                <Select ariaLabel="Category"
+                                    value={String(form.categoryId)}
+                                    onChange={v => setForm({ ...form, categoryId: v === '' ? '' : Number(v) })}
+                                    options={[{ value: '', label: '— Global (any category) —' }, ...categories.map(c => ({ value: String(c.id), label: c.name }))]} />
                             </div>
                             <div className="flex flex-col gap-[5px]">
                                 <label className="input-label">Body</label>

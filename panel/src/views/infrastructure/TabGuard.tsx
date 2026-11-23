@@ -1,6 +1,8 @@
 "use client";
 
 import Link from 'next/link';
+import { Info } from 'lucide-react';
+import EmptyState from '@/components/ui/EmptyState';
 
 /**
  * What a gated tab shows when its precondition is not met.
@@ -15,11 +17,11 @@ import Link from 'next/link';
  */
 export default function TabGuard({ reason }: { reason: string }) {
     return (
-        <div className="card p-8 text-center flex flex-col items-center gap-3">
-            <p className="text-sm text-(--base-07) max-w-md">{reason}</p>
-            <Link href="/infrastructure/nodes" className="btn btn-secondary btn-sm">
-                Back to nodes
-            </Link>
-        </div>
+        <EmptyState
+            icon={<Info size={20} />}
+            title="Nothing to show here"
+            description={reason}
+            action={<Link href="/infrastructure/nodes" className="btn btn-secondary btn-sm">Back to nodes</Link>}
+        />
     );
 }

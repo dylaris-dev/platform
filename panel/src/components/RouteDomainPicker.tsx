@@ -11,6 +11,8 @@ import {
     getGatewayRouteOptions,
 } from '@/lib/api';
 import { AlertCircle, Check, Globe, Loader2, RotateCw, Server, X } from 'lucide-react';
+import { Tabs, TabsList, TabsTab } from '@ui-sdk/react/tabs';
+import Select from '@/components/ui/Select';
 import { cnameTargetsFor } from '@/lib/cnameTargets';
 import { useAppData } from '@/lib/AppDataContext';
 import { routeOptionsFailure } from '@/lib/gatewayProvider';
@@ -213,7 +215,7 @@ export default function RouteDomainPicker({ value, onChange, onAvailabilityChang
     const unreachable = routeOptionsFailure(gatewayProvider, optsFailed);
     if (unreachable) {
         return (
-            <div className="max-w-md flex flex-wrap items-center gap-2 px-3 py-2.5 rounded-md bg-(--base-02) border border-(--base-03) text-sm text-(--base-07)" role="alert">
+            <div className="max-w-md flex flex-wrap items-center gap-2 px-3 py-2.5 rounded-lg bg-(--base-02) text-sm text-(--base-07)" role="alert">
                 <AlertCircle size={14} className="shrink-0 text-(--error-light)" aria-hidden="true" />
                 <span className="flex-1 min-w-0">{unreachable}</span>
                 <button type="button" className="btn btn-secondary btn-sm" onClick={loadOptions}>
@@ -263,7 +265,7 @@ export default function RouteDomainPicker({ value, onChange, onAvailabilityChang
         <div className="max-w-md space-y-2">
             {/* No-domain empty state */}
             {noDomainConfigured && (
-                <div className="flex items-center gap-2 px-3 py-2.5 rounded-md bg-(--base-02) border border-(--base-03) text-sm text-(--base-05) cursor-not-allowed select-none">
+                <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-(--base-02) text-sm text-(--base-06) cursor-not-allowed select-none">
                     <AlertCircle size={14} className="shrink-0 text-(--base-05)" />
                     <span>No domain configured yet — add one under Settings → Gateway.</span>
                 </div>
@@ -275,19 +277,17 @@ export default function RouteDomainPicker({ value, onChange, onAvailabilityChang
                 and at pill size "Custom Domain" read as a button that does
                 something rather than as the half you are not currently on. */}
             {!noDomainConfigured && showHosterMode && showCustomMode && (
-                <div role="tablist" aria-label="Address type" className="grid grid-cols-2 gap-1 p-1 rounded-md bg-(--base-03) border border-(--base-04)">
+                <Tabs value={mode} onValueChange={v => { if (v != null) setMode(v as 'hoster' | 'custom'); }}>
+                <TabsList aria-label="Address type" className="grid grid-cols-2 gap-1 p-1 rounded-lg bg-(--base-03)">
                     {([
                         { id: 'hoster' as const, label: 'Subdomain', desc: 'On one of our domains', Icon: Server },
                         { id: 'custom' as const, label: 'Custom domain', desc: 'One you own, via CNAME', Icon: Globe },
                     ]).map(({ id, label, desc, Icon }) => {
                         const active = mode === id;
                         return (
-                            <button
+                            <TabsTab
                                 key={id}
-                                type="button"
-                                role="tab"
-                                aria-selected={active}
-                                onClick={() => setMode(id)}
+                                value={id}
                                 className={`flex items-center gap-2 px-3 py-2 rounded-sm text-left transition-colors ${
                                     active
                                         ? 'bg-(--accent) text-white'
@@ -299,10 +299,11 @@ export default function RouteDomainPicker({ value, onChange, onAvailabilityChang
                                     <span className="block text-xs font-medium leading-tight">{label}</span>
                                     <span className={`block text-[10px] leading-tight truncate ${active ? 'text-white/75' : 'text-(--base-06)'}`}>{desc}</span>
                                 </span>
-                            </button>
+                            </TabsTab>
                         );
                     })}
-                </div>
+                </TabsList>
+                </Tabs>
             )}
 
             {/* What the choice above actually decides. Both halves were already
@@ -330,17 +331,13 @@ export default function RouteDomainPicker({ value, onChange, onAvailabilityChang
                         className="input-field text-sm w-28 min-w-0"
                     />
                     <span className="flex items-center text-(--base-06) text-sm font-mono px-1">.</span>
-                    <select
+                    <Select
+                        ariaLabel="Domain"
+                        className="w-44"
                         value={hosterDomain}
-                        onChange={e => setHosterDomain(e.target.value)}
-                        aria-label="Domain"
-                        title="Domain - the address your players connect to"
-                        className="input-field text-sm w-44"
-                    >
-                        {hosters.map(h => (
-                            <option key={h.domain} value={h.domain}>{h.domain}</option>
-                        ))}
-                    </select>
+                        onChange={setHosterDomain}
+                        options={hosters.map(h => ({ value: h.domain, label: h.domain }))}
+                    />
                     {portChildren}
                 </div>
             )}
@@ -362,7 +359,7 @@ export default function RouteDomainPicker({ value, onChange, onAvailabilityChang
                         {portChildren}
                     </div>
                     {cnameTargets.length > 0 && (
-                        <div className="flex items-start gap-2 p-2.5 rounded-md bg-(--accent)/5 border border-(--accent)/20 text-xs">
+                        <div className="flex items-start gap-2 p-2.5 rounded-lg bg-(--accent-ghost) text-xs">
                             <AlertCircle size={12} className="text-(--accent-light) shrink-0 mt-0.5" />
                             <div className="text-(--base-07) flex flex-col gap-1.5">
                                 {cnameTargets.length === 1 ? (

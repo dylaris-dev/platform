@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { getServerCoreLoad, type ServerCoreLoad } from '@/lib/api';
+import { Meter, MeterIndicator, MeterTrack } from '@ui-sdk/react/meter';
+import Tooltip from '@/components/ui/Tooltip';
 
 // Same cadence as the node's sampler; asking faster only repeats a sample.
 const POLL_MS = 2000;
@@ -46,9 +48,9 @@ export default function CoreLoadBars({ serverId, active, cpuLimit }: { serverId:
   const anyShared = data.cores.some(c => c.shared);
 
   return (
-    <div className="rounded-xl bg-(--base-01) border border-(--base-03) px-4 py-3">
+    <div className="srv-surface px-4 py-3">
       <div className="flex items-center justify-between gap-3 pb-2">
-        <span className="input-label text-[11px]">
+        <span className="srv-label">
           {/* The bars are where the server MAY run (its pin), the limit is how
               much CPU time it gets across them: 4 cores of time on 8 pinned
               cores is 4, spread over 8. */}
@@ -64,30 +66,24 @@ export default function CoreLoadBars({ serverId, active, cpuLimit }: { serverId:
       </div>
       <ul className="grid gap-x-4 gap-y-2" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))' }}>
         {data.cores.map(c => (
-          <li
-            key={c.index}
-            className="flex flex-col gap-1"
-            title={c.shared ? 'Other servers can run on this core, so this load includes theirs.' : undefined}
-          >
-            <div className="flex items-center justify-between text-[11px]">
-              <span className={c.shared ? 'text-(--warning-light)' : 'text-(--base-07)'}>
-                {c.id !== undefined ? `Core ${c.id}` : `Core ${c.index}`}{c.shared ? ' · shared' : ''}
-              </span>
-              <span className="font-mono tabular-nums text-(--base-08)">{c.load.toFixed(0)}%</span>
+          <li key={c.index} className="flex flex-col gap-1">
+            <div className="flex items-center justify-between text-xs">
+              {c.shared ? (
+                <Tooltip content="Other servers can run on this core, so this load includes theirs.">
+                  <span className="text-(--warning-light)">
+                    {c.id !== undefined ? `Core ${c.id}` : `Core ${c.index}`} &middot; shared
+                  </span>
+                </Tooltip>
+              ) : (
+                <span className="text-(--base-07)">{c.id !== undefined ? `Core ${c.id}` : `Core ${c.index}`}</span>
+              )}
+              <span className="srv-num text-(--base-08)">{c.load.toFixed(0)}%</span>
             </div>
-            <div
-              className="h-1.5 rounded-full bg-(--base-03) overflow-hidden"
-              role="meter"
-              aria-valuemin={0}
-              aria-valuemax={100}
-              aria-valuenow={Math.round(c.load)}
-              aria-label={`Core ${c.id ?? c.index} load`}
-            >
-              <div
-                className={`h-full rounded-full transition-[width] duration-500 motion-reduce:transition-none ${c.shared ? 'bg-(--warning)' : 'bg-(--primary)'}`}
-                style={{ width: `${Math.min(100, Math.max(0, c.load))}%` }}
-              />
-            </div>
+            <Meter value={Math.min(100, Math.max(0, Math.round(c.load)))} min={0} max={100} aria-label={`Core ${c.id ?? c.index} load`}>
+              <MeterTrack className="srv-meter-track">
+                <MeterIndicator className="srv-meter-fill" data-tone={c.shared ? 'warning' : undefined} />
+              </MeterTrack>
+            </Meter>
           </li>
         ))}
       </ul>

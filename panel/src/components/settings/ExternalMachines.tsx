@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { Copy, AlertTriangle, EyeOff, Plus, Network, Trash2, Circle, Check, KeyRound, Terminal, RefreshCw, Ban, RotateCw } from 'lucide-react';
+import { Copy, AlertTriangle, EyeOff, Plus, Network, Trash2, Circle, Check, KeyRound, Terminal, RefreshCw, Ban, RotateCw, MoreHorizontal } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import {
     mintExternalNodeKey, getWarpFirewallSettings, listWarpKeys, revokeWarpKey, deleteWarpKey, rollExternalNodeKey,
@@ -20,6 +20,11 @@ import { platformNote, useDeployPlatform } from '@/components/infra/DeployKit';
 import { isLocationName } from '@/lib/validation';
 import ModalPanel from '@/components/ui/ModalPanel';
 import { fmtDateTime } from '@/lib/time';
+import Menu from '@/components/ui/Menu';
+import Section from '@/components/ui/Section';
+import EmptyState from '@/components/ui/EmptyState';
+import Callout from '@/components/server/Callout';
+import { RowList, Row } from '@/components/ui/RowList';
 
 const enrollUrl = coreOrigin();
 
@@ -171,8 +176,8 @@ export default function ExternalMachines({ nodes }: { nodes: Node[] }) {
 
     return (
         <div className="space-y-4">
-            <div className="card p-5 space-y-4">
-                <h3 className="text-sm font-display font-semibold text-(--accent-light) flex items-center gap-2"><Network size={15} /> Add a machine</h3>
+            <Section title="Add a machine" description="Gives a new external machine its overlay key and a single-use enroll token.">
+            <div className="srv-surface p-5 space-y-4">
                 <p className="text-xs text-(--base-06)">
                     An External node is a machine the platform runs outside the datacenter. Adding one gives it an
                     overlay key and a single-use enroll token together, with a deploy file that runs warp, the node and
@@ -185,10 +190,10 @@ export default function ExternalMachines({ nodes }: { nodes: Node[] }) {
                     and gets the working deploy file there.
                 </p>
                 {!gateOpen && (
-                    <p className="text-xs text-(--warning-light)">
+                    <Callout tone="warning" icon={<AlertTriangle size={14} />}>
                         External nodes need routing gateway or both AND Beam file access (Settings -&gt; Gateway). Until
                         then their servers could not receive players or file access, so adding one is disabled.
-                    </p>
+                    </Callout>
                 )}
                 <fieldset disabled={!gateOpen} className="space-y-2 disabled:opacity-50">
                     <div className="flex flex-col md:flex-row gap-3 md:items-end">
@@ -215,31 +220,30 @@ export default function ExternalMachines({ nodes }: { nodes: Node[] }) {
                     </p>
                 </fieldset>
             </div>
+            </Section>
 
-            <div className="card p-5 space-y-4">
-                <div className="flex items-center justify-between">
-                    <h3 className="text-sm font-display font-semibold text-(--accent-light) flex items-center gap-2">
-                        <KeyRound size={15} /> Machine keys
-                    </h3>
-                    <button onClick={loadKeys} className="btn btn-secondary btn-sm" title="Refresh">
-                        <RefreshCw size={12} /> Refresh
-                    </button>
-                </div>
-
+            <Section
+                title="Machine keys"
+                description="Overlay keys of the machines added above, with their connected peers."
+                actions={<button onClick={loadKeys} className="btn btn-secondary btn-sm" title="Refresh">
+                    <RefreshCw size={12} /> Refresh
+                </button>}
+            >
+            <div className="srv-surface">
                 {keysLoading ? (
-                    <p className="text-xs text-(--base-06)">Loading...</p>
+                    <p className="p-5 text-xs text-(--base-06)">Loading...</p>
                 ) : keys.length === 0 ? (
-                    <p className="text-xs text-(--base-06)">No machines added yet.</p>
+                    <EmptyState bare icon={<KeyRound size={20} />} title="No machines added yet" description="Add a machine above to mint its key." />
                 ) : (
-                    <div className="flex flex-col gap-2">
+                    <RowList label="Machine keys">
                         {keys.map(k => {
                             const machine = machineOf(k);
                             return (
-                                <div key={k.id} className={`rounded-md border p-3 ${k.revoked ? 'border-(--base-04) opacity-60' : 'border-(--base-03)'}`}>
-                                    <div className="flex flex-wrap items-start justify-between gap-3">
-                                        <div className="min-w-0">
-                                            <div className="flex items-center gap-2 flex-wrap">
-                                                <span className="text-sm text-(--base-09) font-medium truncate">{k.name || `key-${k.id}`}</span>
+                                <div key={k.id} className={k.revoked ? 'opacity-60' : undefined}>
+                                    <Row
+                                        title={
+                                            <span className="inline-flex items-center gap-2">
+                                                <span className="truncate">{k.name || `key-${k.id}`}</span>
                                                 {k.revoked
                                                     ? <span className="badge badge-error">Revoked</span>
                                                     : k.peers.length > 0
@@ -259,34 +263,31 @@ export default function ExternalMachines({ nodes }: { nodes: Node[] }) {
                                                     </span>
                                                 )}
                                                 {k.region && <span className="badge badge-accent">{k.region}</span>}
-                                            </div>
-                                            <p className="text-xs text-(--base-06) mt-1">
-                                                {machine ? <>Node <span className="text-(--base-08)">{machine.displayName || machine.name}</span> - </> : k.bound_node_id ? 'Node removed - ' : 'Not enrolled yet - '}
-                                                added {fmtDateTime(k.created_at)}
-                                            </p>
-                                        </div>
-                                        <div className="flex flex-wrap items-center gap-2 shrink-0">
-                                            <button onClick={() => setDeploy({ key: k, apiKey: null, enrollToken: null })} className="btn btn-secondary btn-sm" title="The deploy file, with placeholders where the secrets go">
-                                                <Terminal size={12} /> Deploy file
-                                            </button>
-                                            {!k.revoked && isExternalNodeKey(k) && (
-                                                <button onClick={() => handleRoll(k)} disabled={rollingId === k.id} className="btn btn-secondary btn-sm disabled:opacity-40" title="A new overlay key, filled into the deploy file; the old one keeps working for an hour">
-                                                    <RotateCw size={12} /> {rollingId === k.id ? 'Rolling...' : 'New key'}
+                                            </span>
+                                        }
+                                        meta={<>
+                                            {machine ? <>Node <span className="text-(--base-08)">{machine.displayName || machine.name}</span> - </> : k.bound_node_id ? 'Node removed - ' : 'Not enrolled yet - '}
+                                            added {fmtDateTime(k.created_at)}
+                                        </>}
+                                        actions={
+                                            <>
+                                                <button onClick={() => setDeploy({ key: k, apiKey: null, enrollToken: null })} className="btn btn-secondary btn-sm" title="The deploy file, with placeholders where the secrets go">
+                                                    <Terminal size={12} /> Deploy file
                                                 </button>
-                                            )}
-                                            {!k.revoked && (
-                                                <button onClick={() => handleRevokeKey(k)} className="btn btn-secondary btn-sm" title="Block future enrolments and disconnect its nodes; keeps the record">
-                                                    <Ban size={12} /> Revoke
-                                                </button>
-                                            )}
-                                            <button onClick={() => handleDeleteKey(k)} className="btn btn-danger btn-sm" title="Remove the key and its history for good" aria-label={`Delete ${k.name}`}>
-                                                <Trash2 size={12} />
-                                            </button>
-                                        </div>
-                                    </div>
-
+                                                <Menu
+                                                    trigger={<button type="button" className="app-icon-btn" aria-label={`Actions for ${k.name || `key-${k.id}`}`}><MoreHorizontal size={16} /></button>}
+                                                    items={[
+                                                        ...(!k.revoked && isExternalNodeKey(k) ? [{ label: rollingId === k.id ? 'Rolling...' : 'New key', icon: <RotateCw size={14} />, onSelect: () => handleRoll(k), disabled: rollingId === k.id }] : []),
+                                                        ...(!k.revoked ? [{ label: 'Revoke', icon: <Ban size={14} />, onSelect: () => handleRevokeKey(k) }] : []),
+                                                        { type: 'separator' as const, id: 'sep' },
+                                                        { label: 'Delete key and history', icon: <Trash2 size={14} />, danger: true, onSelect: () => handleDeleteKey(k) },
+                                                    ]}
+                                                />
+                                            </>
+                                        }
+                                    />
                                     {k.peers.length > 0 && (
-                                        <div className="mt-3 border-t border-(--base-03) pt-2 flex flex-col gap-1">
+                                        <div className="flex flex-col gap-1 px-3 pb-3 pl-6">
                                             {k.peers.map(p => (
                                                 <div key={p.pubkey} className="flex items-center gap-2 text-xs flex-wrap">
                                                     <Circle size={7} className="fill-(--success-light) text-(--success-light) shrink-0" />
@@ -301,9 +302,10 @@ export default function ExternalMachines({ nodes }: { nodes: Node[] }) {
                                 </div>
                             );
                         })}
-                    </div>
+                    </RowList>
                 )}
             </div>
+            </Section>
 
             {deploy && (
                 <DeployModal

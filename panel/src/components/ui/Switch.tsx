@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import { Switch as SdkSwitch, SwitchThumb } from '@ui-sdk/react/switch';
 import HelpTip from './HelpTip';
 
 /**
@@ -31,17 +32,15 @@ export default function Switch({
     className = '',
 }: SwitchProps) {
     return (
-        <button
-            type="button"
-            role="switch"
-            aria-checked={checked}
+        <SdkSwitch
+            checked={checked}
+            onCheckedChange={onChange}
             aria-label={ariaLabel}
             disabled={disabled}
-            onClick={() => onChange(!checked)}
             className={`toggle-track ${checked ? 'toggle-track-on' : 'toggle-track-off'} ${className}`}
         >
-            <span className={`toggle-knob ${checked ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
-        </button>
+            <SwitchThumb className={`toggle-knob ${checked ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
+        </SdkSwitch>
     );
 }
 

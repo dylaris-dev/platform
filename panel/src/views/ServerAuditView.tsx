@@ -2,13 +2,15 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 
-import { FileText, Filter, Loader2, ShieldCheck, ShieldOff, AlertTriangle, ChevronLeft, ChevronRight, ChevronDown, Copy, Check, X } from 'lucide-react';
+import { Loader2, ShieldCheck, ShieldOff, AlertTriangle, ChevronLeft, ChevronRight, ChevronDown, Copy, Check, X, ScrollText } from 'lucide-react';
+import { Dialog, DialogBackdrop, DialogClose, DialogContent, DialogTitle } from '@ui-sdk/react/dialog';
 import { useAppData } from '@/lib/AppDataContext';
 import { systemEvents } from '@/lib/systemEvents';
 import { listServerAudit, getServerAuditStatus, setServerAuditForce, ServerAuditEvent, ServerAuditState } from '@/lib/api/serverAudit';
 import { Skeleton, SkeletonText, SkeletonList } from '@/components/Skeleton';
 import { useRouteId } from '@/lib/routeParams';
-import ModalPanel from '@/components/ui/ModalPanel';
+import Select from '@/components/ui/Select';
+import Callout from '@/components/server/Callout';
 import { auditActor, auditSentence } from '@/lib/auditSentences';
 import { auditStep } from '@/lib/auditPaging';
 import { fmtDateTime, timeAgo } from '@/lib/time';
@@ -145,24 +147,17 @@ export default function ServerAuditView() {
     };
 
     if (loading) return (
-        <main className="flex-1 flex flex-col overflow-hidden p-6 gap-4">
-            <header className="shrink-0 flex items-start justify-between gap-4">
+        <main className="flex h-full flex-col gap-5 overflow-hidden">
+            <header className="flex shrink-0 items-start justify-between gap-4">
                 <div className="space-y-2">
-                    <SkeletonText width="w-40" className="h-5" />
+                    <SkeletonText width="w-40" className="h-6" />
                     <SkeletonText width="w-80" className="h-3" />
                 </div>
-                <Skeleton className="w-24 h-7 rounded-md" />
+                <Skeleton className="h-6 w-24 rounded-full" />
             </header>
-            <section className="card p-4 border border-(--base-03) flex items-center justify-between gap-3">
-                <SkeletonText width="w-64" className="h-3" />
-                <Skeleton className="w-28 h-7 rounded-md" />
-            </section>
-            <div className="shrink-0 flex items-center gap-1.5">
-                {Array.from({ length: 7 }).map((_, i) => (
-                    <Skeleton key={i} className="w-20 h-7 rounded-md" />
-                ))}
-            </div>
-            <div className="flex-1 max-w-4xl">
+            <Skeleton className="h-16 w-full rounded-xl" />
+            <Skeleton className="h-9 w-48 rounded-lg" />
+            <div className="flex-1">
                 <SkeletonList rows={6} />
             </div>
         </main>
@@ -170,130 +165,119 @@ export default function ServerAuditView() {
 
     if (!isOwner && !isAdmin) {
         return (
-            <main className="flex-1 flex items-center justify-center text-(--base-06) p-6">
+            <main className="flex h-full items-center justify-center text-(--base-06)">
                 <p className="text-sm">The audit log is reserved for the server&apos;s owner and platform admins.</p>
             </main>
         );
     }
 
     return (
-        <main className="flex-1 flex flex-col overflow-hidden p-6 gap-4">
-            <header className="shrink-0 flex items-start justify-between gap-4">
-                <div>
-                    <h1 className="h-page flex items-center gap-2">
-                        <FileText size={22} className="text-(--accent-light)" />
-                        Audit log
-                    </h1>
-                    <p className="text-sm text-(--base-06) mt-1">
-                        Who did what on this server. Audit only kicks in the first time you invite a member — solo-owner
+        <main className="flex h-full flex-col gap-5 overflow-hidden">
+            <header className="flex shrink-0 flex-wrap items-start justify-between gap-x-6 gap-y-3">
+                <div className="min-w-0">
+                    <h1 className="font-display text-xl font-bold text-(--base-09)">Audit log</h1>
+                    <p className="mt-1 max-w-2xl text-sm text-(--base-06)">
+                        Who did what on this server. Audit only kicks in the first time you invite a member; solo-owner
                         servers don&apos;t accumulate audit overhead until they need to.
                     </p>
                 </div>
                 {state && (
-                    <div className={`flex items-center gap-2 px-3 py-1.5 rounded-md border text-xs font-mono ${
-                        state.effectiveOn
-                            ? 'border-(--success-border) bg-(--success-ghost) text-(--success-light)'
-                            : 'border-(--base-04) bg-(--base-03) text-(--base-06)'
+                    <span className={`srv-chip h-7 gap-1.5 px-3 ${
+                        state.effectiveOn ? 'bg-(--success-ghost) text-(--success-light)' : 'bg-(--base-03) text-(--base-06)'
                     }`}>
-                        {state.effectiveOn ? <ShieldCheck size={14} /> : <ShieldOff size={14} />}
-                        {state.effectiveOn ? 'ACTIVE' : 'DORMANT'}
-                    </div>
+                        {state.effectiveOn ? <ShieldCheck size={14} aria-hidden="true" /> : <ShieldOff size={14} aria-hidden="true" />}
+                        {state.effectiveOn ? 'Active' : 'Dormant'}
+                    </span>
                 )}
             </header>
 
             {/* State summary */}
             {state && (
-                <section className="card p-4 border border-(--base-03) flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                    <div className="text-sm text-(--base-07)">
-                        <p>
-                            {state.enabled
-                                ? <>Auto-enabled because a member was invited. </>
-                                : <>Auto-enable hasn&apos;t kicked in yet. </>}
-                            {state.forceOn
-                                ? <>Admin has <span className="font-mono text-(--accent-light)">forced</span> audit on. </>
-                                : null}
-                            Logged events so far: <span className="font-mono">{state.eventCount}</span>.
-                        </p>
-                    </div>
+                <section className="srv-surface flex shrink-0 flex-col justify-between gap-3 p-5 sm:flex-row sm:items-center">
+                    <p className="text-sm text-(--base-07)">
+                        {state.enabled
+                            ? <>Auto-enabled because a member was invited. </>
+                            : <>Auto-enable hasn&apos;t kicked in yet. </>}
+                        {state.forceOn
+                            ? <>Admin has <span className="font-medium text-(--accent-light)">forced</span> audit on. </>
+                            : null}
+                        Logged events so far: <span className="srv-num text-(--base-09)">{state.eventCount}</span>.
+                    </p>
                     {isAdmin && (
                         <button
                             type="button"
                             onClick={handleToggleForce}
                             disabled={toggling}
-                            className={`btn btn-sm inline-flex items-center gap-2 disabled:opacity-40 ${
+                            className={`btn btn-sm inline-flex shrink-0 items-center gap-2 ${
                                 state.forceOn ? 'btn-secondary' : 'btn-primary'
                             }`}
                         >
-                            {toggling && <Loader2 size={12} className="animate-spin" />}
+                            {toggling && <Loader2 size={14} className="animate-spin motion-reduce:animate-none" />}
                             {state.forceOn ? 'Drop force-on' : 'Force audit on'}
                         </button>
                     )}
                 </section>
             )}
 
-            {/* Filters */}
-            <div className="shrink-0 flex items-center gap-1.5 overflow-x-auto">
-                <Filter size={14} className="text-(--base-06) shrink-0" />
-                {EVENT_FILTERS.map(f => (
-                    <button
-                        key={f.id || 'all'}
-                        type="button"
-                        onClick={() => setFilter(f.id)}
-                        className={`px-3 py-1 rounded-md text-xs font-medium border whitespace-nowrap transition-colors ${
-                            filter === f.id
-                                ? 'border-(--accent-border) bg-(--accent-ghost) text-(--accent-light)'
-                                : 'border-(--base-04) text-(--base-07) hover:bg-(--base-03)'
-                        }`}
-                    >
-                        {f.label}
-                    </button>
-                ))}
+            {/* Filter */}
+            <div className="flex shrink-0 items-center gap-3">
+                <Select
+                    ariaLabel="Filter by event type"
+                    className="w-48"
+                    value={filter}
+                    onChange={setFilter}
+                    options={EVENT_FILTERS.map(f => ({ value: f.id, label: f.label }))}
+                />
+                {total > 0 && (
+                    <span className="srv-num text-xs text-(--base-06)">{total} {total === 1 ? 'event' : 'events'}</span>
+                )}
             </div>
 
             {/* Events */}
             <div className="flex-1 overflow-y-auto">
                 {loadError && (
-                    <p role="alert" className="max-w-4xl mb-3 text-sm text-(--error-light) flex items-center gap-2">
-                        <AlertTriangle size={14} className="shrink-0" />
-                        {loadError}
-                    </p>
+                    <div className="mb-3">
+                        <Callout tone="error" icon={<AlertTriangle size={16} />} role="alert">{loadError}</Callout>
+                    </div>
                 )}
                 {events.length === 0 ? (
                     !loadError && <EmptyState effectiveOn={state?.effectiveOn ?? false} />
                 ) : (
-                    <ul className="space-y-1.5 max-w-4xl">
+                    <ul className="-mx-2">
                         {events.map((ev, i) => (
                             <EventRow key={ev.id} ev={ev} onOpen={() => { setSlideDir(0); setOpenIndex(i); }} />
                         ))}
                     </ul>
                 )}
                 {events.length > 0 && events.length < total && (
-                    <div className="max-w-4xl flex flex-col items-center gap-2 mt-4">
-                        <p className="text-xs text-(--base-06)">Showing {events.length} of {total}</p>
+                    <div className="mt-4 flex flex-col items-center gap-2">
+                        <p className="srv-num text-xs text-(--base-06)">Showing {events.length} of {total}</p>
                         <button type="button" onClick={() => { void loadMore(); }} disabled={loadingMore}
-                            className="btn btn-secondary btn-sm inline-flex items-center gap-2 disabled:opacity-40">
-                            {loadingMore && <Loader2 size={12} className="animate-spin" />}
+                            className="btn btn-secondary btn-sm inline-flex items-center gap-2">
+                            {loadingMore && <Loader2 size={14} className="animate-spin motion-reduce:animate-none" />}
                             Load more
                         </button>
                     </div>
                 )}
             </div>
 
-            {openIndex !== null && events[openIndex] && (
-                <div className="modal-overlay animate-fade-in" onClick={() => setOpenIndex(null)}>
-                    <AuditDetail
-                        ev={events[openIndex]}
-                        position={openIndex + 1}
-                        total={Math.max(total, events.length)}
-                        canPrev={openIndex > 0}
-                        canNext={auditStep(openIndex, 1, events.length, total).kind !== 'none'}
-                        busy={loadingMore}
-                        slideDir={slideDir}
-                        onStep={step}
-                        onClose={() => setOpenIndex(null)}
-                    />
-                </div>
-            )}
+            <Dialog open={openIndex !== null && !!events[openIndex]} onOpenChange={o => { if (!o) setOpenIndex(null); }}>
+                <DialogBackdrop className="modal-overlay animate-fade-in" />
+                <DialogContent className="modal-panel fixed inset-0 m-auto flex h-fit max-h-[85vh] w-[calc(100%-2rem)] max-w-2xl flex-col">
+                    {openIndex !== null && events[openIndex] && (
+                        <AuditDetail
+                            ev={events[openIndex]}
+                            position={openIndex + 1}
+                            total={Math.max(total, events.length)}
+                            canPrev={openIndex > 0}
+                            canNext={auditStep(openIndex, 1, events.length, total).kind !== 'none'}
+                            busy={loadingMore}
+                            slideDir={slideDir}
+                            onStep={step}
+                        />
+                    )}
+                </DialogContent>
+            </Dialog>
         </main>
     );
 }
@@ -309,15 +293,15 @@ function EventRow({ ev, onOpen }: { ev: ServerAuditEvent; onOpen: () => void }) 
             <button
                 type="button"
                 onClick={onOpen}
-                className="card w-full text-left px-3 py-2.5 flex items-center gap-3 hover:bg-(--base-03) hover:border-(--base-04) active:bg-(--base-04) transition-colors"
+                className="flex w-full items-center gap-3 rounded-lg px-2 py-2.5 text-left transition-colors hover:bg-(--base-02) focus-visible:shadow-(--focus-ring) focus-visible:outline-none active:bg-(--base-03)"
             >
                 <span aria-hidden="true"
-                    className="w-7 h-7 shrink-0 rounded-full bg-(--accent-ghost) text-(--accent-light) text-xs font-semibold flex items-center justify-center">
+                    className="flex size-7 shrink-0 items-center justify-center rounded-full bg-(--base-03) text-xs font-semibold text-(--base-07)">
                     {actor.charAt(0).toUpperCase()}
                 </span>
-                <span className="flex-1 min-w-0 text-sm text-(--base-09) truncate">{auditSentence(ev)}</span>
+                <span className="min-w-0 flex-1 truncate text-sm text-(--base-09)">{auditSentence(ev)}</span>
                 <time dateTime={ev.createdAt} title={absoluteTime(ev.createdAt)}
-                    className="text-xs text-(--base-06) shrink-0 tabular-nums">
+                    className="srv-num shrink-0 text-xs text-(--base-06)">
                     {timeAgo(ev.createdAt)}
                 </time>
             </button>
@@ -332,7 +316,7 @@ function valueText(v: unknown): string {
     return String(v);
 }
 
-function AuditDetail({ ev, position, total, canPrev, canNext, busy, slideDir, onStep, onClose }: {
+function AuditDetail({ ev, position, total, canPrev, canNext, busy, slideDir, onStep }: {
     ev: ServerAuditEvent;
     position: number;
     total: number;
@@ -341,7 +325,6 @@ function AuditDetail({ ev, position, total, canPrev, canNext, busy, slideDir, on
     busy: boolean;
     slideDir: -1 | 0 | 1;
     onStep: (delta: -1 | 1) => void;
-    onClose: () => void;
 }) {
     const bodyRef = useRef<HTMLDivElement>(null);
     const [copied, setCopied] = useState<'idle' | 'copied' | 'failed'>('idle');
@@ -390,12 +373,12 @@ function AuditDetail({ ev, position, total, canPrev, canNext, busy, slideDir, on
     };
 
     return (
-        <ModalPanel onClose={onClose} className="modal-panel w-[calc(100%-32px)] max-w-2xl max-h-[85vh] flex flex-col">
+        <>
             <div className="modal-header flex items-start justify-between gap-3">
-                <h3 className="modal-title break-words min-w-0">{auditSentence(ev)}</h3>
-                <button type="button" onClick={onClose} aria-label="Close" className="btn btn-ghost btn-icon btn-sm shrink-0">
-                    <X size={14} />
-                </button>
+                <DialogTitle className="modal-title min-w-0 break-words">{auditSentence(ev)}</DialogTitle>
+                <DialogClose aria-label="Close" className="btn btn-ghost btn-icon btn-sm shrink-0">
+                    <X size={16} />
+                </DialogClose>
             </div>
             <div ref={bodyRef} className="modal-body overflow-y-auto space-y-4">
                 <dl className="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1.5 text-sm">
@@ -407,7 +390,7 @@ function AuditDetail({ ev, position, total, canPrev, canNext, busy, slideDir, on
                     </>}
                     <dt className="text-(--base-06)">Time</dt>
                     <dd className="text-(--base-09)">
-                        <time dateTime={ev.createdAt}>{absoluteTime(ev.createdAt)}</time>
+                        <time dateTime={ev.createdAt} className="srv-num">{absoluteTime(ev.createdAt)}</time>
                         <span className="text-(--base-06)"> ({timeAgo(ev.createdAt)})</span>
                     </dd>
                     {ev.ipAddress && <>
@@ -423,12 +406,12 @@ function AuditDetail({ ev, position, total, canPrev, canNext, busy, slideDir, on
                 </dl>
 
                 {meta.length > 0 && (
-                    <div className="rounded-lg border border-(--base-03) overflow-hidden">
+                    <div className="overflow-hidden rounded-lg bg-(--base-03)">
                         <table className="w-full text-sm">
                             <caption className="sr-only">Details</caption>
                             <tbody>
                                 {meta.map(([k, v]) => (
-                                    <tr key={k} className="border-b border-(--base-03) last:border-b-0">
+                                    <tr key={k} className="border-b border-(--base-04) last:border-b-0">
                                         <th scope="row" className="text-left font-normal text-(--base-06) px-3 py-1.5 align-top whitespace-nowrap">{k}</th>
                                         <td className="text-(--base-09) px-3 py-1.5 font-mono text-xs break-all">{valueText(v)}</td>
                                     </tr>
@@ -448,7 +431,7 @@ function AuditDetail({ ev, position, total, canPrev, canNext, busy, slideDir, on
                             {copied === 'copied' ? <Check size={12} /> : <Copy size={12} />}
                             {copied === 'copied' ? 'Copied' : copied === 'failed' ? 'Copy failed' : 'Copy'}
                         </button>
-                        <pre className="text-xs font-mono text-(--base-07) bg-(--base-01) border border-(--base-03) rounded-lg p-3 pr-24 overflow-x-auto">{raw}</pre>
+                        <pre className="overflow-x-auto rounded-lg bg-(--base-01) p-3 pr-24 font-mono text-xs text-(--base-07)">{raw}</pre>
                     </div>
                 </details>
             </div>
@@ -466,18 +449,18 @@ function AuditDetail({ ev, position, total, canPrev, canNext, busy, slideDir, on
                     Next <ChevronRight size={14} />
                 </button>
             </div>
-        </ModalPanel>
+        </>
     );
 }
 
 function EmptyState({ effectiveOn }: { effectiveOn: boolean }) {
     return (
-        <div className="text-center py-16 text-(--base-06) max-w-md mx-auto">
-            <AlertTriangle size={28} className="mx-auto" />
-            <p className="mt-3 text-sm">
+        <div className="srv-surface mx-auto flex max-w-md flex-col items-center gap-2 px-6 py-14 text-center">
+            <ScrollText size={24} className="text-(--base-05)" aria-hidden="true" />
+            <p className="text-sm text-(--base-07)">
                 {effectiveOn
                     ? 'Audit is active but no events have been recorded yet for the selected filter.'
-                    : 'Audit is dormant — it auto-activates the first time you invite a member. Solo-owner activity isn’t logged to save space.'}
+                    : 'Audit is dormant. It auto-activates the first time you invite a member. Solo-owner activity isn’t logged to save space.'}
             </p>
         </div>
     );

@@ -24,7 +24,7 @@ export default function PackActivity({ packId, showPack = false, compact = false
     }, [packId]);
 
     return (
-        <section className={compact ? '' : 'card p-4'}>
+        <section className={compact ? '' : 'srv-surface p-4'}>
             <h2 className="flex items-center gap-2 text-sm font-medium text-(--base-09) mb-3">
                 <History size={14} className="text-(--accent-light)" /> Activity
             </h2>

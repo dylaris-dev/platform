@@ -9,6 +9,8 @@ import { getStoreStatus, startStoreLink, getStoreAccountSummary, type StoreStatu
 import StoreAccountCard from '@/components/StoreAccountCard';
 import { useAppData } from '@/lib/AppDataContext';
 import { SkeletonCard } from '@/components/Skeleton';
+import PageHeader from '@/components/ui/PageHeader';
+import EmptyState from '@/components/ui/EmptyState';
 
 // Connect-store page. Links this panel account to a dylaris.com store account so
 // purchases/subscriptions can be tied back to it. The link is authenticated: the
@@ -59,19 +61,25 @@ export default function StoreConnectPage() {
     if (!featureFlags.store) return null;
 
     return (
-        <div className="max-w-2xl mx-auto p-6 space-y-6">
-            <header className="flex items-center gap-3">
-                <Store size={22} className="text-(--accent-light)" />
-                <div>
-                    <h1 className="text-xl font-display">Dylaris Store</h1>
-                    <p className="text-sm text-(--base-06)">Link this panel account to your store account for subscriptions and purchases.</p>
-                </div>
-            </header>
+        <main className="flex-1 overflow-y-auto app-page space-y-6">
+            <PageHeader
+                icon={<Store size={16} />}
+                title="Dylaris Store"
+                description="Link this panel account to your store account for subscriptions and purchases."
+            />
 
             {loading ? (
                 <SkeletonCard />
+            ) : status && status.success === false ? (
+                <EmptyState
+                    tone="error"
+                    icon={<CircleAlert size={20} />}
+                    title="Could not reach the store"
+                    description={status.message || 'The store did not answer, so the link state is unknown.'}
+                    action={<button onClick={() => { setLoading(true); refresh(); }} className="btn btn-secondary btn-sm">Retry</button>}
+                />
             ) : status?.linked ? (
-                <div className="card p-5 space-y-3">
+                <div className="srv-surface p-5 space-y-3">
                     <div className="flex items-center gap-2 text-(--success-light)">
                         <CircleCheck size={18} />
                         <span className="font-medium">Linked</span>
@@ -87,7 +95,7 @@ export default function StoreConnectPage() {
                     )}
                 </div>
             ) : (
-                <div className="card p-5 space-y-4">
+                <div className="srv-surface p-5 space-y-4">
                     <p className="text-sm text-(--base-07)">
                         You will be sent to the Dylaris store to sign in and confirm the link. Your panel account stays in full control; the store only learns which account to attach purchases to.
                     </p>
@@ -111,6 +119,6 @@ export default function StoreConnectPage() {
                 : <SkeletonCard />)}
 
 
-        </div>
+        </main>
     );
 }

@@ -208,7 +208,7 @@ function AccountRow({ account: a, kind, onEdit, onDelete, onAccess, onManual, on
 
             <div className="space-y-2">
                 <div className="flex items-center justify-between gap-2">
-                    <h4 className="mono-label">Zones</h4>
+                    <h4 className="srv-label">Zones</h4>
                     <div className="flex gap-1.5">
                         {canList && (
                             <button type="button" onClick={refresh} disabled={refreshing} className="btn btn-secondary btn-sm inline-flex items-center gap-1.5 disabled:opacity-40">

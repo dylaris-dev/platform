@@ -9,6 +9,9 @@ import {
 } from '@/lib/api/mailTemplates';
 import SettingsCard from '@/components/settings/SettingsCard';
 import { Skeleton } from '@/components/Skeleton';
+import EmptyState from '@/components/ui/EmptyState';
+import Segmented from '@/components/ui/Segmented';
+import Callout from '@/components/server/Callout';
 import { toast } from '@/components/ui/Toast';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import { useBusy } from '@/lib/useBusy';
@@ -41,10 +44,10 @@ export default function MailingTab() {
     ];
 
     return (
-        <div className="flex flex-col h-full min-h-0">
+        <div className="flex flex-col">
             <GuardedTabs items={TABS} active={tab} onChange={setTab} ariaLabel="Mailing" />
 
-            <div className="flex-1 overflow-y-auto pt-5">
+            <div className="pt-5">
                 {tab === 'delivery' ? (
                     <div className="space-y-6 max-w-3xl"><MailDeliverySection /></div>
                 ) : (
@@ -70,6 +73,7 @@ export default function MailingTab() {
 function MailTemplatesSection() {
     const [templates, setTemplates] = useState<MailTemplate[]>([]);
     const [loading, setLoading] = useState(true);
+    const [loadError, setLoadError] = useState<string | null>(null);
     const [activeKey, setActiveKey] = useState<string>('');
     const [subject, setSubject] = useState('');
     const [body, setBody] = useState('');
@@ -94,9 +98,12 @@ function MailTemplatesSection() {
         const res = await listMailTemplates();
         setLoading(false);
         if (!res.success || !Array.isArray(res.templates)) {
-            toast(res.message || 'Could not load the mail templates.', false);
+            const msg = res.message || 'Could not load the mail templates.';
+            setLoadError(msg);
+            toast(msg, false);
             return;
         }
+        setLoadError(null);
         setTemplates(res.templates);
         const next = res.templates.find((t: MailTemplate) => t.key === (keepKey || activeKey)) || res.templates[0];
         if (next) {
@@ -175,6 +182,18 @@ function MailTemplatesSection() {
 
     if (loading) return <div className="space-y-3"><Skeleton className="h-8 w-56" /><Skeleton className="h-64 w-full" /></div>;
 
+    if (loadError && templates.length === 0) {
+        return (
+            <EmptyState
+                tone="error"
+                icon={<AlertTriangle size={20} />}
+                title="Mail templates could not be loaded"
+                description={loadError}
+                action={<button type="button" className="btn btn-secondary btn-sm" onClick={() => void load()}>Retry</button>}
+            />
+        );
+    }
+
     return (
         <SettingsCard
             title="Mail templates"
@@ -185,8 +204,9 @@ function MailTemplatesSection() {
                 <nav className="flex flex-col gap-1" aria-label="Mail templates">
                     {templates.map(t => (
                         <button key={t.key} type="button" onClick={() => select(t)}
-                            className={`text-left px-3 py-2 rounded-md transition-colors ${
-                                t.key === activeKey ? 'bg-(--accent-ghost) text-(--base-09)' : 'text-(--base-07) hover:bg-(--base-02)'
+                            aria-current={t.key === activeKey ? 'true' : undefined}
+                            className={`rounded-lg px-3 py-2 text-left transition-colors focus-visible:outline-none focus-visible:[box-shadow:var(--focus-ring)] ${
+                                t.key === activeKey ? 'bg-(--base-03) text-(--base-09)' : 'text-(--base-07) hover:bg-(--base-03)'
                             }`}>
                             <span className="block text-sm">{t.name}</span>
                             <span className="block text-xs text-(--base-06)">
@@ -215,7 +235,7 @@ function MailTemplatesSection() {
                                 {active.variables.map(v => (
                                     <button key={v.name} type="button" title={`${v.description} (e.g. ${v.example})`}
                                         onClick={() => insertVariable(v.name)}
-                                        className="px-2 py-1 rounded font-mono text-xs bg-(--base-02) text-(--base-08) border border-(--base-04) hover:border-(--accent) hover:text-(--accent-light) transition-colors">
+                                        className="rounded-full bg-(--base-03) px-2.5 py-1 font-mono text-xs text-(--base-08) transition-colors hover:bg-(--base-04) hover:text-(--accent-light) focus-visible:outline-none focus-visible:[box-shadow:var(--focus-ring)]">
                                         {`{{${v.name}}}`}
                                     </button>
                                 ))}
@@ -255,24 +275,21 @@ function MailTemplatesSection() {
                         </div>
 
                         {dirty && (
-                            <div className="alert alert-warning text-xs">
-                                <AlertTriangle size={13} className="text-(--warning-light) shrink-0 mt-0.5" />
-                                <p>Unsaved changes. Preview and the test send use what is in the boxes; the platform keeps sending the saved version until you save.</p>
-                            </div>
+                            <Callout tone="warning" icon={<AlertTriangle size={15} />}>
+                                Unsaved changes. Preview and the test send use what is in the boxes; the platform keeps sending the saved version until you save.
+                            </Callout>
                         )}
 
                         {preview && (
-                            <div className="border border-(--base-04) rounded-md overflow-hidden">
-                                <div className="flex items-center gap-1 px-2 py-1.5 border-b border-(--base-04) bg-(--base-02)">
-                                    <span className="text-xs text-(--base-06) mr-2 truncate">{preview.subject}</span>
-                                    {(['html', 'text'] as const).map(tab => (
-                                        <button key={tab} type="button" onClick={() => setPreviewTab(tab)}
-                                            className={`px-2 py-0.5 rounded text-xs transition-colors ${
-                                                previewTab === tab ? 'bg-(--accent-ghost) text-(--accent-light)' : 'text-(--base-06) hover:text-(--base-08)'
-                                            }`}>
-                                            {tab === 'html' ? 'HTML' : 'Plain text'}
-                                        </button>
-                                    ))}
+                            <div className="overflow-hidden rounded-lg bg-(--base-03)">
+                                <div className="flex items-center justify-between gap-3 px-3 py-2">
+                                    <span className="min-w-0 truncate text-xs text-(--base-07)">{preview.subject}</span>
+                                    <Segmented
+                                        ariaLabel="Preview format"
+                                        value={previewTab}
+                                        onChange={setPreviewTab}
+                                        options={[{ id: 'html', label: 'HTML' }, { id: 'text', label: 'Plain text' }]}
+                                    />
                                 </div>
                                 {previewTab === 'html' ? (
                                     <iframe title="Mail preview" sandbox="" srcDoc={preview.html}

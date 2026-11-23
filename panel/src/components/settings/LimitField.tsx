@@ -1,5 +1,7 @@
 'use client';
 
+import Switch from '@/components/ui/Switch';
+
 /**
  * LimitField is the ONE control for every "how many may they have" number in the
  * panel.
@@ -79,21 +81,16 @@ export function LimitField({
                         }}
                         className="input-mono w-20 text-center"
                     />
-                    {unit && <span className="text-[10px] font-mono uppercase text-(--base-06)">{unit}</span>}
+                    {unit && <span className="text-xs text-(--base-06)">{unit}</span>}
                 </div>
             )}
             <label className="flex items-center gap-1.5 cursor-pointer select-none">
-                <button
-                    type="button"
-                    role="switch"
-                    aria-checked={unlimited}
-                    aria-label={unlimitedLabel}
-                    onClick={() => onChange(unlimited ? 0 : null)}
-                    className={`toggle-track ${unlimited ? 'toggle-track-on' : 'toggle-track-off'}`}
-                >
-                    <span className={`toggle-knob ${unlimited ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
-                </button>
-                <span className="text-[10px] font-mono uppercase text-(--base-06)">{unlimitedLabel}</span>
+                <Switch
+                    ariaLabel={unlimitedLabel}
+                    checked={unlimited}
+                    onChange={() => onChange(unlimited ? 0 : null)}
+                />
+                <span className="text-xs text-(--base-06)">{unlimitedLabel}</span>
             </label>
         </div>
     );

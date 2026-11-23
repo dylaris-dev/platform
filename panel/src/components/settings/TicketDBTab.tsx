@@ -5,7 +5,7 @@ import { toast as notifyToast } from '@/components/ui/Toast';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
     Database, ArrowRightCircle, ShieldAlert, Download, Trash2, Loader2,
-    CircleCheck, CircleAlert, AlertTriangle, X,
+    CircleCheck, CircleAlert, AlertTriangle, X, MoreHorizontal,
 } from 'lucide-react';
 import {
     getTicketMigrationStatus, testTicketDBConnection,
@@ -14,18 +14,22 @@ import {
     initTicketRestore, executeTicketRestore,
     BackupSummary,
 } from '@/lib/api/ticketMigration';
-import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
+import { SkeletonCard } from '@/components/Skeleton';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import SettingsPage from '@/components/settings/SettingsPage';
 import { useConnectionTest, readConnTest } from '@/lib/connectionTest';
 import { TestConnectionButton, ConnectionTestNote } from '@/components/ui/ConnectionTest';
 import ModalPanel from '@/components/ui/ModalPanel';
 import { fmtDateTime } from '@/lib/time';
+import Menu from '@/components/ui/Menu';
+import EmptyState from '@/components/ui/EmptyState';
+import { RowList, Row } from '@/components/ui/RowList';
+import SettingsCard from '@/components/settings/SettingsCard';
 
 export default function TicketDBTab() {
     const [status, setStatus] = useState<{ mainCounts: Record<string, number>; externalConfigured: boolean } | null>(null);
     const [loading, setLoading] = useState(true);
-
+    const [loadError, setLoadError] = useState<string | null>(null);
 
     const flash = (msg: string, ok = true) => {
         notifyToast(msg, ok);
@@ -36,6 +40,9 @@ export default function TicketDBTab() {
         const res = await getTicketMigrationStatus();
         if (res.success) {
             setStatus({ mainCounts: res.mainCounts || {}, externalConfigured: !!res.externalConfigured });
+            setLoadError(null);
+        } else {
+            setLoadError(res.message || 'Failed to load the ticket database status.');
         }
         setLoading(false);
     };
@@ -43,12 +50,7 @@ export default function TicketDBTab() {
     useEffect(() => { reload(); }, []);
 
     if (loading) return (
-        <div className="space-y-8 max-w-4xl">
-            <SkeletonHeader />
-            <SkeletonCard height="h-32" />
-            <SkeletonCard height="h-56" />
-            <SkeletonCard height="h-40" />
-        </div>
+        <SettingsPage title="Ticket DB management" loading skeletonCards={3} width="4xl">{null}</SettingsPage>
     );
 
     return (
@@ -58,10 +60,12 @@ export default function TicketDBTab() {
             width="4xl"
             description="Migrate the ticket store to an external Postgres instance, take JSON backups, and restore from one under a danger-zone gate."
         >
+            {loadError && (
+                <EmptyState tone="error" icon={<CircleAlert size={20} />} title="Ticket database status could not be loaded" description={loadError} />
+            )}
 
             {status && (
-                <section className="card p-5 border border-(--base-03) space-y-3">
-                    <h3 className="mono-label flex items-center gap-2">Current state</h3>
+                <SettingsCard title="Current state" icon={Database}>
                     <div className="text-sm">
                         {status.externalConfigured ? (
                             <p className="text-(--success-light) flex items-center gap-1">
@@ -74,14 +78,12 @@ export default function TicketDBTab() {
                         )}
                     </div>
                     <CountsTable label="Main DB" counts={status.mainCounts} />
-                </section>
+                </SettingsCard>
             )}
 
             <MigrationCard onChanged={reload} flash={flash} />
 
             <BackupCard onChanged={reload} flash={flash} />
-
-
         </SettingsPage>
     );
 }
@@ -91,10 +93,10 @@ function CountsTable({ label, counts }: { label: string; counts: Record<string, 
     if (entries.length === 0) return null;
     return (
         <div>
-            <p className="text-xs font-mono text-(--base-06) mb-1.5">{label}</p>
+            <p className="srv-label mb-1.5">{label}</p>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
                 {entries.map(([table, n]) => (
-                    <div key={table} className="flex items-center justify-between p-2 rounded-md bg-(--base-02) border border-(--base-03) text-xs">
+                    <div key={table} className="flex items-center justify-between rounded-lg bg-(--base-03) p-2 text-xs">
                         <span className="font-mono text-(--base-07) truncate">{table}</span>
                         <span className="font-mono text-(--base-09)">{n}</span>
                     </div>
@@ -149,17 +151,18 @@ function MigrationCard({ onChanged, flash }: { onChanged: () => void; flash: (ms
     };
 
     return (
-        <section className="card p-5 border border-(--base-03) space-y-4">
-            <header className="flex items-center justify-between gap-3">
-                <h3 className="mono-label flex items-center gap-2"><ArrowRightCircle size={14} /> Migrate to external DB</h3>
-            </header>
-            <p className="text-xs text-(--base-06)">
+        <SettingsCard
+            title="Migrate to external DB"
+            icon={ArrowRightCircle}
+            description={<>
                 Enter the target Postgres DSN, test the connection, then dry-run to compare row counts before executing.
                 Migrations use <span className="font-mono">ON CONFLICT DO NOTHING</span> so re-runs are safe.
-            </p>
+            </>}
+        >
             <div className="flex flex-col gap-[5px]">
-                <label className="input-label">Target DSN</label>
+                <label className="input-label" htmlFor="ticket-db-dsn">Target DSN</label>
                 <input
+                    id="ticket-db-dsn"
                     type="text"
                     value={url}
                     onChange={e => { test.clear(); setUrl(e.target.value); }}
@@ -200,7 +203,7 @@ function MigrationCard({ onChanged, flash }: { onChanged: () => void; flash: (ms
                     <CountsTable label="Skipped (existing)" counts={migrationResult.skipped} />
                 </div>
             )}
-        </section>
+        </SettingsCard>
     );
 }
 
@@ -216,6 +219,7 @@ function BackupCard({ onChanged, flash }: { onChanged: () => void; flash: (msg: 
     const load = async () => {
         const res = await listTicketBackups();
         if (res.success) setBackups(res.backups || []);
+        else flash(res.message || 'Failed to load backups.', false);
         setLoading(false);
     };
 
@@ -248,56 +252,56 @@ function BackupCard({ onChanged, flash }: { onChanged: () => void; flash: (msg: 
     };
 
     return (
-        <section className="card p-5 border border-(--base-03) space-y-4">
-            <header className="flex items-center justify-between gap-3">
-                <h3 className="mono-label flex items-center gap-2"><Database size={14} /> Backups</h3>
+        <SettingsCard
+            title="Backups"
+            icon={Database}
+            description={<>JSON dumps of every ticket table stored locally under <span className="font-mono">dylaris_data/ticket-backups/</span>.</>}
+            actions={
                 <button type="button" onClick={handleCreate} disabled={creating}
-                    className="btn btn-primary btn-sm inline-flex items-center gap-2 disabled:opacity-40">
+                    className="btn btn-primary btn-sm inline-flex items-center gap-2">
                     {creating && <Loader2 size={12} className="animate-spin" />}
                     Create backup
                 </button>
-            </header>
-            <p className="text-xs text-(--base-06)">
-                JSON dumps of every ticket table stored locally under <span className="font-mono">dylaris_data/ticket-backups/</span>.
-            </p>
-
+            }
+        >
             {loading ? (
-                <p className="text-sm text-(--base-06)">Loading…</p>
+                <div className="space-y-2" aria-busy="true">
+                    <SkeletonCard height="h-12" />
+                    <SkeletonCard height="h-12" />
+                </div>
             ) : backups.length === 0 ? (
-                <p className="text-sm text-(--base-06) italic">No backups yet.</p>
+                <EmptyState bare icon={<Database size={20} />} title="No backups yet" />
             ) : (
-                <ul className="space-y-1.5">
+                <RowList label="Ticket backups" className="-mx-1.5 !p-0">
                     {backups.map(b => (
-                        <li key={b.name} className="flex items-center justify-between gap-2 p-2 rounded-md bg-(--base-02) border border-(--base-03)">
-                            <div className="min-w-0">
-                                <p className="text-sm font-mono truncate">{b.name}</p>
-                                <p className="text-[10px] text-(--base-06)">
-                                    {formatBytes(b.size)} · {fmtDateTime(b.createdAt)}
-                                </p>
-                            </div>
-                            <div className="flex items-center gap-1 shrink-0">
-                                <a href={downloadTicketBackupURL(b.name)} download={b.name}
-                                    className="p-1.5 rounded text-(--accent-light) hover:bg-(--accent-ghost)" title="Download">
-                                    <Download size={13} />
-                                </a>
-                                <button type="button" onClick={() => setRestoreFor(b)}
-                                    className="p-1.5 rounded text-(--warning-light) hover:bg-(--warning-ghost)" title="Restore (Danger Zone)">
-                                    <ShieldAlert size={13} />
-                                </button>
-                                <button type="button" onClick={() => handleDelete(b)} disabled={deleting === b.name}
-                                    className="p-1.5 rounded text-(--error-light) hover:bg-(--error-ghost) disabled:opacity-40" title="Delete">
-                                    {deleting === b.name ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
-                                </button>
-                            </div>
-                        </li>
+                        <Row
+                            key={b.name}
+                            title={<span className="font-mono">{b.name}</span>}
+                            meta={<>{formatBytes(b.size)} &middot; {fmtDateTime(b.createdAt)}</>}
+                            actions={
+                                deleting === b.name
+                                    ? <Loader2 size={14} className="mx-2 animate-spin text-(--base-06)" aria-label="Deleting" />
+                                    : (
+                                        <Menu
+                                            trigger={<button type="button" className="app-icon-btn" aria-label={`Actions for ${b.name}`}><MoreHorizontal size={16} /></button>}
+                                            items={[
+                                                { label: 'Download', icon: <Download size={14} />, render: <a href={downloadTicketBackupURL(b.name)} download={b.name} /> },
+                                                { label: 'Restore (Danger Zone)', icon: <ShieldAlert size={14} />, onSelect: () => setRestoreFor(b) },
+                                                { type: 'separator' },
+                                                { label: 'Delete', icon: <Trash2 size={14} />, danger: true, onSelect: () => handleDelete(b) },
+                                            ]}
+                                        />
+                                    )
+                            }
+                        />
                     ))}
-                </ul>
+                </RowList>
             )}
 
             {restoreFor && (
                 <RestoreDangerModal backup={restoreFor} onClose={() => setRestoreFor(null)} onDone={() => { setRestoreFor(null); flash('Restore complete.'); onChanged(); }} />
             )}
-        </section>
+        </SettingsCard>
     );
 }
 
@@ -351,7 +355,7 @@ function RestoreDangerModal({ backup, onClose, onDone }: { backup: BackupSummary
 
     return (
         <div className="modal-overlay">
-            <ModalPanel className="card w-full max-w-lg mx-4 border-2 border-(--error)/30">
+            <ModalPanel className="card w-full max-w-lg mx-4 border border-(--error-border)">
                 <div className="modal-header flex items-center justify-between bg-(--error-ghost) text-(--error-light) rounded-t-md">
                     <h3 className="modal-title flex items-center gap-2"><ShieldAlert size={18} /> Danger Zone — Restore</h3>
                     <button type="button" onClick={onClose} className="text-(--base-07) hover:text-(--base-09)"><X size={18} /></button>

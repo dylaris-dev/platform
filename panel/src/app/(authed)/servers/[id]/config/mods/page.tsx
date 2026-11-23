@@ -9,6 +9,7 @@ import { findConfigFiles, type ListedEntry } from '@/lib/modConfigFiles';
 import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import { toast } from '@/components/ui/Toast';
+import Tooltip from '@/components/ui/Tooltip';
 
 const CodeMirrorEditor = lazy(() => import('@dylaris/ui-filebrowser').then(m => ({ default: m.CodeMirrorEditor })));
 
@@ -127,28 +128,29 @@ export default function ModConfigsPage() {
     }, [files, query]);
 
     if (!featureFlags?.modConfigs) {
-        return <p className="text-sm text-(--base-06)">The config editor is not enabled on this platform.</p>;
+        return <div className="srv-surface px-6 py-14 text-center text-sm text-(--base-06)">The config editor is not enabled on this platform.</div>;
     }
     if (!sub) {
-        return <p className="text-sm text-(--base-06)">Install or select a server first; there are no config files yet.</p>;
+        return <div className="srv-surface px-6 py-14 text-center text-sm text-(--base-06)">Install or select a server first; there are no config files yet.</div>;
     }
 
     return (
-        <div className="flex flex-col lg:flex-row gap-3 h-[calc(100vh-14rem)] min-h-105">
-            <aside className="lg:w-80 shrink-0 flex flex-col rounded-xl bg-(--base-01) border border-(--base-03) min-h-0">
-                <div className="p-3 border-b border-(--base-03) flex flex-col gap-2">
+        <div className="flex flex-col lg:flex-row gap-6 h-[calc(100vh-16rem)] min-h-105">
+            <aside className="srv-surface lg:w-80 shrink-0 flex flex-col overflow-hidden min-h-0">
+                <div className="p-4 flex flex-col gap-3">
                     <div className="flex items-center justify-between gap-2">
-                        <span className="input-label flex items-center gap-1.5">
+                        <span className="srv-config-card-title flex items-center gap-2">
                             Mod and plugin configs
-                            <span className="badge badge-accent text-[10px]">Beta</span>
+                            <span className="srv-config-pill">Beta</span>
                         </span>
-                        <button onClick={scan} disabled={files === null} className="btn btn-secondary btn-sm" title="Scan again">
-                            <RefreshCw size={12} className={files === null ? 'animate-spin motion-reduce:animate-none' : ''} />
-                            <span className="sr-only">Scan again</span>
-                        </button>
+                        <Tooltip content="Scan again">
+                            <button type="button" onClick={scan} disabled={files === null} aria-label="Scan again" className="btn btn-ghost btn-icon btn-sm">
+                                <RefreshCw size={14} className={files === null ? 'animate-spin motion-reduce:animate-none' : ''} />
+                            </button>
+                        </Tooltip>
                     </div>
                     <div className="relative">
-                        <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-(--base-06) pointer-events-none" />
+                        <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-(--base-06) pointer-events-none" />
                         <input
                             value={query}
                             onChange={e => setQuery(e.target.value)}
@@ -158,7 +160,7 @@ export default function ModConfigsPage() {
                         />
                     </div>
                 </div>
-                <div className="flex-1 overflow-y-auto p-1.5 min-h-0">
+                <div className="flex-1 overflow-y-auto px-2 pb-2 min-h-0">
                     {files === null ? (
                         <div className="space-y-1.5 p-1.5" aria-busy="true">
                             {Array.from({ length: 8 }, (_, i) => <div key={i} className="h-6 rounded-md bg-(--base-03) animate-pulse motion-reduce:animate-none" />)}
@@ -176,8 +178,8 @@ export default function ModConfigsPage() {
                                     <button
                                         onClick={() => openFile(f)}
                                         aria-current={f === open ? 'true' : undefined}
-                                        className={`w-full text-left px-2 py-1.5 rounded-md font-mono text-xs truncate transition-colors ${
-                                            f === open ? 'bg-(--accent-ghost) text-(--accent-light)' : 'text-(--base-07) hover:bg-(--base-03) hover:text-(--base-09)'
+                                        className={`w-full text-left px-2.5 py-1.5 rounded-md font-mono text-xs truncate transition-colors focus-visible:outline-none focus-visible:[box-shadow:var(--focus-ring)] ${
+                                            f === open ? 'bg-(--base-03) text-(--accent-light)' : 'text-(--base-07) hover:bg-(--base-03) hover:text-(--base-09)'
                                         }`}
                                         title={f}
                                     >
@@ -196,7 +198,7 @@ export default function ModConfigsPage() {
                 </div>
             </aside>
 
-            <section className="flex-1 flex flex-col rounded-xl bg-(--base-01) border border-(--base-03) min-h-0 min-w-0">
+            <section className="srv-surface flex-1 flex flex-col overflow-hidden min-h-0 min-w-0">
                 {open === null ? (
                     <div className="flex-1 flex flex-col items-center justify-center gap-2 text-sm text-(--base-06) p-6 text-center">
                         <FileCode2 size={22} className="text-(--base-05)" />
@@ -204,12 +206,12 @@ export default function ModConfigsPage() {
                     </div>
                 ) : (
                     <>
-                        <div className="flex items-center justify-between gap-3 px-3 py-2 border-b border-(--base-03)">
+                        <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-(--base-03)">
                             <span className="font-mono text-xs text-(--base-08) truncate">{open}</span>
                             <div className="flex items-center gap-2 shrink-0">
-                                {dirty && <span className="mono-label text-(--warning-light)">unsaved</span>}
+                                {dirty && <span className="srv-config-pill" data-tone="warning">Unsaved</span>}
                                 <button onClick={save} disabled={!dirty || saving} className="btn btn-primary btn-sm">
-                                    <Save size={12} />
+                                    <Save size={14} />
                                     {saving ? 'Saving…' : 'Save'}
                                 </button>
                             </div>

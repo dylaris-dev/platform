@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { Users } from 'lucide-react';
 import UserManagementTab from '@/components/settings/UserManagementTab';
+import SettingsPage from '@/components/settings/SettingsPage';
 
 // Rules about accounts, not the accounts themselves. The roster moved to
 // /admin/users - this page had been both, and a page that is a list of people
@@ -20,22 +21,17 @@ import UserManagementTab from '@/components/settings/UserManagementTab';
 // beside the templates it sends.
 export default function SettingsUsersPage() {
     return (
-        <div className="flex flex-col h-full min-h-0">
-            <div className="flex flex-wrap items-start justify-between gap-3 mb-5">
-                <div className="min-w-0">
-                    <h2 className="h-section">User settings</h2>
-                    <p className="text-sm text-(--base-06)">
-                        How accounts behave here: registration, sign-in, password reset, renames and retention.
-                    </p>
-                </div>
+        <SettingsPage
+            title="User settings"
+            description="How accounts behave here: registration, sign-in, password reset, renames and retention."
+            width="full"
+            actions={
                 <Link href="/admin/users" className="btn btn-secondary btn-sm shrink-0">
                     <Users size={13} /> Manage user accounts
                 </Link>
-            </div>
-
-            <div className="flex-1 min-h-0">
-                <UserManagementTab />
-            </div>
-        </div>
+            }
+        >
+            <UserManagementTab />
+        </SettingsPage>
     );
 }

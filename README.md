@@ -1457,12 +1457,13 @@ release notes - all must pass before an image is built. Details in
 - **Go:** keep the **Handlers / Services / Store** separation strict. Core's handlers live in one package per area under `core/handlers/<area>/`, each taking a `Deps` struct; the import layers are enforced by `core/layering_test.go` (see [TESTING.md](TESTING.md)). Always handle errors (`if err != nil`, wrap with `fmt.Errorf("...: %w", err)`); no runtime panics. After changing any module, run `go work sync`. Platform and Gateway are separate workspaces — never import across the repo boundary; cross-repo communication goes through shared Redis keys/queues, Core's warp HTTP API, the Hub's internal HTTP API and frozen wire contracts (such as the Beam stream header), never Go imports.
 - **Panel (Next.js, App Router):** use the App Router (`/app`) — no Pages Router. Server Components are the default; add `'use client'` only when you need state/effects/browser APIs. TypeScript strict, with interfaces for props and API responses.
 - **Tailwind v4:** there is **no** `tailwind.config.{js,ts}`. Theme lives in the `@theme` directive in `panel/src/app/globals.css` (the single source of truth for design tokens — colors, spacing, radius, fonts). Don't scatter hardcoded values.
+- **Panel UI parts:** interactive widgets come from the Vercel UI SDK (`@ui-sdk/react`, pinned to an exact beta) through the kit in `panel/src/components/ui/` (Menu, Tabs, Select, Segmented, Switch, Tooltip, NumberField, PageHeader, Section, EmptyState, RowList). Use the kit instead of hand-rolling roles, focus traps or click-outside handling. Every route renders inside a non-scrolling flex row, so a page or its `layout.tsx` supplies `main className="flex-1 min-h-0 overflow-y-auto app-page"`.
 - **Secrets** are env-only; never hardcode them.
 
 ## Tech stack
 
 - **Backend:** Go (gorilla/mux, gRPC, go-redis), structured as a `go.work` workspace (`core`, `node`, plus the log-shipper and shared libraries).
-- **Frontend:** Next.js (App Router) + TypeScript + Tailwind CSS v4.
+- **Frontend:** Next.js (App Router) + TypeScript + Tailwind CSS v4 + Vercel UI SDK (`@ui-sdk/react`).
 - **Data:** PostgreSQL 16 / TimescaleDB, Redis-compatible **Valkey**.
 - **Runtime:** Docker / Docker Compose / Docker Swarm.
 

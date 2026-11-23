@@ -6,6 +6,7 @@ import SettingsCard from '@/components/settings/SettingsCard';
 import { toast } from '@/components/ui/Toast';
 import { getVoicePermissions, setVoicePermission, deleteVoicePermission, type VoicePermission } from '@/lib/api';
 import { voiceAccessDescription } from '@/lib/voiceChat';
+import Select from '@/components/ui/Select';
 
 type ScopeKind = 'server' | 'user' | 'role';
 
@@ -94,7 +95,7 @@ export default function VoiceAccessCard({ managed = false }: { managed?: boolean
                         const [k, ...rest] = r.scope.split(':');
                         return (
                             <div key={r.scope} className="flex flex-wrap items-center gap-3 p-3 text-sm">
-                                <span className="mono-label text-(--base-06) w-14">{KIND_LABEL[k as ScopeKind] ?? k}</span>
+                                <span className="srv-label text-(--base-06) w-14">{KIND_LABEL[k as ScopeKind] ?? k}</span>
                                 <code className="input-mono text-xs text-(--base-08)">{rest.join(':')}</code>
                                 <span className={`badge ${r.allowed ? 'badge-success' : 'badge-error'}`}>
                                     {r.allowed ? 'Allowed' : 'Denied'}
@@ -122,15 +123,12 @@ export default function VoiceAccessCard({ managed = false }: { managed?: boolean
                 onSubmit={e => { e.preventDefault(); void add(); }}
             >
                 <label className="flex flex-col gap-1">
-                    <span className="mono-label">Scope</span>
-                    <select value={kind} onChange={e => setKind(e.target.value as ScopeKind)} className="input-field text-sm w-28">
-                        <option value="server">Server</option>
-                        <option value="user">User</option>
-                        <option value="role">Role</option>
-                    </select>
+                    <span className="srv-label">Scope</span>
+                    <Select ariaLabel="Scope" value={kind} onChange={v => setKind(v as ScopeKind)} className="w-28"
+                        options={[{ value: 'server', label: 'Server' }, { value: 'user', label: 'User' }, { value: 'role', label: 'Role' }]} />
                 </label>
                 <label className="flex flex-col gap-1 flex-1 min-w-36">
-                    <span className="mono-label">{kind === 'user' ? 'User ID' : kind === 'role' ? 'Role ID' : 'Server ID'}</span>
+                    <span className="srv-label">{kind === 'user' ? 'User ID' : kind === 'role' ? 'Role ID' : 'Server ID'}</span>
                     <input
                         value={id}
                         onChange={e => setId(e.target.value)}
@@ -140,11 +138,9 @@ export default function VoiceAccessCard({ managed = false }: { managed?: boolean
                     />
                 </label>
                 <label className="flex flex-col gap-1">
-                    <span className="mono-label">Voice chat</span>
-                    <select value={allowed ? 'allow' : 'deny'} onChange={e => setAllowed(e.target.value === 'allow')} className="input-field text-sm w-28">
-                        <option value="allow">Allow</option>
-                        <option value="deny">Deny</option>
-                    </select>
+                    <span className="srv-label">Voice chat</span>
+                    <Select ariaLabel="Voice chat" value={allowed ? 'allow' : 'deny'} onChange={v => setAllowed(v === 'allow')} className="w-28"
+                        options={[{ value: 'allow', label: 'Allow' }, { value: 'deny', label: 'Deny' }]} />
                 </label>
                 <button type="submit" className="btn btn-primary btn-sm" disabled={adding || !idOk}>
                     {adding ? <Loader2 size={13} className="animate-spin" aria-hidden="true" /> : <Plus size={13} aria-hidden="true" />}

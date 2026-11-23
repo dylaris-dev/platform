@@ -1,13 +1,15 @@
 "use client";
 
-import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React, { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import { ChevronDown, Star } from 'lucide-react';
+import Menu, { type MenuEntry } from '@/components/ui/Menu';
+import Link from 'next/link';
 import { AppModule } from '../lib/api';
 import { DynamicIcon } from '../lib/icons';
 import { useAppData } from '@/lib/AppDataContext';
 import { useLayout } from '@/lib/useBreakpoint';
-import GuardedLink from '@/components/GuardedLink';
+import GuardedLink, { useGuardedNav } from '@/components/GuardedLink';
 import HelpTourButton from '@/components/help/HelpTourButton';
 
 interface NavbarProps {
@@ -122,7 +124,6 @@ export default function Navbar({ children, brand }: NavbarProps) {
   const rowRef = useRef<HTMLDivElement>(null);
   const measureRef = useRef<HTMLDivElement>(null);
   const [visibleCount, setVisibleCount] = useState(rest.length);
-  const [menuOpen, setMenuOpen] = useState(false);
 
   // How many fit. Measured rather than derived from a breakpoint, because the
   // count is admin-controlled: an install with four modules and one with
@@ -154,43 +155,32 @@ export default function Navbar({ children, brand }: NavbarProps) {
     return () => ro.disconnect();
   }, [rest.length, iconOnly, pinned]);
 
-  // Close on navigation. GuardedLink owns its own click (it may pop the
-  // unsaved-changes dialog instead of navigating), so the menu cannot close
-  // itself from an onClick without defeating that guard.
-  useEffect(() => { setMenuOpen(false); }, [pathname]);
-
-  useEffect(() => {
-    if (!menuOpen) return;
-    const close = (e: MouseEvent) => {
-      if (!(e.target as HTMLElement).closest('.nav-overflow')) setMenuOpen(false);
-    };
-    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') setMenuOpen(false); };
-    document.addEventListener('mousedown', close);
-    document.addEventListener('keydown', esc);
-    return () => {
-      document.removeEventListener('mousedown', close);
-      document.removeEventListener('keydown', esc);
-    };
-  }, [menuOpen]);
-
   const visible = rest.slice(0, visibleCount);
   const overflow = rest.slice(visibleCount);
 
-  const itemClass = (isActive: boolean) =>
-    `btn text-sm ${iconOnly ? 'px-2 py-1.5' : 'px-3.5 py-1.5'} ${
-      isActive
-        ? 'bg-(--accent-ghost) text-(--accent-light) border border-(--accent-border)'
-        : 'bg-transparent text-(--base-07) border border-transparent hover:bg-(--base-04)/50 hover:text-(--base-09)'
-    }`;
+  // Same link language as the server tabs: text + icon, violet text and a
+  // 2px underline when active.
+  const itemClass = 'app-nav-link';
 
   const isActiveHref = (href: string) => pathname === href || pathname.startsWith(href + '/');
 
+  // A menu item cannot host a GuardedLink (the menu unmounts on select and
+  // takes the dialog with it), so the guard lives here and the items call it.
+  const nav = useGuardedNav();
+
   const itemBody = (module: AppModule, isActive: boolean) => (
     <>
-      <DynamicIcon name={module.icon || 'grid-2x2'} size={18} className={`transition-colors ${isActive ? 'text-(--accent-light)' : 'text-(--base-06) group-hover:text-(--base-08)'}`} />
-      {!iconOnly && <span className="tracking-wide">{module.name}</span>}
+      <DynamicIcon name={module.icon || 'grid-2x2'} size={16} />
+      {!iconOnly && <span>{module.name}</span>}
     </>
   );
+
+  const overflowItems: MenuEntry[] = overflow.map(module => ({
+    id: String(module.id),
+    label: module.name,
+    icon: <DynamicIcon name={module.icon || 'grid-2x2'} size={16} />,
+    render: <Link href={moduleHref(module)} onClick={e => nav.intercept(e, moduleHref(module))} />,
+  }));
 
   const renderItem = (module: AppModule) => {
     const href = moduleHref(module);
@@ -200,7 +190,9 @@ export default function Navbar({ children, brand }: NavbarProps) {
         key={module.id}
         href={href}
         title={iconOnly ? module.name : undefined}
-        className={itemClass(isActive)}
+        aria-label={iconOnly ? module.name : undefined}
+        aria-current={isActive ? 'page' : undefined}
+        className={itemClass}
       >
         {itemBody(module, isActive)}
       </GuardedLink>
@@ -214,18 +206,19 @@ export default function Navbar({ children, brand }: NavbarProps) {
   // the second time at -9999px - so tabbing through the nav walked focus off the
   // side of the screen with nothing visible to show where it had gone.
   const renderMeasureItem = (module: AppModule) => (
-    <span key={module.id} data-measure-item className={itemClass(false)}>
+    <span key={module.id} data-measure-item className={itemClass}>
       {itemBody(module, false)}
     </span>
   );
 
   return (
-    <nav className="w-full bg-(--base-01) border-b border-(--base-03) flex items-center justify-between px-6 py-2.5 shrink-0 relative z-30">
+    <nav aria-label="Modules" className="w-full h-14 bg-(--base-01) flex items-stretch justify-between px-6 shrink-0 relative z-30">
       {/* Branding. Width is handed in by the shell so it stays aligned with the
           sidebar underneath it - the two columns only line up because they are
           the same width, and a collapsed sidebar must not leave the logo
           hanging over the content. */}
       {brand}
+      {nav.dialog}
 
       {/* The measuring bench. Every entry, always, at the real styling and off
           the flow, so the widths it reports do not depend on what is currently
@@ -234,12 +227,12 @@ export default function Navbar({ children, brand }: NavbarProps) {
       <div
         ref={measureRef}
         aria-hidden="true"
-        className="absolute -left-[9999px] top-0 flex items-center gap-1 pointer-events-none"
+        className="absolute -left-[9999px] top-0 flex items-stretch gap-1 pointer-events-none"
       >
         {pinned && renderMeasureItem(pinned)}
         {rest.map(renderMeasureItem)}
-        <span data-measure-trigger className={itemClass(false)}>
-          <span className="tracking-wide">More</span>
+        <span data-measure-trigger className={itemClass}>
+          <span>More</span>
           <ChevronDown size={16} />
         </span>
       </div>
@@ -247,56 +240,44 @@ export default function Navbar({ children, brand }: NavbarProps) {
       {/* Navigation modules. Never scrolled out of reach: the strip used to be
           overflow-x-auto with the scrollbar hidden, so entries past the fold
           were unreachable AND invisible. */}
-      <div ref={rowRef} className="flex items-center gap-1 flex-1 min-w-0">
+      <div ref={rowRef} className="flex items-stretch gap-1 flex-1 min-w-0">
         {pinned && renderItem(pinned)}
 
         {/* Only the collapsible half is clipped. The trigger sits OUTSIDE it,
             because a dropdown anchored inside an overflow-hidden box is drawn
             and then cut off - which is what made the old menu look like a
             button that did nothing. */}
-        <div className="flex items-center gap-1 flex-1 min-w-0 overflow-hidden">
+        <div className="flex items-stretch gap-1 flex-1 min-w-0 overflow-hidden">
           {visible.map(m => renderItem(m))}
         </div>
 
         {overflow.length > 0 && (
-          <div className="relative nav-overflow shrink-0">
-            <button
-              type="button"
-              onClick={() => setMenuOpen(o => !o)}
-              aria-haspopup="menu"
-              aria-expanded={menuOpen}
-              title={`${overflow.length} more`}
-              className={itemClass(overflow.some(m => isActiveHref(moduleHref(m))))}
-            >
-              <span className="tracking-wide">More</span>
-              <ChevronDown
-                size={16}
-                className={`transition-transform ${menuOpen ? 'rotate-180' : ''}`}
-                aria-hidden="true"
-              />
-            </button>
-            {menuOpen && (
-              <div className="dropdown-menu right-0 mt-2 w-52 animate-fade-in origin-top-right">
-                {overflow.map(module => (
-                  <GuardedLink
-                    key={module.id}
-                    href={moduleHref(module)}
-                    className="dropdown-item"
-                  >
-                    <DynamicIcon name={module.icon || 'grid-2x2'} size={18} className="mr-3 text-(--base-06)" />
-                    {module.name}
-                  </GuardedLink>
-                ))}
-              </div>
-            )}
+          <div className="shrink-0 flex items-stretch">
+            <Menu
+              align="end"
+              className="min-w-52"
+              items={overflowItems}
+              trigger={
+                <button
+                  type="button"
+                  title={`${overflow.length} more`}
+                  aria-label={`${overflow.length} more modules`}
+                  aria-current={overflow.some(m => isActiveHref(moduleHref(m))) ? 'page' : undefined}
+                  className={itemClass}
+                >
+                  <span>More</span>
+                  <ChevronDown size={16} aria-hidden="true" />
+                </button>
+              }
+            />
           </div>
         )}
       </div>
 
       {/* Right actions. Empty in the compact band - the shell moves them into
           the sidebar rail there, where there is room. */}
-      <div className="flex items-center gap-3 shrink-0 pl-4">
-        <GuardedLink href="/favorites" title="Personal favorites and version alerts" aria-label="Favorites & alerts" className={`btn btn-ghost btn-sm ${pathname.startsWith('/favorites') ? 'text-(--accent-light)' : ''}`}><Star size={15} /></GuardedLink>
+      <div className="flex items-center gap-1 shrink-0 pl-4">
+        <GuardedLink href="/favorites" title="Personal favorites and version alerts" aria-label="Favorites & alerts" aria-current={pathname.startsWith('/favorites') ? 'page' : undefined} className="app-icon-btn"><Star size={16} /></GuardedLink>
         <HelpTourButton compact />
         {children}
       </div>

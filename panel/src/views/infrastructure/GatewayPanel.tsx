@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from 'react';
-import { Cpu, MemoryStick, ArrowUpCircle } from 'lucide-react';
+import { Cpu, MemoryStick, ArrowUpCircle, Info } from 'lucide-react';
 import { getGatewayBandwidthOverview } from '@/lib/api';
 import { getMetricsSeries, type MetricsSeriesResponse } from '@/lib/api/metrics';
 import Sparkline from '@/components/infra/Sparkline';
@@ -13,6 +13,10 @@ import {
     LOAD_RANGES, loadSeriesRequest, indexLoadSeries, type LoadRange, type LoadHistory,
 } from '@/lib/gatewayLoad';
 import type { GatewayEdge } from '@/lib/api';
+import Segmented from '@/components/ui/Segmented';
+import Tooltip from '@/components/ui/Tooltip';
+import EmptyState from '@/components/ui/EmptyState';
+import Callout from '@/components/server/Callout';
 
 /**
  * What runs the gateway: edges, warp leaders and beam relays, one row each,
@@ -81,30 +85,13 @@ export default function GatewayPanel() {
             <SpliceVersionSummary edges={edges} />
 
             <div className="flex items-center justify-between gap-3 flex-wrap">
-                <span className="mono-label">Load history</span>
-                <div className="flex gap-1" role="group" aria-label="Time range">
-                    {LOAD_RANGES.map(r => (
-                        <button
-                            key={r}
-                            onClick={() => setRange(r)}
-                            aria-pressed={range === r}
-                            className={`px-2.5 py-1 rounded-sm text-xs font-medium transition-colors ${
-                                range === r ? 'bg-(--base-04) text-(--base-09)' : 'text-(--base-07) hover:text-(--base-09)'
-                            }`}
-                        >
-                            {r}
-                        </button>
-                    ))}
-                </div>
+                <h2 className="text-[15px] font-semibold text-(--base-09)">Load history</h2>
+                <Segmented options={LOAD_RANGES.map(r => ({ id: r, label: r }))} value={range} onChange={setRange} ariaLabel="Time range" />
             </div>
 
-            {noHistory && (
-                <div className="rounded-lg border border-(--base-03) bg-(--base-02) px-4 py-2.5 text-xs text-(--base-06)">
-                    {noHistory}
-                </div>
-            )}
+            {noHistory && <Callout tone="info" icon={<Info size={16} />}>{noHistory}</Callout>}
 
-            <Section
+            <Group
                 title="Edges"
                 count={edges.length}
                 // Named rather than implied: an operator staring at an empty
@@ -112,9 +99,9 @@ export default function GatewayPanel() {
                 empty="No edges registered. Edges auto-discover through Redis once one is deployed."
             >
                 {edges.map(e => <EdgeRow key={e.edge_id} edge={e} load={load} />)}
-            </Section>
+            </Group>
 
-            <Section
+            <Group
                 title="Warp leaders"
                 count={warp.length}
                 empty="No warp leader reporting. A leader appears here once it publishes telemetry."
@@ -130,9 +117,9 @@ export default function GatewayPanel() {
                         extra={`${fmtGauge(c, 'peers_active')} / ${fmtGauge(c, 'peers')} peers up`}
                     />
                 ))}
-            </Section>
+            </Group>
 
-            <Section
+            <Group
                 title="Beam relays"
                 count={beam.length}
                 empty="No beam relay reporting. A relay appears here once it publishes telemetry."
@@ -140,7 +127,7 @@ export default function GatewayPanel() {
                 {beam.map(c => (
                     <ComponentRow key={c.id} comp={c} load={load} extra={`${fmtGauge(c, 'active_transfers')} transfers`} />
                 ))}
-            </Section>
+            </Group>
         </div>
     );
 }
@@ -153,19 +140,19 @@ function fmtGauge(c: GatewayComponentView, name: string): string {
     return v === undefined ? '-' : String(Math.round(v));
 }
 
-function Section({ title, count, empty, children }: {
+function Group({ title, count, empty, children }: {
     title: string; count: number; empty: string; children: React.ReactNode;
 }) {
     return (
-        <section className="flex flex-col gap-2">
+        <section className="flex flex-col gap-3">
             <div className="flex items-center gap-2">
-                <h3 className="text-sm font-semibold text-(--base-09)">{title}</h3>
-                <span className="text-[10px] font-mono tabular-nums px-1.5 py-0.5 rounded-full bg-(--base-03) text-(--base-06)">{count}</span>
+                <h2 className="text-[15px] font-semibold text-(--base-09)">{title}</h2>
+                <span className="srv-num text-[11px] px-1.5 py-0.5 rounded-full bg-(--base-03) text-(--base-06)">{count}</span>
             </div>
             {count === 0 ? (
-                <div className="card p-6 text-center text-(--base-06) text-sm">{empty}</div>
+                <EmptyState title={empty} />
             ) : (
-                <div className="card divide-y divide-(--base-03)">{children}</div>
+                <div className="srv-surface flex flex-col gap-0.5 p-1.5">{children}</div>
             )}
         </section>
     );
@@ -192,11 +179,11 @@ function LoadBox({ label, icon, pct, values, color }: {
     color: string;
 }) {
     return (
-        <div className="rounded-md border border-(--base-03) bg-(--base-02) px-3 py-2 flex flex-col gap-1.5 w-64">
-            <div className="flex items-center gap-1.5 mono-label text-(--base-06)">
-                <span className="text-(--base-05)">{icon}</span>
+        <div className="rounded-lg bg-(--base-03) px-3 py-2 flex flex-col gap-1.5 w-64">
+            <div className="srv-label flex items-center gap-1.5">
+                <span aria-hidden="true">{icon}</span>
                 {label}
-                <span className="ml-auto text-(--base-05)">0-100%</span>
+                <span className="ml-auto">0-100%</span>
             </div>
             <div className="flex items-center gap-3">
                 <div className="flex-1 min-w-0">
@@ -209,7 +196,7 @@ function LoadBox({ label, icon, pct, values, color }: {
                         empty="no history yet"
                     />
                 </div>
-                <span className="text-lg font-mono tabular-nums text-(--base-09) w-14 text-right shrink-0">
+                <span className="srv-num text-lg text-(--base-09) w-14 text-right shrink-0">
                     {pct.toFixed(0)}%
                 </span>
             </div>
@@ -223,8 +210,8 @@ function LoadBlock({ cpu, ram, history }: {
 }) {
     return (
         <div className="flex items-center gap-3 flex-wrap">
-            <LoadBox label="CPU" icon={<Cpu size={11} />} pct={cpu} values={history?.cpu ?? []} color="var(--accent)" />
-            <LoadBox label="RAM" icon={<MemoryStick size={11} />} pct={ram} values={history?.ram ?? []} color="var(--primary)" />
+            <LoadBox label="CPU" icon={<Cpu size={14} />} pct={cpu} values={history?.cpu ?? []} color="var(--accent)" />
+            <LoadBox label="RAM" icon={<MemoryStick size={14} />} pct={ram} values={history?.ram ?? []} color="var(--primary)" />
         </div>
     );
 }
@@ -232,7 +219,7 @@ function LoadBlock({ cpu, ram, history }: {
 function StatusDot({ online }: { online: boolean }) {
     return (
         <span
-            className={`w-2 h-2 rounded-full shrink-0 ${online ? 'bg-(--success-light) shadow-[0_0_6px_var(--success-light)]' : 'bg-(--error)'}`}
+            className={`size-2 rounded-full shrink-0 ${online ? 'bg-(--success-light)' : 'bg-(--error)'}`}
             aria-label={online ? 'online' : 'offline'}
         />
     );
@@ -241,10 +228,10 @@ function StatusDot({ online }: { online: boolean }) {
 /** One instance: identity on the left, what it costs on the right. */
 function Row({ head, meta, load }: { head: React.ReactNode; meta: React.ReactNode; load: React.ReactNode }) {
     return (
-        <div className="flex items-center justify-between gap-6 px-4 py-6 flex-wrap">
+        <div className="app-row flex-wrap justify-between gap-6 py-4!">
             <div className="flex flex-col gap-1 min-w-56">
                 <div className="flex items-center gap-2 flex-wrap text-sm">{head}</div>
-                <div className="flex items-center gap-3 flex-wrap text-xs text-(--base-06) font-mono">{meta}</div>
+                <div className="srv-num flex items-center gap-3 flex-wrap text-xs text-(--base-06)">{meta}</div>
             </div>
             {load}
         </div>
@@ -269,15 +256,15 @@ function EdgeRow({ edge, load }: { edge: GatewayEdge; load: LoadHistory }) {
                     <StatusDot online={online} />
                     <span className="font-medium text-(--base-09) truncate">{edge.name}</span>
                     {behind ? (
-                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-(--warning)/10 mono-label text-(--warning-light)">
-                            <ArrowUpCircle size={9} /> splice {running ? `v${running}` : 'unknown'} &rarr; v{latest}
+                        <span className="srv-chip bg-(--warning-ghost)! text-(--warning-light)!">
+                            <ArrowUpCircle size={12} aria-hidden="true" /> splice {running ? `v${running}` : 'unknown'} &rarr; v{latest}
                         </span>
                     ) : wrongImage ? (
-                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-(--error)/10 mono-label text-(--error-light)">
-                            <ArrowUpCircle size={9} /> splice v{running || latest} &middot; wrong image
+                        <span className="srv-chip bg-(--error-ghost)! text-(--error-light)!">
+                            <ArrowUpCircle size={12} aria-hidden="true" /> splice v{running || latest} &middot; wrong image
                         </span>
                     ) : (running || latest) ? (
-                        <span className="mono-label text-(--base-06)">splice v{running || latest}</span>
+                        <span className="srv-chip">splice v{running || latest}</span>
                     ) : null}
                 </>
             }
@@ -315,9 +302,9 @@ function EdgeRow({ edge, load }: { edge: GatewayEdge; load: LoadHistory }) {
  */
 function Throughput({ txBps, rxBps }: { txBps: number; rxBps: number }) {
     return (
-        <span title="out = what this machine sends (tx), in = what it receives (rx). A full-duplex link carries its rated speed in each direction at once.">
-            out {formatBitsPerSec(txBps)} &middot; in {formatBitsPerSec(rxBps)}
-        </span>
+        <Tooltip content="out = what this machine sends (tx), in = what it receives (rx). A full-duplex link carries its rated speed in each direction at once.">
+            <span>out {formatBitsPerSec(txBps)} &middot; in {formatBitsPerSec(rxBps)}</span>
+        </Tooltip>
     );
 }
 
@@ -339,7 +326,7 @@ function ComponentRow({ comp, extra, load }: { comp: GatewayComponentView; extra
                     <span className="text-(--base-07)">{extra}</span>
                     <Throughput txBps={comp.txBps} rxBps={comp.rxBps} />
                     {comp.uptimeSec !== undefined && comp.uptimeSec > 0 && (
-                        <span title="process uptime">up {formatUptime(comp.uptimeSec)}</span>
+                        <Tooltip content="Process uptime"><span>up {formatUptime(comp.uptimeSec)}</span></Tooltip>
                     )}
                 </>
             }

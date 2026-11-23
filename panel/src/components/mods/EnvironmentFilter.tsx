@@ -2,13 +2,14 @@
 
 import { AlertTriangle, Monitor, MonitorSmartphone, Server as ServerIcon, type LucideIcon } from 'lucide-react';
 import type { ReactNode } from 'react';
+import '@/styles/server-content.css';
 import type { EnvFilter, ServerBucketFilter } from '@/lib/modSide';
 
-// The category buttons' style, so a sidebar reads as one list of controls.
+// Inline (the server Content tab) is a quiet chip; the stacked form keeps the
+// bordered look of the category list it sits in on the modpack screens.
 function toggleClass(on: boolean, inline: boolean): string {
-    return `flex items-center gap-2 px-2.5 py-1.5 rounded-md border text-[13px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--accent-border) active:bg-(--base-04) disabled:opacity-50 disabled:pointer-events-none ${
-        inline ? '' : 'w-full'
-    } ${
+    if (inline) return 'srv-content-toggle';
+    return `flex w-full items-center gap-2 px-2.5 py-1.5 rounded-md border text-[13px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--accent-border) active:bg-(--base-04) disabled:opacity-50 disabled:pointer-events-none ${
         on
             ? 'bg-(--accent-ghost) border-(--accent-border) text-(--accent-light)'
             : 'bg-(--base-02) border-(--base-03) text-(--base-07) hover:bg-(--base-03) hover:border-(--base-04) hover:text-(--base-09)'
@@ -98,8 +99,8 @@ export function ServerSideFilter({ value, onChange, inline = false }: {
 // A mod's environment tag; warning marks one that does not belong on a server.
 export function EnvTag({ label, title, warning = false }: { label: string; title?: string; warning?: boolean }) {
     return (
-        <span title={title} className={`badge ${warning ? 'badge-warning' : 'badge-neutral'} text-[10px] font-sans shrink-0`}>
-            {warning && <AlertTriangle size={10} aria-hidden="true" />}
+        <span title={title} className="srv-content-tag" data-tone={warning ? 'warning' : undefined}>
+            {warning && <AlertTriangle size={11} aria-hidden="true" />}
             {label}
         </span>
     );

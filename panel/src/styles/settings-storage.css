@@ -1,0 +1,129 @@
+/* Settings > storage / backups / database screens. Classes prefixed set-sto-. */
+
+/* A choice card (storage mode, migration target). Selected = violet ring, no glow. */
+.set-sto-option {
+    display: flex;
+    width: 100%;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 12px 14px;
+    text-align: left;
+    background: var(--base-03);
+    border: 1px solid transparent;
+    border-radius: 8px;
+    transition: background-color 150ms ease-out, border-color 150ms ease-out;
+}
+.set-sto-option:hover:not(:disabled) { background: var(--base-04); }
+.set-sto-option:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.set-sto-option:disabled { opacity: 0.5; cursor: not-allowed; }
+.set-sto-option[data-selected] {
+    border-color: var(--accent);
+    background: var(--accent-ghost);
+}
+.set-sto-option-dot {
+    margin-top: 4px;
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+    border-radius: 9999px;
+    border: 2px solid var(--base-05);
+}
+.set-sto-option[data-selected] .set-sto-option-dot {
+    border-color: var(--accent);
+    background: var(--accent);
+}
+
+/* Hairline between groups inside one card. */
+.set-sto-divide {
+    margin-top: 16px;
+    padding-top: 16px;
+    border-top: 1px solid var(--base-03);
+}
+
+/* Nested quiet panel (sub-settings that only apply to one mode). */
+.set-sto-panel {
+    margin-top: 12px;
+    padding: 12px;
+    border-radius: 8px;
+    background: var(--base-03);
+}
+
+/* Verdicts and panels that belong to one row, shown under the list. */
+.set-sto-notes {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    padding: 12px 14px 14px;
+}
+.set-sto-notes:empty { display: none; }
+
+@media (prefers-reduced-motion: reduce) {
+    .set-sto-option { transition: none; }
+}
+
+/* Inline editor opened inside a card (job editor, target editor). */
+.set-sto-editor {
+    margin-top: 16px;
+    padding: 20px;
+    border-radius: 12px;
+    background: var(--base-03);
+}
+
+/* Multi-select list with checkboxes. */
+.set-sto-picklist {
+    max-height: 224px;
+    overflow-y: auto;
+    border-radius: 8px;
+    background: var(--base-02);
+    padding: 4px;
+}
+.set-sto-pick {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+}
+.set-sto-pick:hover { background: var(--base-03); }
+
+/* Run history: quiet rows under one job. */
+.set-sto-runs {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    border-radius: 8px;
+    background: var(--base-02);
+    padding: 4px;
+}
+.set-sto-run { padding: 8px 10px; border-radius: 6px; }
+.set-sto-run:hover { background: var(--base-03); }
+
+/* File drop target. */
+.set-sto-drop {
+    display: flex;
+    min-height: 110px;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    cursor: pointer;
+    border-radius: 12px;
+    background: var(--base-03);
+    border: 1px dashed var(--base-05);
+    transition: background-color 150ms ease-out, border-color 150ms ease-out;
+}
+.set-sto-drop:hover { background: var(--accent-ghost); border-color: var(--accent); }
+@media (prefers-reduced-motion: reduce) { .set-sto-drop { transition: none; } }
+
+/* Quiet checklist rows (orphaned files). */
+.set-sto-orphans { border-radius: 8px; background: var(--base-02); padding: 4px; }
+.set-sto-orphan {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 6px 10px;
+    border-radius: 6px;
+}
+.set-sto-orphan:not(.set-sto-orphan-head):hover { background: var(--base-03); }
+.set-sto-orphan-head { padding-bottom: 4px; }

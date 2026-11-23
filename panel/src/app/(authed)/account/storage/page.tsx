@@ -1,7 +1,14 @@
 "use client";
 
+import Checkbox from '@/components/ui/Checkbox';
+import Select from '@/components/ui/Select';
 import React, { useCallback, useEffect, useState } from 'react';
 import { HardDrive, Plus, Trash2, Pencil, X, ShieldCheck, AlertTriangle } from 'lucide-react';
+import PageHeader from '@/components/ui/PageHeader';
+import Section from '@/components/ui/Section';
+import EmptyState from '@/components/ui/EmptyState';
+import { RowList, Row } from '@/components/ui/RowList';
+import Callout from '@/components/server/Callout';
 import {
     listOwnBackupStorages, createOwnBackupStorage, updateOwnBackupStorage,
     deleteOwnBackupStorage, testOwnBackupStorage, ownStorageIncomplete,
@@ -132,133 +139,131 @@ export default function StoragePage() {
     };
 
     return (
-        <main className="flex-1 overflow-y-auto p-6">
-            <div className="max-w-3xl mx-auto space-y-5">
-                <header className="flex flex-wrap items-start justify-between gap-3">
-                    <div className="flex items-start gap-3 min-w-0">
-                        <HardDrive size={20} className="text-(--base-06) mt-1 shrink-0" />
-                        <div className="min-w-0">
-                            <h1 className="text-lg font-medium text-(--base-09)">Storage</h1>
-                            <p className="text-sm text-(--base-06) mt-1 max-w-xl">
-                                {ownOff ? 'Your own storage targets.' : <>
-                                    Connect an S3-compatible bucket of your own, then choose whether your backups
-                                    {showTemplates ? ' and templates' : ''} go there or to {platformName}.
-                                </>}
-                            </p>
-                        </div>
-                    </div>
-                    {!listError && !ownOff && (
-                        <button onClick={startCreate} className="btn btn-primary flex items-center gap-2 shrink-0">
-                            <Plus size={16} /> Connect storage
+        <main className="flex-1 overflow-y-auto app-page">
+            <div className="space-y-6">
+                <PageHeader
+                    icon={<HardDrive size={16} />}
+                    title="Storage"
+                    description={ownOff ? 'Your own storage targets.' : <>
+                        Connect an S3-compatible bucket of your own, then choose whether your backups
+                        {showTemplates ? ' and templates' : ''} go there or to {platformName}.
+                    </>}
+                    actions={!listError && !ownOff ? (
+                        <button onClick={startCreate} className="btn btn-primary btn-sm">
+                            <Plus size={14} /> Connect storage
                         </button>
-                    )}
-                </header>
+                    ) : undefined}
+                />
 
                 {ownOff && (
-                    <div className="card p-4 flex items-start gap-2.5" role="status">
-                        <AlertTriangle size={16} className="text-(--warning) mt-0.5 shrink-0" />
-                        <p className="text-sm text-(--base-07) leading-relaxed">
-                            Your administrator has turned off own storage. Existing data stays reachable.
-                            New backups{showTemplates ? ' and templates' : ''} go to {platformName}.
-                        </p>
-                    </div>
+                    <Callout tone="warning" icon={<AlertTriangle size={16} />} role="status">
+                        Your administrator has turned off own storage. Existing data stays reachable.
+                        New backups{showTemplates ? ' and templates' : ''} go to {platformName}.
+                    </Callout>
                 )}
 
                 {!listError && !ownOff && (
-                    <div className="card p-4 flex items-start gap-2.5">
-                        <ShieldCheck size={16} className="text-(--base-06) mt-0.5 shrink-0" />
-                        <p className="text-sm text-(--base-07) leading-relaxed">
-                            {hosted
-                                ? 'Your own targets have no size limit from us and are never billed to you here - you are already paying whoever hosts them. We also never clean them up: if your account is suspended, what is in your bucket stays exactly where it is.'
-                                : 'Your own targets have no size limit from the platform, and it never cleans them up: what is in your bucket stays exactly where it is.'}
-                        </p>
-                    </div>
+                    <Callout tone="info" icon={<ShieldCheck size={16} />}>
+                        {hosted
+                            ? 'Your own targets have no size limit from us and are never billed to you here - you are already paying whoever hosts them. We also never clean them up: if your account is suspended, what is in your bucket stays exactly where it is.'
+                            : 'Your own targets have no size limit from the platform, and it never cleans them up: what is in your bucket stays exactly where it is.'}
+                    </Callout>
                 )}
 
-                {noCapability ? (
-                    <div className="card p-5 flex items-start gap-2.5">
-                        <AlertTriangle size={16} className="text-(--warning) mt-0.5 shrink-0" />
-                        <p className="text-sm text-(--base-07)">
-                            Your role does not include managing storage targets. Ask an administrator.
-                        </p>
-                    </div>
-                ) : listError ? (
-                    <div className="alert alert-error text-sm flex items-center gap-2" role="alert">
-                        <span>{listError}</span>
-                        <button onClick={() => { setLoading(true); load(); }} className="btn btn-secondary text-xs ml-auto">Retry</button>
-                    </div>
-                ) : loading ? (
-                    <SkeletonList rows={2} />
-                ) : storages.length === 0 ? (
-                    <div className="card p-8 text-center">
-                        <p className="text-sm text-(--base-07)">No storage connected.</p>
-                        <p className="text-xs text-(--base-06) mt-1.5 max-w-md mx-auto">
-                            Your backups{showTemplates ? ' and templates' : ''} go to {platformName}
-                            {hosted ? ', against your included allowance' : ''}.
-                        </p>
-                    </div>
-                ) : (
-                    <ul className="space-y-3">
-                        {storages.map(s => (
-                            <li key={s.id} className="card p-4">
-                                <div className="flex flex-wrap items-start justify-between gap-3">
-                                    <div className="min-w-0">
-                                        <div className="flex items-center gap-2 flex-wrap">
-                                            <span className="text-sm font-medium text-(--base-09) truncate">{s.name}</span>
-                                            {prefs?.backupsStorageId === s.id && (
-                                                <span className="badge badge-accent">Backups</span>
-                                            )}
-                                            {prefs?.templatesStorageId === s.id && (
-                                                <span className="badge badge-accent">Templates</span>
-                                            )}
-                                        </div>
-                                        <p className="text-xs text-(--base-06) mt-1 font-mono break-all">
-                                            {s.config?.bucket}{s.config?.prefix ? `/${s.config.prefix}` : ''}
-                                            <span className="text-(--base-05)"> at </span>
-                                            {s.config?.endpoint}
-                                        </p>
-                                    </div>
-                                    <div className="flex items-center gap-2 shrink-0">
-                                        <button
-                                            onClick={() => runTest(s)}
-                                            disabled={testingId === s.id}
-                                            className="btn btn-secondary text-xs disabled:opacity-50"
-                                        >
-                                            {testingId === s.id ? 'Testing...' : 'Test'}
-                                        </button>
-                                        <button onClick={() => startEdit(s)} className="btn btn-icon btn-sm" aria-label={`Edit ${s.name}`}>
-                                            <Pencil size={15} />
-                                        </button>
-                                        <button
-                                            onClick={() => setConfirmDelete(s)}
-                                            className="btn btn-icon btn-sm text-(--error-light)"
-                                            aria-label={`Remove ${s.name}`}
-                                        >
-                                            <Trash2 size={15} />
-                                        </button>
-                                    </div>
-                                </div>
-                            </li>
-                        ))}
-                    </ul>
-                )}
+                <Section title="Targets">
+                    {noCapability ? (
+                        <EmptyState
+                            icon={<AlertTriangle size={20} />}
+                            title="No access to storage targets"
+                            description="Your role does not include managing storage targets. Ask an administrator."
+                        />
+                    ) : listError ? (
+                        <EmptyState
+                            tone="error"
+                            icon={<AlertTriangle size={20} />}
+                            title="Could not load your storage"
+                            description={listError}
+                            action={<button onClick={() => { setLoading(true); load(); }} className="btn btn-secondary btn-sm">Retry</button>}
+                        />
+                    ) : loading ? (
+                        <SkeletonList rows={2} />
+                    ) : storages.length === 0 ? (
+                        <EmptyState
+                            icon={<HardDrive size={20} />}
+                            title="No storage connected"
+                            description={<>
+                                Your backups{showTemplates ? ' and templates' : ''} go to {platformName}
+                                {hosted ? ', against your included allowance' : ''}.
+                            </>}
+                            action={ownOff ? undefined : <button onClick={startCreate} className="btn btn-primary btn-sm"><Plus size={14} /> Connect storage</button>}
+                        />
+                    ) : (
+                        <div className="srv-surface">
+                            <RowList label="Storage targets">
+                                {storages.map(s => (
+                                    <Row
+                                        key={s.id}
+                                        leading={<HardDrive size={16} />}
+                                        title={
+                                            <span className="flex flex-wrap items-center gap-2">
+                                                <span className="truncate">{s.name}</span>
+                                                {prefs?.backupsStorageId === s.id && <span className="badge badge-accent">Backups</span>}
+                                                {prefs?.templatesStorageId === s.id && <span className="badge badge-accent">Templates</span>}
+                                            </span>
+                                        }
+                                        meta={
+                                            <span className="font-mono">
+                                                {s.config?.bucket}{s.config?.prefix ? `/${s.config.prefix}` : ''}
+                                                <span className="text-(--base-05)"> at </span>
+                                                {s.config?.endpoint}
+                                            </span>
+                                        }
+                                        actions={
+                                            <>
+                                                <button
+                                                    onClick={() => runTest(s)}
+                                                    disabled={testingId === s.id}
+                                                    className="btn btn-secondary btn-sm disabled:opacity-50"
+                                                >
+                                                    {testingId === s.id ? 'Testing...' : 'Test'}
+                                                </button>
+                                                <button onClick={() => startEdit(s)} className="btn btn-icon btn-sm" aria-label={`Edit ${s.name}`}>
+                                                    <Pencil size={14} />
+                                                </button>
+                                                <button
+                                                    onClick={() => setConfirmDelete(s)}
+                                                    className="btn btn-icon btn-sm text-(--error-light)"
+                                                    aria-label={`Remove ${s.name}`}
+                                                >
+                                                    <Trash2 size={14} />
+                                                </button>
+                                            </>
+                                        }
+                                    />
+                                ))}
+                            </RowList>
+                        </div>
+                    )}
+                </Section>
 
                 {!listError && !ownOff && !loading && (
-                    <section className="card p-4 space-y-4" aria-labelledby="storage-prefs-title">
-                        <div>
-                            <h2 id="storage-prefs-title" className="text-sm font-medium text-(--base-09)">Where new data goes</h2>
-                            <p className="text-xs text-(--base-06) mt-1">
-                                Switching affects new backups{showTemplates ? ' and templates' : ''} only. What
-                                already exists stays where it was written.
-                            </p>
-                        </div>
+                    <Section
+                        title="Where new data goes"
+                        description={<>
+                            Switching affects new backups{showTemplates ? ' and templates' : ''} only. What
+                            already exists stays where it was written.
+                        </>}
+                    >
                         {prefsError ? (
-                            <div className="alert alert-error text-xs flex items-center gap-2" role="alert">
-                                <span>{prefsError}</span>
-                                <button onClick={() => { setLoading(true); load(); }} className="btn btn-secondary text-xs ml-auto">Retry</button>
-                            </div>
+                            <EmptyState
+                                tone="error"
+                                icon={<AlertTriangle size={20} />}
+                                title="Could not load where your data goes"
+                                description={prefsError}
+                                action={<button onClick={() => { setLoading(true); load(); }} className="btn btn-secondary btn-sm">Retry</button>}
+                            />
                         ) : prefs && (
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <div className="srv-surface p-5 grid grid-cols-1 sm:grid-cols-2 gap-4">
                                 <PrefSelect
                                     id="pref-backups"
                                     label="Backups go to"
@@ -285,7 +290,7 @@ export default function StoragePage() {
                                 )}
                             </div>
                         )}
-                    </section>
+                    </Section>
                 )}
             </div>
 
@@ -392,16 +397,13 @@ function StorageDialog({
                             placeholder={isEdit ? 'unchanged' : ''} />
                     </Field>
 
-                    <label className="flex items-start gap-2.5 cursor-pointer pt-1">
-                        <input type="checkbox" className="mt-0.5" checked={form.config.forcePathStyle || false}
-                            onChange={e => setCfg({ forcePathStyle: e.target.checked })} />
-                        <span className="min-w-0">
-                            <span className="block text-sm text-(--base-08)">Path-style addressing</span>
-                            <span className="block text-xs text-(--base-06) mt-0.5">
-                                Needed by MinIO and some self-hosted gateways.
-                            </span>
-                        </span>
-                    </label>
+                    <Checkbox
+                        className="pt-1"
+                        checked={form.config.forcePathStyle || false}
+                        onChange={v => setCfg({ forcePathStyle: v })}
+                        label="Path-style addressing"
+                        hint="Needed by MinIO and some self-hosted gateways."
+                    />
 
                     <div className="border-t border-(--base-04) pt-3">
                         <StorageUploadCap
@@ -446,19 +448,19 @@ function PrefSelect({
 }) {
     return (
         <div className="flex flex-col gap-[5px]">
-            <label className="input-label" htmlFor={id}>
+            <label className="srv-label" htmlFor={id}>
                 {label}{saving && <span className="text-(--base-06)"> (saving...)</span>}
             </label>
-            <select
+            <Select
                 id={id}
-                className="input-field w-full disabled:opacity-50"
-                value={value ?? ''}
+                value={value == null ? '' : String(value)}
                 disabled={disabled}
-                onChange={e => onChange(e.target.value)}
-            >
-                <option value="">{platformLabel.charAt(0).toUpperCase() + platformLabel.slice(1)}</option>
-                {storages.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-            </select>
+                onChange={onChange}
+                options={[
+                    { value: '', label: platformLabel.charAt(0).toUpperCase() + platformLabel.slice(1) },
+                    ...storages.map(s => ({ value: String(s.id), label: s.name })),
+                ]}
+            />
             <p className="text-xs text-(--base-06)">{hint}</p>
         </div>
     );

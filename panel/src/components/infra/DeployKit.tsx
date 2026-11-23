@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from 'react';
+import Callout from '@/components/server/Callout';
 import Link from 'next/link';
 import { Copy, Check, Terminal, Lock, ShoppingCart, ExternalLink, Link2 as LinkIcon, CircleAlert, Loader2, RefreshCcw } from 'lucide-react';
 import {
@@ -77,7 +78,7 @@ export function SecretField({ label, value, note }: { label: string; value: stri
     const [shown, setShown] = useState(false);
     return (
         <div className="space-y-1">
-            <span className="mono-label">{label}</span>
+            <span className="srv-label">{label}</span>
             <div className="flex items-center gap-2">
                 <button
                     type="button"
@@ -85,7 +86,7 @@ export function SecretField({ label, value, note }: { label: string; value: stri
                     aria-label={shown ? `Hide ${label}` : `Reveal ${label}`}
                     aria-pressed={shown}
                     title={shown ? 'Hide' : 'Click to reveal'}
-                    className="group flex-1 min-w-0 text-left rounded-md bg-(--base-02) border border-(--base-03) px-3 py-2 hover:border-(--base-04) transition-colors cursor-pointer"
+                    className="group flex-1 min-w-0 text-left rounded-md bg-(--base-03) px-3 py-2 hover:bg-(--base-04) transition-colors cursor-pointer focus-visible:outline-none focus-visible:[box-shadow:var(--focus-ring)]"
                 >
                     <code
                         className={`input-mono block break-all text-xs text-(--base-08) transition-[filter] motion-reduce:transition-none ${
@@ -123,7 +124,7 @@ export function Snippet({ title, body, note }: { title: string; body: string; no
                 the screen and made the two columns on this page different
                 lengths for no reason anyone chose. Nobody reads it top to bottom
                 anyway - it is copied. */}
-            <pre className="max-h-72 overflow-auto overscroll-contain p-3 rounded-md bg-(--base-02) border border-(--base-03) font-mono text-[11px] leading-relaxed text-(--base-08)">
+            <pre className="max-h-72 overflow-auto overscroll-contain p-3 rounded-lg bg-(--base-03) font-mono text-[11px] leading-relaxed text-(--base-08)">
                 {body}
             </pre>
         </div>
@@ -203,9 +204,9 @@ export function DeployKit({ kind, ...props }: { kind: 'node' | 'route-only' } & 
     const compose = kind === 'node' ? nodeCompose(input) : routeOnlyCompose(input);
 
     return (
-        <div className="space-y-3 rounded-md border border-(--base-03) bg-(--base-01) p-4">
-            <div className="flex items-center gap-2 text-sm font-medium text-(--base-09)">
-                <Terminal size={15} className="text-(--accent-light)" />
+        <div className="srv-surface space-y-3 p-5">
+            <div className="flex items-center gap-2 text-[15px] font-semibold text-(--base-09)">
+                <Terminal size={16} className="text-(--base-06)" aria-hidden="true" />
                 Deploy it on your machine
             </div>
             <div className="flex items-center gap-1" role="group" aria-label="Target machine">
@@ -258,7 +259,7 @@ export function NotIncluded({ what, storeUrl, suspended, storeLinked }: {
     const notLinked = storeLinked === false;
     const hosted = useAppData().featureFlags.hosted;
     return (
-        <div className="rounded-md border border-(--base-03) bg-(--base-02) p-4 space-y-2.5">
+        <div className="srv-surface p-5 space-y-2.5">
             <div className="flex items-center gap-2 text-sm font-medium text-(--base-08)">
                 <Lock size={14} className="text-(--base-06)" />
                 {suspended ? 'Paused' : notLinked ? 'Connect your account first' : 'Not on your account'}
@@ -357,10 +358,9 @@ export function ManagedLinkKit({ nodeId }: { nodeId: number }) {
     }
     if (error || !kit) {
         return (
-            <div className="alert alert-error text-xs" role="alert">
-                <CircleAlert size={14} className="shrink-0 mt-0.5" />
-                <span>{error || 'The deploy kit could not be loaded.'}</span>
-            </div>
+            <Callout tone="error" icon={<CircleAlert size={16} />} role="alert">
+                {error || 'The deploy kit could not be loaded.'}
+            </Callout>
         );
     }
 
@@ -379,10 +379,9 @@ export function ManagedLinkKit({ nodeId }: { nodeId: number }) {
                 <span>{state.label}</span>
             </div>
             {kit.retireAt && (
-                <div className="alert alert-warning text-xs" role="status">
-                    <CircleAlert size={14} className="shrink-0 mt-0.5" />
-                    <span>{retiringLine(kit.retireAt, v => fmtDateTime(v))} Move this node&apos;s servers to another node before then.</span>
-                </div>
+                <Callout tone="warning" icon={<CircleAlert size={16} />} role="status">
+                    {retiringLine(kit.retireAt, v => fmtDateTime(v))} Move this node&apos;s servers to another node before then.
+                </Callout>
             )}
             {canReplaceLink(kit) && (
                 <div className="flex flex-wrap items-center gap-3">
@@ -390,7 +389,7 @@ export function ManagedLinkKit({ nodeId }: { nodeId: number }) {
                         type="button"
                         onClick={() => void replace()}
                         disabled={retiring}
-                        className="btn btn-secondary btn-sm disabled:opacity-40 inline-flex items-center gap-1.5"
+                        className="btn btn-secondary btn-sm"
                     >
                         {retiring ? <Loader2 size={13} className="animate-spin motion-reduce:animate-none" /> : <RefreshCcw size={13} />}
                         Replace this node&apos;s link

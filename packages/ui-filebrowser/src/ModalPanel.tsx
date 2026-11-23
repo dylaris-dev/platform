@@ -1,30 +1,28 @@
 "use client";
 
 // ModalPanel is the inner panel of a modal: the `modal-panel` box inside a
-// `modal-overlay`. It replaces the plain <div> every modal in the panel used,
-// which gave a screen reader nothing - no dialog role, no name, focus left
-// wherever it was on the page behind, and Tab walking out of the dialog into
-// controls a mouse user could not reach through the overlay. All but three
-// modals were built that way.
+// caller-owned `modal-overlay`. It is a UI SDK Dialog (an Alert Dialog for
+// role="alertdialog"), which gives it the dialog role, aria-modal, focus moved
+// in on open, Tab kept inside, Escape for the topmost layer and a name.
 //
-// What it adds, and nothing else:
-//   - role="dialog" (or "alertdialog") and aria-modal
-//   - a name: the panel's own `.modal-title` (else its first heading), found
-//     after mount, so no header had to change; `label` for a panel without one
-//   - focus moves into the dialog on open (unless something inside already
-//     took it, e.g. an autoFocus input) and back to where it was on close
-//   - Tab and Shift+Tab stay inside the panel
-//   - Escape calls onClose - only when given one. A modal that could not be
-//     dismissed without its buttons before still cannot; this does not invent
-//     a way out of a form someone is halfway through.
-//
-// The markup, classes and children are the caller's, unchanged.
+// The caller's markup stays in charge of layout:
+//   - `inline`: the panel renders where it is, inside the caller's overlay,
+//     instead of in the top layer, so the overlay keeps centring and dimming it
+//   - the overlay's own onClick handles press-outside, so the SDK's
+//     (closeOnOutsidePress) is off and the two cannot both fire
+//   - the panel is open exactly while it is mounted
+//   - Escape calls onClose - only when given one, and only while `dismissible`.
+//     A modal that could not be dismissed without its buttons before still
+//     cannot; this does not invent a way out of a form someone is halfway through.
+//   - the name is the panel's own `.modal-title` (else its first heading), so no
+//     header had to change; `label` names a panel without one
 //
 // It lives in this package rather than the panel so the file browser's own
 // modals can use it; the panel re-exports it from components/ui/ModalPanel.
 
-import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { FOCUSABLE, nextTrapIndex, ownsKey } from './modalFocus';
+import React, { useEffect, useState } from 'react';
+import { AlertDialog, AlertDialogContent } from '@ui-sdk/react/alert-dialog';
+import { Dialog, DialogContent } from '@ui-sdk/react/dialog';
 
 let titleSeq = 0;
 
@@ -42,19 +40,20 @@ type ModalPanelProps = React.HTMLAttributes<HTMLElement> & {
 export default function ModalPanel({
     as: Tag = 'div', onClose, dismissible = true, role = 'dialog', label, onClick, children, ...rest
 }: ModalPanelProps) {
-    const panelRef = useRef<HTMLElement>(null);
     const [labelledBy, setLabelledBy] = useState<string | undefined>(undefined);
+    // Read during the first render, before focus moves into the panel.
+    const [opener] = useState(() => (typeof document === 'undefined' ? null : document.activeElement as HTMLElement | null));
 
-    // The newest handler without re-registering the listener on every render.
-    const closeRef = useRef(onClose);
-    const dismissibleRef = useRef(dismissible);
-    useLayoutEffect(() => {
-        closeRef.current = onClose;
-        dismissibleRef.current = dismissible;
-    });
+    // The SDK only restores focus on its own close; the caller unmounts us instead.
+    useEffect(() => () => {
+        if (opener && opener !== document.body && document.contains(opener)) opener.focus();
+    }, [opener]);
 
-    useLayoutEffect(() => {
-        const panel = panelRef.current;
+    const alert = role === 'alertdialog';
+    const Root = (alert ? AlertDialog : Dialog) as typeof Dialog;
+    const Content = (alert ? AlertDialogContent : DialogContent) as typeof DialogContent;
+
+    const nameFrom = (panel: HTMLElement | null) => {
         if (!panel) return;
         // Panels built before the modal classes existed name themselves with a
         // plain heading instead.
@@ -64,54 +63,30 @@ export default function ModalPanel({
             if (!title.id) title.id = `modal-title-${++titleSeq}`;
             setLabelledBy(title.id);
         }
-    }, []);
-
-    useEffect(() => {
-        const panel = panelRef.current;
-        if (!panel) return;
-        const opener = document.activeElement as HTMLElement | null;
-        if (!panel.contains(document.activeElement)) panel.focus();
-
-        const onKey = (e: KeyboardEvent) => {
-            const active = document.activeElement;
-            if (!ownsKey(panel.contains(active), active === document.body || active === null, e.defaultPrevented)) return;
-            if (e.key === 'Escape') {
-                if (closeRef.current && dismissibleRef.current) {
-                    e.preventDefault();
-                    closeRef.current();
-                }
-                return;
-            }
-            if (e.key !== 'Tab') return;
-            const items = Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE))
-                .filter(el => el.offsetParent !== null || el === document.activeElement);
-            e.preventDefault();
-            const next = nextTrapIndex(items.length, items.indexOf(active as HTMLElement), e.shiftKey);
-            if (next >= 0) items[next].focus();
-        };
-        window.addEventListener('keydown', onKey);
-        return () => {
-            window.removeEventListener('keydown', onKey);
-            // Back to the control that opened it, if it is still on the page.
-            if (opener && opener !== document.body && document.contains(opener)) opener.focus();
-        };
-    }, []);
+    };
 
     return (
-        <Tag
-            {...rest}
-            ref={panelRef as React.Ref<HTMLDivElement & HTMLFormElement>}
-            role={role}
-            aria-modal="true"
-            aria-labelledby={labelledBy}
-            aria-label={labelledBy ? undefined : label}
-            tabIndex={-1}
-            // Focus lands on the panel itself so a screen reader announces the
-            // dialog; a ring around the whole box would only look like a bug.
-            className={`${rest.className ?? ''} focus:outline-none`}
-            onClick={e => { e.stopPropagation(); onClick?.(e); }}
+        <Root
+            open
+            modal={alert ? undefined : 'trap-focus'}
+            closeOnOutsidePress={false}
+            dismissible={dismissible && !!onClose}
+            onOpenChange={open => { if (!open) onClose?.(); }}
         >
-            {children}
-        </Tag>
+            <Content
+                {...(rest as React.ComponentProps<typeof DialogContent>)}
+                inline
+                aria-modal="true"
+                ref={nameFrom as React.Ref<HTMLDivElement>}
+                render={Tag === 'form' ? <form /> : undefined}
+                aria-labelledby={labelledBy}
+                aria-label={labelledBy ? undefined : label}
+                // Focus lands inside the panel; a ring around the whole box would only look like a bug.
+                className={`${rest.className ?? ''} focus:outline-none`}
+                onClick={(e: React.MouseEvent<HTMLDivElement>) => { e.stopPropagation(); onClick?.(e); }}
+            >
+                {children}
+            </Content>
+        </Root>
     );
 }

@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { Settings } from 'lucide-react';
 import UsersTab from '@/components/settings/UsersTab';
+import Section from '@/components/ui/Section';
 import { useAppData } from '@/lib/AppDataContext';
 
 // The roster lives here rather than under Settings: it is a list of PEOPLE, and
@@ -14,17 +15,16 @@ export default function AdminUsersPage() {
     const { user } = useAppData();
 
     return (
-        <div className="max-w-5xl">
-            <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
-                <div className="min-w-0">
-                    <h3 className="text-base font-display font-semibold text-(--base-09)">Users</h3>
-                    <p className="text-sm text-(--base-06)">Who has an account here, and what they can do.</p>
-                </div>
-                <Link href="/settings/users" className="btn btn-secondary btn-sm shrink-0">
-                    <Settings size={13} /> User settings
+        <Section
+            title="Users"
+            description="Who has an account here, and what they can do."
+            actions={
+                <Link href="/settings/users" className="btn btn-secondary btn-sm">
+                    <Settings size={14} /> User settings
                 </Link>
-            </div>
+            }
+        >
             <UsersTab currentUser={user ?? undefined} />
-        </div>
+        </Section>
     );
 }

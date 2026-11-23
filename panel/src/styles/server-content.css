@@ -1,0 +1,162 @@
+/* Server Content tab. Classes are prefixed srv-content- and use the same
+   surface steps as the .srv-* pilot classes in globals.css. */
+
+.srv-content-section-title { font-size: 15px; font-weight: 600; color: var(--base-09); }
+.srv-content-section-desc { font-size: 13px; color: var(--base-06); }
+
+/* Quiet row list: one surface, rows separated by a hairline, hover fill. */
+.srv-content-list {
+  background: var(--base-02);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+.srv-content-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 20px;
+  min-width: 0;
+  transition: background 0.15s ease-out;
+}
+.srv-content-row + .srv-content-row { border-top: 1px solid var(--base-03); }
+.srv-content-row[data-clickable="true"] { cursor: pointer; }
+.srv-content-row[data-clickable="true"]:hover { background: var(--base-03); }
+.srv-content-row[data-clickable="true"]:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--color-accent-light); }
+.srv-content-row[data-selected="true"] { background: var(--base-03); }
+.srv-content-row[data-dim="true"] { opacity: 0.7; }
+
+.srv-content-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: var(--radius-md);
+  background: var(--base-03);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--base-06);
+  object-fit: cover;
+}
+
+/* Filter chips: toggle buttons, violet only when selected. */
+.srv-content-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 9999px;
+  background: var(--base-02);
+  color: var(--base-07);
+  font-size: 13px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.15s ease-out, color 0.15s ease-out;
+}
+.srv-content-toggle:hover { background: var(--base-03); color: var(--base-09); }
+.srv-content-toggle:active { background: var(--base-04); }
+.srv-content-toggle:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.srv-content-toggle[aria-pressed="true"] { background: var(--accent-ghost); color: var(--accent-light); }
+.srv-content-toggle:disabled { opacity: 0.5; pointer-events: none; }
+
+/* Tiny status/compat tags: sentence case, no border. */
+.srv-content-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 9999px;
+  background: var(--base-03);
+  color: var(--base-07);
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.srv-content-row:hover .srv-content-tag:not([data-tone]) { background: var(--base-04); }
+.srv-content-tag[data-tone="success"] { background: var(--success-ghost); color: var(--success-light); }
+.srv-content-tag[data-tone="warning"] { background: var(--warning-ghost); color: var(--warning-light); }
+.srv-content-tag[data-tone="error"] { background: var(--error-ghost); color: var(--error-light); }
+.srv-content-tag[data-tone="accent"] { background: var(--accent-ghost); color: var(--accent-light); }
+
+.srv-content-version-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background: var(--base-02);
+}
+.srv-content-version-row[data-state="installed"] { background: var(--success-ghost); }
+.srv-content-version-row[data-state="failed"] { background: var(--warning-ghost); }
+.srv-content-version-row[data-state="newest"] { background: var(--accent-ghost); }
+
+/* Compatibility matrix as a quiet table. */
+.srv-content-matrix-line { background: var(--base-02); border-radius: var(--radius-lg); overflow: hidden; }
+.srv-content-matrix-head {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 20px;
+  text-align: left;
+  transition: background 0.15s ease-out;
+}
+.srv-content-matrix-head:hover { background: var(--base-03); }
+.srv-content-matrix-head:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--color-accent-light); }
+.srv-content-matrix-row { border-top: 1px solid var(--base-03); }
+.srv-content-matrix-row:hover { background: var(--base-03); }
+
+@media (prefers-reduced-motion: reduce) {
+  .srv-content-row, .srv-content-toggle, .srv-content-matrix-head { transition: none; }
+}
+
+/* Browse: filter sidebar left, results right (Modrinth style). */
+.srv-content-browse { display: grid; gap: 24px; align-items: start; }
+@media (min-width: 1024px) { .srv-content-browse { grid-template-columns: 240px minmax(0, 1fr); } }
+.srv-content-filters {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 20px;
+  background: var(--base-02);
+  border-radius: var(--radius-lg);
+}
+/* On wide screens the sidebar and the result list are two boxes of the same
+   height, each scrolling on its own; the page scrolls only outside them.
+   overscroll-behavior keeps a wheel at the end of a box from moving the page. */
+.srv-content-results { display: flex; flex-direction: column; gap: 16px; min-height: 0; }
+/* The list clips its rounded corners with overflow:hidden, which lets a flex
+   item shrink below its content: keep children at full height so the box
+   scrolls instead of cutting rows off. */
+.srv-content-results > * { flex-shrink: 0; }
+@media (min-width: 1024px) {
+  /* Fits the visible part of the server page (below the header and tabs) once
+     the page title has scrolled away. */
+  .srv-content-browse { height: calc(100dvh - 300px); min-height: 420px; }
+  .srv-content-browse > * { height: 100%; min-height: 0; }
+  .srv-content-filters, .srv-content-results { overflow-y: auto; overscroll-behavior: contain; }
+  .srv-content-results { flex: 1; }
+}
+.srv-content-filter-group { display: flex; flex-direction: column; gap: 8px; }
+.srv-content-filter-group + .srv-content-filter-group { padding-top: 20px; border-top: 1px solid var(--base-03); }
+.srv-content-cats { display: flex; flex-direction: column; gap: 2px; }
+.srv-content-cat {
+  text-align: left;
+  padding: 6px 10px;
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  color: var(--base-07);
+  cursor: pointer;
+  transition: background 0.15s ease-out, color 0.15s ease-out;
+}
+.srv-content-cat:hover { background: var(--base-03); color: var(--base-09); }
+.srv-content-cat:active { background: var(--base-04); }
+.srv-content-cat:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.srv-content-cat[aria-pressed="true"] { background: var(--accent-ghost); color: var(--accent-light); }
+@media (max-width: 1023px) {
+  .srv-content-cats { flex-direction: row; flex-wrap: wrap; gap: 6px; }
+  .srv-content-cat { background: var(--base-03); border-radius: 9999px; }
+}
+@media (prefers-reduced-motion: reduce) { .srv-content-cat { transition: none; } }

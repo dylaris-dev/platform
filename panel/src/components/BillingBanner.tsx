@@ -64,8 +64,8 @@ export default function BillingBanner() {
     if (overLimit) {
         return (
             <div className="shrink-0">
-                <div className="flex items-center justify-center gap-3 bg-(--error) text-white px-4 py-2.5 text-sm font-medium shadow-md">
-                    <AlertTriangle size={18} className="shrink-0" />
+                <div className="app-banner items-center justify-center font-medium" data-tone="error">
+                    <AlertTriangle size={16} className="shrink-0" />
                     <span>
                         You are using more than your subscription covers. Reduce what you have or
                         raise your subscription by{' '}
@@ -94,8 +94,8 @@ export default function BillingBanner() {
     if (traffic && (trafficState === 'stopped' || trafficState === 'over')) {
         const stopped = trafficState === 'stopped';
         const inner = (
-            <div className="flex items-center justify-center gap-3 bg-(--error) text-white px-4 py-2.5 text-sm font-medium shadow-md">
-                <AlertTriangle size={18} className="shrink-0" />
+            <div className="app-banner items-center justify-center font-medium" data-tone="error">
+                <AlertTriangle size={16} className="shrink-0" />
                 <span>
                     {stopped ? 'Your services are stopped: you have used ' : 'You have used '}
                     <strong>{traffic.usedGb} GB</strong> of the {traffic.ceilingGb} GB your
@@ -122,8 +122,8 @@ export default function BillingBanner() {
         // bar people stop reading.
         if (traffic && trafficState === 'approaching') {
             const inner = (
-                <div className="flex items-center justify-center gap-3 bg-(--warning) text-black px-4 py-2.5 text-sm font-medium shadow-md">
-                    <AlertTriangle size={18} className="shrink-0" />
+                <div className="app-banner items-center justify-center font-medium" data-tone="warning">
+                    <AlertTriangle size={16} className="shrink-0" />
                     <span>
                         You have used <strong>{traffic.pct}%</strong> of the traffic your
                         subscription covers ({traffic.usedGb} of {traffic.ceilingGb} GB). Metered
@@ -147,8 +147,8 @@ export default function BillingBanner() {
             const mbit = traffic.dataThrottleMbit ?? 50;
             const reset = traffic.resetAt ? fmtDate(traffic.resetAt, { day: 'numeric', month: 'long' }) : 'the start of next month';
             const inner = (
-                <div className="flex items-center justify-center gap-3 bg-(--warning) text-black px-4 py-2.5 text-sm font-medium shadow-md">
-                    <AlertTriangle size={18} className="shrink-0" />
+                <div className="app-banner items-center justify-center font-medium" data-tone="warning">
+                    <AlertTriangle size={16} className="shrink-0" />
                     <span>
                         {dataState === 'throttled'
                             ? <>This month&apos;s data traffic is used up: beam transfers and custom tabs are slowed to <strong>{mbit} Mbit/s</strong> until {reset}. Your servers and the web file browser are not affected. Turn on data overage to lift it.</>
@@ -174,8 +174,8 @@ export default function BillingBanner() {
         : `Payment required. Your services will be suspended${graceUntil ? ` on ${fmtDateTime(graceUntil)}` : ''}. Pay now to avoid interruption.`;
 
     const inner = (
-        <div className="flex items-center justify-center gap-3 bg-(--error) text-white px-4 py-2.5 text-sm font-medium shadow-md">
-            <AlertTriangle size={18} className="shrink-0" />
+        <div className="app-banner items-center justify-center font-medium" data-tone="error">
+            <AlertTriangle size={16} className="shrink-0" />
             <span>{message}</span>
             {paymentUrl && (
                 <span className="inline-flex items-center gap-1 font-semibold underline underline-offset-2 whitespace-nowrap">

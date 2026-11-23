@@ -10,6 +10,11 @@ import { isUsername } from '@/lib/validation';
 import { getRegistrationStatus } from '@/lib/api/registration';
 import { useDevMode, setDevModeEnabled, clearDevLog } from '@/lib/devLog';
 import { ReauthFields, reauthReady } from '@/components/ReauthFields';
+import Tabs from '@/components/ui/Tabs';
+import Switch from '@/components/ui/Switch';
+import Checkbox from '@/components/ui/Checkbox';
+import Select from '@/components/ui/Select';
+import OtpInput from '@/components/ui/OtpInput';
 import ModalPanel from '@/components/ui/ModalPanel';
 import { isHighContrast, setHighContrast } from '@/lib/contrastMode';
 import { Badge } from '@/components/ui/Badge';
@@ -85,7 +90,7 @@ function Field({ id, label, hint, error, children }: {
 }) {
   return (
     <div className="flex flex-col gap-[5px]">
-      <label htmlFor={id} className="input-label">{label}</label>
+      <label htmlFor={id} className="srv-label">{label}</label>
       {children}
       {error
         ? <p id={`${id}-error`} className="text-xs text-(--error-light)">{error}</p>
@@ -271,28 +276,30 @@ const ProfilePopup: React.FC<ProfilePopupProps> = ({ currentUser, onClose, onUpd
     </Field>
   );
 
-  const tabClass = (view: string) => `pb-2.5 px-3 font-medium text-sm transition-colors ${currentView === view ? "border-b-2 border-(--accent) text-(--accent-light)" : "text-(--base-07) hover:text-(--base-09)"}`;
-
   return (
     <>
     <div className="modal-overlay animate-fade-in">
       {/* Escape does what the X in its header does. */}
       <ModalPanel onClose={onClose} className="modal-panel w-full max-w-md">
         <div className="modal-header flex justify-between items-center">
-          <h2 className="modal-title">Profile Settings</h2>
-          <button onClick={onClose} aria-label="Close" className="text-(--base-06) hover:text-(--error-light) transition-colors">
-            <X size={20} />
+          <h2 className="modal-title">Profile settings</h2>
+          <button type="button" onClick={onClose} aria-label="Close" className="app-icon-btn">
+            <X size={16} />
           </button>
         </div>
 
-        <div role="tablist" className="flex gap-1 px-6 pt-4 border-b border-(--base-03)">
-          <button type="button" role="tab" aria-selected={currentView === "general"} onClick={() => setCurrentView("general")} className={tabClass("general")}>General</button>
-          <button type="button" role="tab" aria-selected={currentView === "account"} onClick={() => setCurrentView("account")} className={tabClass("account")}>Account</button>
-          <button type="button" role="tab" aria-selected={currentView === "security"} onClick={() => setCurrentView("security")} className={tabClass("security")}>Security</button>
-          {currentUser.isAdmin && (
-            <button type="button" role="tab" aria-selected={currentView === "developer"} onClick={() => setCurrentView("developer")} className={tabClass("developer")}>Developer</button>
-          )}
-        </div>
+        <Tabs
+          className="px-6 pt-4"
+          ariaLabel="Profile sections"
+          active={currentView}
+          onChange={setCurrentView}
+          items={[
+            { id: "general", label: "General" },
+            { id: "account", label: "Account" },
+            { id: "security", label: "Security" },
+            ...(currentUser.isAdmin ? [{ id: "developer", label: "Developer" }] : []),
+          ]}
+        />
 
         <div className="modal-body">
           {bannerError && <div role="alert" className="alert alert-error mb-4 font-medium">{bannerError}</div>}
@@ -346,7 +353,7 @@ const ProfilePopup: React.FC<ProfilePopupProps> = ({ currentUser, onClose, onUpd
             {currentView === "security" && (
               <div className="space-y-4 animate-fade-in">
                 <div className="space-y-3">
-                  <h3 className="mono-label">Change password</h3>
+                  <h3 className="srv-label">Change password</h3>
                   {currentPasswordField}
                   <Field
                     id="profile-new-password" label="New password" error={errors.newPassword}
@@ -572,7 +579,7 @@ function MinecraftUsernameRow({ initial, onSaved }: { initial: string; onSaved?:
   return (
     <div className="p-3 rounded-md bg-(--base-02) border border-(--base-03) space-y-2">
       <div className="flex items-center justify-between gap-2">
-        <label htmlFor="profile-minecraft" className="input-label">Minecraft username</label>
+        <label htmlFor="profile-minecraft" className="srv-label">Minecraft username</label>
         {saved && <Badge variant="warning">Unverified</Badge>}
       </div>
       <div className="flex gap-2">
@@ -633,16 +640,7 @@ function HighContrastRow() {
           </div>
         </div>
       </div>
-      <button
-        type="button"
-        role="switch"
-        aria-checked={on}
-        aria-labelledby="high-contrast-label"
-        onClick={toggle}
-        className={`toggle-track shrink-0 ${on ? 'toggle-track-on' : 'toggle-track-off'}`}
-      >
-        <span className={`toggle-knob ${on ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
-      </button>
+      <Switch checked={on} onChange={() => toggle()} ariaLabel="High contrast" className="shrink-0" />
     </div>
   );
 }
@@ -792,7 +790,7 @@ function EnableWizard({ onClose, onComplete }: { onClose: () => void; onComplete
             <ShieldCheck size={18} />
             Enable Two-Factor
           </h2>
-          <button onClick={onClose} className="text-(--base-06) hover:text-(--error-light)"><X size={18} /></button>
+          <button type="button" onClick={onClose} aria-label="Close" className="app-icon-btn"><X size={16} /></button>
         </div>
 
         <div className="modal-body">
@@ -831,23 +829,15 @@ function EnableWizard({ onClose, onComplete }: { onClose: () => void; onComplete
                 <QRCodeSVG value={otpURL} size={180} />
               </div>
               <div className="flex flex-col gap-[5px]">
-                <label className="input-label">Or enter this secret manually</label>
+                <label className="srv-label">Or enter this secret manually</label>
                 <code className="input-mono w-full bg-(--base-02) border border-(--base-03) rounded-md px-3 py-2 text-xs text-(--base-08) break-all select-all">{secret}</code>
               </div>
               <div className="flex flex-col gap-[5px]">
-                <label className="input-label">Verification code</label>
-                <input
-                  type="text"
-                  value={code}
-                  onChange={e => setCode(e.target.value)}
-                  inputMode="numeric"
-                  autoComplete="one-time-code"
-                  placeholder="123 456"
-                  className="input-field input-mono w-full text-center tracking-widest"
-                />
+                <label htmlFor="profile-enroll-code" className="srv-label">Verification code</label>
+                <OtpInput id="profile-enroll-code" value={code} onChange={setCode} />
               </div>
               <div className="flex flex-col gap-[5px]">
-                <label className="input-label">Your password</label>
+                <label className="srv-label">Your password</label>
                 <input
                   type="password"
                   value={password}
@@ -884,11 +874,7 @@ function EnableWizard({ onClose, onComplete }: { onClose: () => void; onComplete
               <button type="button" onClick={copyAll} className="btn btn-secondary btn-sm w-full">
                 {copied ? <><Check size={12} /> Copied</> : <><Copy size={12} /> Copy all codes</>}
               </button>
-              <label className="flex items-start gap-2 text-xs text-(--base-07) cursor-pointer pt-1">
-                <input type="checkbox"
-                            className="checkbox mt-0.5" checked={acknowledged} onChange={e => setAcknowledged(e.target.checked)} />
-                <span>I have saved these codes in a secure location.</span>
-              </label>
+              <Checkbox className="pt-1" checked={acknowledged} onChange={setAcknowledged} label="I have saved these codes in a secure location." />
               <button
                 type="button"
                 onClick={onComplete}
@@ -935,7 +921,7 @@ function DisableWizard({ onClose, onComplete }: { onClose: () => void; onComplet
             <ShieldOff size={18} className="text-(--error-light)" />
             Disable Two-Factor
           </h2>
-          <button onClick={onClose} className="text-(--base-06) hover:text-(--error-light)"><X size={18} /></button>
+          <button type="button" onClick={onClose} aria-label="Close" className="app-icon-btn"><X size={16} /></button>
         </div>
 
         <div className="modal-body space-y-4">
@@ -949,11 +935,11 @@ function DisableWizard({ onClose, onComplete }: { onClose: () => void; onComplet
           </p>
           <form onSubmit={handleSubmit} className="space-y-3">
             <div className="flex flex-col gap-[5px]">
-              <label className="input-label">Password</label>
+              <label className="srv-label">Password</label>
               <input type="password" value={password} onChange={e => setPassword(e.target.value)} className="input-field w-full" required />
             </div>
             <div className="flex flex-col gap-[5px]">
-              <label className="input-label">Authenticator code or backup code</label>
+              <label className="srv-label">Authenticator code or backup code</label>
               <input
                 type="text"
                 value={code}
@@ -1004,19 +990,11 @@ function DeveloperPanel() {
             </div>
           </div>
         </div>
-        <button
-          type="button"
-          role="switch"
-          aria-checked={devMode}
-          onClick={() => setDevModeEnabled(!devMode)}
-          className={`toggle-track shrink-0 ${devMode ? 'toggle-track-on' : 'toggle-track-off'}`}
-        >
-          <span className={`toggle-knob ${devMode ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
-        </button>
+        <Switch checked={devMode} onChange={setDevModeEnabled} ariaLabel="Developer Mode" className="shrink-0" />
       </div>
 
       <div>
-        <h3 className="mono-label mb-2">What this enables</h3>
+        <h3 className="srv-label mb-2">What this enables</h3>
         <ul className="text-xs text-(--base-07) space-y-1.5 list-disc pl-5">
           <li>
             <strong className="text-(--base-09)">File browser debug log</strong> — a
@@ -1096,7 +1074,7 @@ function RegenerateBackupCodesWizard({ onClose, onComplete }: {
             <RefreshCw size={18} className="text-(--accent-light)" />
             Regenerate Backup Codes
           </h2>
-          <button onClick={onClose} className="text-(--base-06) hover:text-(--error-light)"><X size={18} /></button>
+          <button type="button" onClick={onClose} aria-label="Close" className="app-icon-btn"><X size={16} /></button>
         </div>
 
         <div className="modal-body space-y-4">
@@ -1115,11 +1093,11 @@ function RegenerateBackupCodesWizard({ onClose, onComplete }: {
               </p>
               <form onSubmit={handleSubmit} className="space-y-3">
                 <div className="flex flex-col gap-[5px]">
-                  <label className="input-label">Password</label>
+                  <label className="srv-label">Password</label>
                   <input type="password" value={password} onChange={e => setPassword(e.target.value)} className="input-field w-full" required />
                 </div>
                 <div className="flex flex-col gap-[5px]">
-                  <label className="input-label">Authenticator code or backup code</label>
+                  <label className="srv-label">Authenticator code or backup code</label>
                   <input
                     type="text"
                     value={code}
@@ -1155,11 +1133,7 @@ function RegenerateBackupCodesWizard({ onClose, onComplete }: {
               <button type="button" onClick={copyAll} className="btn btn-secondary btn-sm w-full">
                 {copied ? <><Check size={12} /> Copied</> : <><Copy size={12} /> Copy all codes</>}
               </button>
-              <label className="flex items-start gap-2 text-xs text-(--base-07) cursor-pointer pt-1">
-                <input type="checkbox"
-                            className="checkbox mt-0.5" checked={acknowledged} onChange={e => setAcknowledged(e.target.checked)} />
-                <span>I have saved these codes in a secure location.</span>
-              </label>
+              <Checkbox className="pt-1" checked={acknowledged} onChange={setAcknowledged} label="I have saved these codes in a secure location." />
               <button
                 type="button"
                 onClick={() => onComplete(newCodes.length)}
@@ -1290,19 +1264,18 @@ function SecurityQuestionsSection({ twoFactorEnabled }: { twoFactorEnabled: bool
             const options = pool.filter(p => !otherPicks.includes(p));
             return (
               <div key={idx} className="space-y-1.5">
-                <select
+                <Select
                   value={qa.question}
-                  onChange={e => {
+                  onChange={v => {
                     const next = [...items];
-                    next[idx] = { ...next[idx], question: e.target.value };
+                    next[idx] = { ...next[idx], question: v };
                     setItems(next);
                   }}
-                  className="input-field w-full text-sm"
+                  options={options.map(q => ({ value: q, label: q }))}
+                  placeholder={`— Pick question #${idx + 1} —`}
+                  ariaLabel={`Security question ${idx + 1}`}
                   disabled={saving}
-                >
-                  <option value="">— Pick question #{idx + 1} —</option>
-                  {options.map(q => <option key={q} value={q}>{q}</option>)}
-                </select>
+                />
                 <input
                   type="text"
                   value={qa.answer}

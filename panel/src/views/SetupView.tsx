@@ -997,7 +997,7 @@ export default function SetupView({ server, onSetupComplete, onInstalled }: Setu
     // ---------- Render ----------
 
     return (
-        <div className="flex gap-6 h-full min-h-0">
+        <div className="flex flex-col gap-6 lg:flex-row lg:h-full min-h-0">
             {/* Sidebar -- always rendered, including during
                 pending_setup of a fresh container so the user can
                 Add Server right away. Empty-state hint inside the

@@ -16,11 +16,11 @@ import AddNodeModal from '@/components/AddNodeModal';
 export default function ExternalNodesPanel() {
     const [showAdd, setShowAdd] = useState(false);
     return (
-        <section className="card p-5 space-y-3">
-            <h2 className="text-sm font-display font-semibold text-(--accent-light) flex items-center gap-2">
-                <HardDrive size={15} /> External nodes
+        <section className="srv-surface p-5 space-y-3">
+            <h2 className="text-[15px] font-semibold text-(--base-09) flex items-center gap-2">
+                <HardDrive size={16} className="text-(--base-06)" aria-hidden="true" /> External nodes
             </h2>
-            <p className="text-sm text-(--base-07) max-w-2xl">
+            <p className="text-[13px] leading-relaxed text-(--base-06) max-w-2xl">
                 Machines you run yourself that reach the platform over the warp overlay rather than sitting in the
                 cluster. They are listed, added, deployed and given new keys in one place.
             </p>

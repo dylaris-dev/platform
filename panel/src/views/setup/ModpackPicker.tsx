@@ -1,5 +1,6 @@
 "use client";
 
+import '@/styles/server-setup.css';
 import React, { useCallback, useEffect, useState } from 'react';
 import { Search, Package, Download, RefreshCw, AlertTriangle, Check, ExternalLink } from 'lucide-react';
 import {
@@ -83,11 +84,11 @@ export default function ModpackPicker({ selection, onSelect }: ModpackPickerProp
     return (
         <div className="min-h-[220px] space-y-3">
             {selection ? (
-                <div className="card p-3 border-(--accent) bg-(--accent-ghost)/30 flex items-start gap-3">
+                <div className="srv-setup-selected">
                     <Check size={16} className="text-(--accent-light) shrink-0 mt-0.5" />
                     <div className="min-w-0 flex-1">
                         <div className="text-sm font-medium text-(--base-09)">{selection.title}</div>
-                        <div className="text-xs text-(--base-06) font-mono mt-0.5">
+                        <div className="srv-num text-xs text-(--base-06) mt-0.5">
                             {selection.loader && <>{selection.loader} · </>}
                             {selection.mcVersion && <>MC {selection.mcVersion} · </>}
                             version {selection.versionId.slice(0, 8)}…
@@ -125,7 +126,7 @@ export default function ModpackPicker({ selection, onSelect }: ModpackPickerProp
                     {searching ? (
                         <div className="space-y-1.5 max-h-[280px] overflow-y-auto">
                             {Array.from({ length: 5 }).map((_, i) => (
-                                <div key={i} className="card p-2 flex items-center gap-3">
+                                <div key={i} className="srv-setup-option">
                                     <Skeleton className="w-8 h-8 rounded-md shrink-0" />
                                     <div className="min-w-0 flex-1 space-y-1.5">
                                         <SkeletonText width="w-1/3" className="h-3" />
@@ -143,19 +144,19 @@ export default function ModpackPicker({ selection, onSelect }: ModpackPickerProp
                                     <button
                                         type="button"
                                         onClick={() => handleExpand(hit)}
-                                        className="w-full card p-2 flex items-center gap-3 text-left hover:border-(--accent-border)"
+                                        className="srv-setup-option"
                                     >
                                         {hit.icon_url ? (
                                             // eslint-disable-next-line @next/next/no-img-element
                                             <img src={hit.icon_url} alt="" className="w-8 h-8 rounded-md shrink-0" />
                                         ) : (
-                                            <div className="w-8 h-8 rounded-md bg-(--base-03) flex items-center justify-center shrink-0">
+                                            <div className="w-8 h-8 rounded-md bg-(--base-04) flex items-center justify-center shrink-0">
                                                 <Package size={12} className="text-(--base-05)" />
                                             </div>
                                         )}
                                         <div className="min-w-0 flex-1">
                                             <div className="text-sm font-medium text-(--base-09) truncate">{hit.title}</div>
-                                            <div className="text-[10px] font-mono text-(--base-06) truncate">by {hit.author} · {hit.downloads.toLocaleString()} downloads</div>
+                                            <div className="srv-num text-xs text-(--base-06) truncate">by {hit.author} · {hit.downloads.toLocaleString()} downloads</div>
                                         </div>
                                     </button>
                                     {expandedSlug === hit.slug && (
@@ -173,12 +174,12 @@ export default function ModpackPicker({ selection, onSelect }: ModpackPickerProp
                                                         key={v.id}
                                                         type="button"
                                                         onClick={() => handlePickVersion(hit, v)}
-                                                        className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md border border-(--base-04) hover:border-(--accent-border) hover:bg-(--accent-ghost)/30 text-left"
+                                                        className="srv-setup-option py-1.5"
                                                     >
                                                         <Download size={11} className="text-(--accent-light) shrink-0" />
                                                         <div className="min-w-0 flex-1">
                                                             <div className="text-xs text-(--base-09)">{v.version_number}</div>
-                                                            <div className="text-[10px] font-mono text-(--base-06) truncate">
+                                                            <div className="srv-num text-xs text-(--base-06) truncate">
                                                                 {v.version_type} · {v.loaders.join(', ')} · MC {v.game_versions.join(', ')}
                                                             </div>
                                                         </div>

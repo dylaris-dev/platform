@@ -40,8 +40,8 @@ import TrafficAllowanceFields, {
 import { getUserEntitlement, grantEntitlement, revokeEntitlement, type Entitlement, type EntitlementResponse } from '@/lib/api/entitlement';
 import { entitlementOf, formatDaysLeft } from '@/lib/entitlementState';
 import { entitlementExplanation } from '@/lib/entitlementText';
-import { UserPlus, Settings, X, CircleCheck, CircleAlert, ShieldOff, Trash2, ShieldAlert, History as HistoryIcon, Package, CreditCard, HardDrive, Loader2 } from 'lucide-react';
-import { SkeletonText } from '@/components/Skeleton';
+import { UserPlus, Settings, X, CircleCheck, CircleAlert, ShieldOff, Trash2, ShieldAlert, History as HistoryIcon, Package, CreditCard, HardDrive, Loader2, MoreHorizontal } from 'lucide-react';
+import { SkeletonCard, SkeletonText } from '@/components/Skeleton';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import { reauthDialog } from '@/components/ui/ReauthDialog';
 import HelpTip from '@/components/ui/HelpTip';
@@ -49,6 +49,16 @@ import { useAppData } from '@/lib/AppDataContext';
 import ModalPanel from '@/components/ui/ModalPanel';
 import { adminDeleteUserStorageTarget, adminListUserStorageTargets, storageTargetUsage, type AdminStorageTarget } from '@/lib/api/ownBackupStorage';
 import { fmtDate, fmtDateTime } from '@/lib/time';
+import Select from '@/components/ui/Select';
+import Switch from '@/components/ui/Switch';
+import Checkbox from '@/components/ui/Checkbox';
+import RadioCards from '@/components/settings/RadioCards';
+import Tooltip from '@/components/ui/Tooltip';
+import Menu, { type MenuEntry } from '@/components/ui/Menu';
+import GuardedTabs from '@/components/settings/GuardedTabs';
+import { type TabItem } from '@/components/ui/Tabs';
+import EmptyState from '@/components/ui/EmptyState';
+import { RowList, Row } from '@/components/ui/RowList';
 
 interface UsersTabProps {
     currentUser?: User;
@@ -246,9 +256,13 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
         loadUsers();
     }, []);
 
+    // null until the first answer: an empty list must mean "no users", not
+    // "still loading" or "the request failed".
+    const [usersState, setUsersState] = useState<'loading' | 'ok' | 'error'>('loading');
     const loadUsers = async () => {
         const res = await getUsers();
-        if (res.success) setUsers(res.users);
+        if (res.success) { setUsers(res.users); setUsersState('ok'); }
+        else setUsersState(prev => prev === 'ok' ? 'ok' : 'error');
     };
 
     const handleCreateUser = async (e: React.FormEvent) => {
@@ -411,28 +425,26 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
         setRouteSaving(false);
     };
 
-    const tabClass = (tab: string) =>
-        `px-4 py-2 text-sm font-medium transition-colors border-b-2 ${
-            settingsTab === tab
-                ? 'text-(--base-09) border-(--accent)'
-                : 'text-(--base-06) border-transparent hover:text-(--base-08)'
-        }`;
+    const settingsTabs: TabItem<'general' | 'gateway' | 'managed'>[] = [
+        { id: 'general', label: 'General' },
+        { id: 'gateway', label: 'Gateway' },
+        // The provider's view of this customer: only where this platform runs its own gateway.
+        ...(gatewayVisibility.tenancy ? [{ id: 'managed' as const, label: 'Managed gateway' }] : []),
+    ];
 
     return (
-        <div>
-            <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+        <div className="space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex items-center gap-2">
-                    <label htmlFor="user-sort" className="mono-label">Sort by</label>
-                    <select
+                    <label htmlFor="user-sort" className="srv-label">Sort by</label>
+                    <Select
                         id="user-sort"
+                        ariaLabel="Sort by"
                         value={sort}
-                        onChange={e => setSort(e.target.value as UserSort)}
-                        className="input-field py-1.5 text-sm"
-                    >
-                        <option value="role">Role</option>
-                        <option value="name">Name</option>
-                        <option value="created">Newest first</option>
-                    </select>
+                        onChange={v => setSort(v as UserSort)}
+                        className="w-40"
+                        options={[{ value: 'role', label: 'Role' }, { value: 'name', label: 'Name' }, { value: 'created', label: 'Newest first' }]}
+                    />
                 </div>
                 <button onClick={() => {setUserForm({ username: "", password: "", isAdmin: false }); setError(""); setIsModalOpen(true);}} className="btn btn-primary">
                     <UserPlus size={14} />
@@ -440,124 +452,97 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
                 </button>
             </div>
 
-            <div className="table-wrapper">
-                <table className="w-full">
-                    <thead>
-                        <tr>
-                            <th className="table-th text-left">Username</th>
-                            <th className="table-th text-left">Role</th>
-                            <th className="table-th text-left">Created At</th>
-                            <th className="table-th text-right">Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {sortUsers(users, sort).map(u => (
-                            <tr key={u.id} className="table-tr table-tr-hover">
-                                <td className="table-td font-mono font-medium text-(--base-09)">
-                                    {u.username}
-                                    {/* The address under the name rather than in its own column:
-                                        it is what support needs in order to reach somebody, and it
-                                        was not on this screen at all. Unverified is called out
-                                        because that account cannot receive a reset it can act on. */}
-                                    {u.email && (
-                                        <span className="block text-xs font-normal text-(--base-06) mt-0.5">
-                                            {u.email}
-                                            {!u.emailVerifiedAt && (
-                                                <span className="ml-1.5 text-(--warning-light)">unverified</span>
+            {usersState === 'error' && users.length === 0 ? (
+                <EmptyState tone="error" icon={<UserPlus size={20} />} title="Users could not be loaded" description="Core did not answer. Try again in a moment."
+                    action={<button type="button" className="btn btn-secondary" onClick={loadUsers}>Try again</button>} />
+            ) : usersState === 'loading' && users.length === 0 ? (
+                <div className="srv-surface p-5 space-y-3" aria-busy="true">
+                    <SkeletonCard height="h-12" /><SkeletonCard height="h-12" /><SkeletonCard height="h-12" />
+                </div>
+            ) : users.length === 0 ? (
+                <EmptyState icon={<UserPlus size={20} />} title="No users" description="Create the first account to get started." />
+            ) : (
+                <div className="srv-surface">
+                    <RowList label="Users">
+                        {sortUsers(users, sort).map(u => {
+                            const role = u.role || (u.isAdmin ? 'admin' : 'user');
+                            const roleCls =
+                                role === 'admin' ? 'badge badge-accent'
+                                : role === 'support' ? 'badge badge-warning'
+                                : 'badge badge-neutral';
+                            /* The delete item is always PRESENT, and says why it is
+                               off. An item that simply vanishes reads as a
+                               missing feature, and the reader never learns the rule. */
+                            const isSelf = currentUser?.username === u.username;
+                            const isLastAdmin = u.isAdmin && adminCount <= 1;
+                            const reason = isSelf
+                                ? 'You cannot delete your own account'
+                                : isLastAdmin
+                                    ? 'This is the last admin. Make someone else an admin first.'
+                                    : undefined;
+                            const items: MenuEntry[] = [
+                                { label: 'User settings', icon: <Settings size={14} />, onSelect: () => openSettings(u) },
+                                { label: 'Username history', icon: <HistoryIcon size={14} />, onSelect: () => setHistoryUser({ id: u.id, username: u.username }) },
+                                { label: 'Own storage targets', icon: <HardDrive size={14} />, onSelect: () => setStorageUser({ id: u.id, username: u.username }) },
+                                ...((featureFlags.byon || featureFlags.routeOnly)
+                                    ? [{ label: 'Billing & retention (BYON)', icon: <CreditCard size={14} />, onSelect: () => setBillingUser({ id: u.id, username: u.username }) }]
+                                    : []),
+                                { type: 'separator' },
+                                {
+                                    label: reason ? `Delete: ${reason}` : `Delete ${u.username}`,
+                                    icon: <Trash2 size={14} />,
+                                    danger: true,
+                                    disabled: !!reason,
+                                    onSelect: () => handleDeleteUser(u.id),
+                                },
+                            ];
+                            return (
+                                <Row
+                                    key={u.id}
+                                    title={
+                                        <span className="inline-flex items-center gap-2">
+                                            <span className="font-mono">{u.username}</span>
+                                            <span className={roleCls}>{role}</span>
+                                            {u.deletionStatus === 'pending_deletion' && (
+                                                <span
+                                                    title={u.deletionScheduledAt ? `Scheduled for deletion on ${fmtDate(u.deletionScheduledAt)}` : 'Scheduled for deletion'}
+                                                    className="inline-flex h-5 items-center gap-1 rounded-full bg-(--error-ghost) px-2 text-[11px] font-medium text-(--error-light)"
+                                                >
+                                                    <ShieldAlert size={11} />
+                                                    Pending delete
+                                                </span>
+                                            )}
+                                            {u.deletionStatus === 'anonymized' && (
+                                                <span className="inline-flex h-5 items-center gap-1 rounded-full bg-(--base-03) px-2 text-[11px] font-medium text-(--base-06)">
+                                                    <Trash2 size={11} />
+                                                    Anonymized
+                                                </span>
                                             )}
                                         </span>
-                                    )}
-                                    {u.deletionStatus === 'pending_deletion' && (
-                                        <span
-                                            title={u.deletionScheduledAt ? `Scheduled for deletion on ${fmtDate(u.deletionScheduledAt)}` : 'Scheduled for deletion'}
-                                            className="ml-2 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm text-[10px] font-mono uppercase tracking-[0.06em] bg-(--error-ghost) text-(--error-light) border border-(--error)/15"
-                                        >
-                                            <ShieldAlert size={10} />
-                                            Pending delete
-                                        </span>
-                                    )}
-                                    {u.deletionStatus === 'anonymized' && (
-                                        <span className="ml-2 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm text-[10px] font-mono uppercase tracking-[0.06em] bg-(--base-03) text-(--base-06)">
-                                            <Trash2 size={10} />
-                                            Anonymized
-                                        </span>
-                                    )}
-                                </td>
-                                <td className="table-td">
-                                    {(() => {
-                                        const role = u.role || (u.isAdmin ? 'admin' : 'user');
-                                        const cls =
-                                            role === 'admin' ? 'badge badge-accent'
-                                            : role === 'support' ? 'badge badge-warning'
-                                            : 'badge badge-neutral';
-                                        return <span className={cls}>{role.toUpperCase()}</span>;
-                                    })()}
-                                </td>
-                                <td className="table-td text-sm text-(--base-06)">{u.createdAt ? fmtDate(u.createdAt) : 'N/A'}</td>
-                                <td className="table-td text-right">
-                                    <div className="flex items-center justify-end gap-2">
-                                        <button
-                                            onClick={() => setHistoryUser({ id: u.id, username: u.username })}
-                                            className="btn px-2.5 py-1 text-xs bg-(--base-03) border border-(--base-04) text-(--base-07) hover:text-(--base-09) transition-colors"
-                                            title="Username history"
-                                        >
-                                            <HistoryIcon size={13} />
-                                        </button>
-                                        <button
-                                            onClick={() => setStorageUser({ id: u.id, username: u.username })}
-                                            className="btn px-2.5 py-1 text-xs bg-(--base-03) border border-(--base-04) text-(--base-07) hover:text-(--base-09) transition-colors"
-                                            title="Own storage targets"
-                                            aria-label={`Own storage targets of ${u.username}`}
-                                        >
-                                            <HardDrive size={13} />
-                                        </button>
-                                        {(featureFlags.byon || featureFlags.routeOnly) && (
-                                            <button
-                                                onClick={() => setBillingUser({ id: u.id, username: u.username })}
-                                                className="btn px-2.5 py-1 text-xs bg-(--base-03) border border-(--base-04) text-(--base-07) hover:text-(--base-09) transition-colors"
-                                                title="Billing & retention (BYON)"
-                                            >
-                                                <CreditCard size={13} />
-                                            </button>
-                                        )}
-                                        <button
-                                            onClick={() => openSettings(u)}
-                                            className="btn px-2.5 py-1 text-xs bg-(--base-03) border border-(--base-04) text-(--base-07) hover:text-(--base-09) transition-colors"
-                                            title="User settings"
-                                        >
-                                            <Settings size={13} />
-                                        </button>
-                                        {(() => {
-                                            /* The button is always PRESENT, and
-                                               says why when it is off. A button
-                                               that simply vanishes reads as a
-                                               missing feature, and the reader
-                                               never learns the rule. */
-                                            const isSelf = currentUser?.username === u.username;
-                                            const isLastAdmin = u.isAdmin && adminCount <= 1;
-                                            const reason = isSelf
-                                                ? 'You cannot delete your own account'
-                                                : isLastAdmin
-                                                    ? 'This is the last admin. Make someone else an admin first.'
-                                                    : undefined;
-                                            return (
-                                                <button
-                                                    onClick={() => handleDeleteUser(u.id)}
-                                                    disabled={!!reason}
-                                                    title={reason || `Delete ${u.username}`}
-                                                    className="btn btn-danger btn-sm disabled:opacity-40 disabled:cursor-not-allowed"
-                                                >
-                                                    Delete
-                                                </button>
-                                            );
-                                        })()}
-                                    </div>
-                                </td>
-                            </tr>
-                        ))}
-                    </tbody>
-                </table>
-            </div>
+                                    }
+                                    /* The address under the name rather than in its own column:
+                                       it is what support needs in order to reach somebody.
+                                       Unverified is called out because that account cannot
+                                       receive a reset it can act on. */
+                                    meta={u.email ? (
+                                        <>
+                                            {u.email}
+                                            {!u.emailVerifiedAt && <span className="ml-1.5 text-(--warning-light)">unverified</span>}
+                                        </>
+                                    ) : undefined}
+                                    trailing={u.createdAt ? <span className="hidden sm:inline">Created {fmtDate(u.createdAt)}</span> : undefined}
+                                    actions={
+                                        <Menu
+                                            trigger={<button type="button" className="app-icon-btn" aria-label={`Actions for ${u.username}`}><MoreHorizontal size={16} /></button>}
+                                            items={items}
+                                        />
+                                    }
+                                />
+                            );
+                        })}
+                    </RowList>
+                </div>
+            )}
 
             {/* Create User Modal */}
             {isModalOpen && (
@@ -578,11 +563,7 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
                                     <label className="input-label">Password</label>
                                     <input required type="password" value={userForm.password} onChange={e => setUserForm({...userForm, password: e.target.value})} className="input-field w-full" />
                                 </div>
-                                <div className="flex items-center gap-2">
-                                    <input type="checkbox"
-                            className="checkbox" checked={userForm.isAdmin} onChange={e => setUserForm({...userForm, isAdmin: e.target.checked})} />
-                                    <label className="text-sm font-medium text-(--base-08)">Administrator Rights</label>
-                                </div>
+                                <Checkbox checked={!!userForm.isAdmin} onChange={c => setUserForm({...userForm, isAdmin: c})} label="Administrator Rights" />
                                 <div className="modal-footer">
                                     <button type="button" onClick={() => setIsModalOpen(false)} className="btn btn-secondary">Cancel</button>
                                     <button type="submit" className="btn btn-primary">Create User</button>
@@ -609,31 +590,8 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
                         </div>
 
                         {/* Tabs */}
-                        <div className="flex border-b border-(--base-03)">
-                            <button
-                                type="button"
-                                onClick={() => setSettingsTab('general')}
-                                className={tabClass('general')}
-                            >
-                                General
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => setSettingsTab('gateway')}
-                                className={tabClass('gateway')}
-                            >
-                                Gateway
-                            </button>
-                            {/* The provider's view of this customer: only where this platform runs its own gateway. */}
-                            {gatewayVisibility.tenancy && (
-                                <button
-                                    type="button"
-                                    onClick={() => setSettingsTab('managed')}
-                                    className={tabClass('managed')}
-                                >
-                                    Managed gateway
-                                </button>
-                            )}
+                        <div className="border-b border-(--base-03) px-3">
+                            <GuardedTabs items={settingsTabs} active={settingsTab} onChange={setSettingsTab} ariaLabel="User settings sections" />
                         </div>
 
                         {/* Tab Content */}
@@ -670,7 +628,7 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
                                         address nobody can reach - or correct - locks its owner out
                                         for good. */}
                                     <div>
-                                        <h4 className="mono-label mb-3">Email Address</h4>
+                                        <h4 className="srv-label mb-3">Email Address</h4>
                                         <div className="flex gap-2">
                                             <input
                                                 type="email"
@@ -702,7 +660,7 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
                                     </div>
 
                                     <div>
-                                        <h4 className="mono-label mb-3">Reset Password</h4>
+                                        <h4 className="srv-label mb-3">Reset Password</h4>
                                         <div className="flex gap-2">
                                             <input
                                                 type="password"
@@ -722,7 +680,7 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
                                     </div>
 
                                     <div>
-                                        <h4 className="mono-label mb-3">Two-Factor Authentication</h4>
+                                        <h4 className="srv-label mb-3">Two-Factor Authentication</h4>
                                         <div className="flex items-center justify-between gap-3 p-3 rounded-md bg-(--base-02) border border-(--base-03)">
                                             <div className="text-sm">
                                                 <p className="text-(--base-09)">
@@ -751,20 +709,21 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
                                         server-mutation handlers. SupportTeam ist optional and reserved
                                         for the upcoming ticket-system. */}
                                     <div>
-                                        <h4 className="mono-label mb-3">Role &amp; Permissions</h4>
+                                        <h4 className="srv-label mb-3">Role &amp; Permissions</h4>
                                         <div className="space-y-3 p-3 rounded-md bg-(--base-02) border border-(--base-03)">
                                             <div className="flex flex-col gap-[5px]">
                                                 <label className="input-label">Role</label>
-                                                <select
+                                                <Select
+                                                    ariaLabel="Role"
                                                     value={editRole}
-                                                    onChange={e => setEditRole(e.target.value as 'user' | 'support' | 'admin')}
-                                                    className="input-field w-full"
+                                                    onChange={v => setEditRole(v as 'user' | 'support' | 'admin')}
                                                     disabled={editRolePermsSaving}
-                                                >
-                                                    <option value="user">User — standard account</option>
-                                                    <option value="support">Support — assists with assigned tickets</option>
-                                                    <option value="admin">Admin — full access</option>
-                                                </select>
+                                                    options={[
+                                                        { value: 'user', label: 'User — standard account' },
+                                                        { value: 'support', label: 'Support — assists with assigned tickets' },
+                                                        { value: 'admin', label: 'Admin — full access' },
+                                                    ]}
+                                                />
                                                 <p className="text-xs text-(--base-06)">Admins implicitly have all capability flags. The flags below only matter for non-admins.</p>
                                             </div>
                                             {/* Deleting follows the ROLE and is not a switch. It is
@@ -773,42 +732,26 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
                                                 including for admins, because there is nothing to
                                                 decide in either direction. Core forces the stored flag
                                                 false for non-admins, so no row claims what this says. */}
-                                            <label className="flex items-start gap-2 text-sm opacity-70">
-                                                <input
-                                                    type="checkbox"
-                                                    checked={editRole === 'admin'}
-                                                    readOnly
-                                                    disabled
-                                                    className="checkbox mt-0.5"
-                                                />
-                                                <span>
-                                                    <span className="font-medium">Can delete servers</span>
-                                                    <span className="block text-xs text-(--base-06)">
-                                                        {editRole === 'admin'
-                                                            ? 'Admins can delete any server. This follows the role and cannot be granted separately.'
-                                                            : 'Admins only. A customer cancels rather than deletes, and support may look at a server without being able to remove it — the data goes with it.'}
-                                                    </span>
-                                                </span>
-                                            </label>
-                                            <label className="flex items-start gap-2 text-sm cursor-pointer">
-                                                <input
-                                                    type="checkbox"
-                                                    checked={editCanChangeResources}
-                                                    onChange={e => setEditCanChangeResources(e.target.checked)}
-                                                    className="checkbox mt-0.5"
-                                                    disabled={editRolePermsSaving || editRole === 'admin'}
-                                                />
-                                                <span>
-                                                    <span className="font-medium">Can change server resources</span>
-                                                    <span className="block text-xs text-(--base-06)">
-                                                        {editRole === 'admin'
-                                                            ? 'Admins can change RAM, CPU and disk on every server.'
-                                                            : editRole === 'support'
-                                                              ? 'Lets this account change RAM, CPU and disk — on the servers it has been granted, not on all of them.'
-                                                              : 'Lets this account change RAM, CPU and disk on the servers it owns. It reaches nothing else.'}
-                                                    </span>
-                                                </span>
-                                            </label>
+                                            <Checkbox
+                                                checked={editRole === 'admin'}
+                                                onChange={() => {}}
+                                                disabled
+                                                label="Can delete servers"
+                                                hint={editRole === 'admin'
+                                                    ? 'Admins can delete any server. This follows the role and cannot be granted separately.'
+                                                    : 'Admins only. A customer cancels rather than deletes, and support may look at a server without being able to remove it — the data goes with it.'}
+                                            />
+                                            <Checkbox
+                                                checked={editCanChangeResources}
+                                                onChange={setEditCanChangeResources}
+                                                disabled={editRolePermsSaving || editRole === 'admin'}
+                                                label="Can change server resources"
+                                                hint={editRole === 'admin'
+                                                    ? 'Admins can change RAM, CPU and disk on every server.'
+                                                    : editRole === 'support'
+                                                      ? 'Lets this account change RAM, CPU and disk — on the servers it has been granted, not on all of them.'
+                                                      : 'Lets this account change RAM, CPU and disk on the servers it owns. It reaches nothing else.'}
+                                            />
                                             <div className="flex flex-col gap-[5px]">
                                                 <label className="input-label">Support team (optional)</label>
                                                 <input
@@ -838,7 +781,7 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
                                         backend check regardless of this toggle (handlers short-circuit
                                         on isAdmin), so the help-text says so explicitly. */}
                                     <div>
-                                        <h4 className="mono-label mb-3">Modpack Authoring</h4>
+                                        <h4 className="srv-label mb-3">Modpack Authoring</h4>
                                         <div className="rounded-md bg-(--base-02) border border-(--base-03) p-3">
                                             <div className="flex items-center justify-between gap-3">
                                                 <div className="flex items-start gap-3 min-w-0">
@@ -859,16 +802,12 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
                                                         </div>
                                                     </div>
                                                 </div>
-                                                <button
-                                                    type="button"
-                                                    role="switch"
-                                                    aria-checked={editCanCreateModpacks}
-                                                    onClick={() => setEditCanCreateModpacks(v => !v)}
-                                                    className={`toggle-track ${editCanCreateModpacks ? 'toggle-track-on' : 'toggle-track-off'}`}
+                                                <Switch
+                                                    ariaLabel="Can create modpacks"
+                                                    checked={editCanCreateModpacks}
+                                                    onChange={setEditCanCreateModpacks}
                                                     disabled={modpackFlagSaving}
-                                                >
-                                                    <span className={`toggle-knob ${editCanCreateModpacks ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
-                                                </button>
+                                                />
                                             </div>
                                             <div className="mt-3 flex justify-end gap-2">
                                                 {settingsUser?.canCreateModpacksManual && (
@@ -902,80 +841,40 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
                             {settingsTab === 'gateway' && (
                                 <div className="space-y-4">
                                     <div>
-                                        <h4 className="mono-label mb-3">Route Limit Override</h4>
+                                        <h4 className="srv-label mb-3">Route Limit Override</h4>
                                         <p className="text-xs text-(--base-06) mb-3">Your own address ceiling for this user, over what they bought. A renewal never changes it.</p>
 
-                                        <div className="space-y-2">
-                                            {/* Default */}
-                                            <label className={`flex items-center gap-3 p-3 rounded-md cursor-pointer transition-colors ${routeMode === 'default' ? 'bg-(--accent)/10 border border-(--accent)/30' : 'bg-(--base-02) border border-transparent'}`}>
-                                                <input
-                                                    type="radio"
-                                                    name="routeMode"
-                                                    checked={routeMode === 'default'}
-                                                    onChange={() => setRouteMode('default')}
-                                                    className="accent-(--accent)"
-                                                />
-                                                <div>
-                                                    <p className="text-sm text-(--base-09)">Follow purchase</p>
-                                                    <p className="text-xs text-(--base-06)">What they bought, or the per-user default from gateway settings when they bought none</p>
-                                                </div>
-                                            </label>
-
-                                            {/* Unlimited */}
-                                            <label className={`flex items-center gap-3 p-3 rounded-md cursor-pointer transition-colors ${routeMode === 'unlimited' ? 'bg-(--accent)/10 border border-(--accent)/30' : 'bg-(--base-02) border border-transparent'}`}>
-                                                <input
-                                                    type="radio"
-                                                    name="routeMode"
-                                                    checked={routeMode === 'unlimited'}
-                                                    onChange={() => setRouteMode('unlimited')}
-                                                    className="accent-(--accent)"
-                                                />
-                                                <div>
-                                                    <p className="text-sm text-(--base-09)">No limit</p>
-                                                    <p className="text-xs text-(--base-06)">This user is uncapped, whatever the global default becomes later</p>
-                                                </div>
-                                            </label>
-
-                                            {/* Custom */}
-                                            <label className={`flex items-center gap-3 p-3 rounded-md cursor-pointer transition-colors ${routeMode === 'custom' ? 'bg-(--accent)/10 border border-(--accent)/30' : 'bg-(--base-02) border border-transparent'}`}>
-                                                <input
-                                                    type="radio"
-                                                    name="routeMode"
-                                                    checked={routeMode === 'custom'}
-                                                    onChange={() => setRouteMode('custom')}
-                                                    className="accent-(--accent)"
-                                                />
-                                                <div className="flex-1">
-                                                    <p className="text-sm text-(--base-09)">Custom limit</p>
-                                                    <p className="text-xs text-(--base-06)">Set a specific max number of routes for this user</p>
-                                                </div>
-                                                {routeMode === 'custom' && (
-                                                    <input
-                                                        type="number"
-                                                        min={1}
-                                                        value={routeMax}
-                                                        onChange={e => setRouteMax(Number(e.target.value))}
-                                                        className="input-mono w-20 text-center"
-                                                        onClick={e => e.stopPropagation()}
-                                                    />
-                                                )}
-                                            </label>
-
-                                            {/* Disabled */}
-                                            <label className={`flex items-center gap-3 p-3 rounded-md cursor-pointer transition-colors ${routeMode === 'disabled' ? 'bg-(--error)/10 border border-(--error)/30' : 'bg-(--base-02) border border-transparent'}`}>
-                                                <input
-                                                    type="radio"
-                                                    name="routeMode"
-                                                    checked={routeMode === 'disabled'}
-                                                    onChange={() => setRouteMode('disabled')}
-                                                    className="accent-(--error)"
-                                                />
-                                                <div>
-                                                    <p className="text-sm text-(--base-09)">Disabled</p>
-                                                    <p className="text-xs text-(--base-06)">This user cannot create any routes</p>
-                                                </div>
-                                            </label>
-                                        </div>
+                                        <RadioCards<RouteMode>
+                                            className="space-y-2"
+                                            ariaLabel="Route limit mode"
+                                            value={routeMode}
+                                            onChange={setRouteMode}
+                                            cardClassName={(checked, o) => `flex items-center gap-3 p-3 rounded-md cursor-pointer transition-colors ${
+                                                checked
+                                                    ? (o.tone === 'error' ? 'bg-(--error)/10 border border-(--error)/30' : 'bg-(--accent)/10 border border-(--accent)/30')
+                                                    : 'bg-(--base-02) border border-transparent'}`}
+                                            options={[
+                                                { value: 'default', label: 'Follow purchase', description: 'What they bought, or the per-user default from gateway settings when they bought none' },
+                                                { value: 'unlimited', label: 'No limit', description: 'This user is uncapped, whatever the global default becomes later' },
+                                                {
+                                                    value: 'custom',
+                                                    label: 'Custom limit',
+                                                    description: 'Set a specific max number of routes for this user',
+                                                    trailing: routeMode === 'custom' && (
+                                                        <input
+                                                            type="number"
+                                                            min={1}
+                                                            aria-label="Maximum routes"
+                                                            value={routeMax}
+                                                            onChange={e => setRouteMax(Number(e.target.value))}
+                                                            className="input-mono w-20 text-center"
+                                                            onClick={e => e.stopPropagation()}
+                                                        />
+                                                    ),
+                                                },
+                                                { value: 'disabled', label: 'Disabled', description: 'This user cannot create any routes', tone: 'error' },
+                                            ]}
+                                        />
 
                                         <div className="flex justify-end mt-4">
                                             <button
@@ -1504,15 +1403,17 @@ function BillingOverrideModal({ user, onClose }: { user: { id: string; username:
                                     <p className="text-xs text-(--base-06)">Suspended {fmtDateTime(data.suspendedAt)}</p>
                                 )}
                                 <div className="flex items-center gap-2">
-                                    <select
+                                    <Select
+                                        ariaLabel="Billing status"
                                         value={status}
-                                        onChange={e => setStatus(e.target.value as BillingStatus)}
-                                        className="input-field w-44"
-                                    >
-                                        <option value="active">active</option>
-                                        <option value="past_due">past due</option>
-                                        <option value="suspended">suspended</option>
-                                    </select>
+                                        onChange={v => setStatus(v as BillingStatus)}
+                                        className="w-44"
+                                        options={[
+                                            { value: 'active', label: 'active' },
+                                            { value: 'past_due', label: 'past due' },
+                                            { value: 'suspended', label: 'suspended' },
+                                        ]}
+                                    />
                                     <button
                                         type="button"
                                         onClick={applyStatus}
@@ -1614,7 +1515,7 @@ function BillingOverrideModal({ user, onClose }: { user: { id: string; username:
 
                             <section className="space-y-3">
                                 <div>
-                                    <label className="mono-label text-(--base-06) flex items-center gap-1.5">
+                                    <label className="srv-label text-(--base-06) flex items-center gap-1.5">
                                         Metered traffic allowance
                                         <HelpTip label="About the metered allowance">
                                             <p className="mb-2">
@@ -1640,10 +1541,10 @@ function BillingOverrideModal({ user, onClose }: { user: { id: string; username:
                                     <div className="rounded-md border border-(--base-03) divide-y divide-(--base-03)">
                                         {trafficOverrides.map(o => (
                                             <div key={o.id} className="flex flex-wrap items-center gap-2 p-2 text-xs">
-                                                <span className="mono-label text-(--accent-light)">
+                                                <span className="srv-label text-(--accent-light)">
                                                     {o.region === TRAFFIC_REGION_ANY ? 'all regions' : o.region}
                                                 </span>
-                                                <span className="mono-label text-(--base-06)">
+                                                <span className="srv-label text-(--base-06)">
                                                     {KIND_LABELS[o.kind] ?? o.kind}
                                                 </span>
                                                 <span className="text-(--base-07)">
@@ -1657,28 +1558,22 @@ function BillingOverrideModal({ user, onClose }: { user: { id: string; username:
                                 )}
 
                                 <div className="flex flex-wrap items-center gap-3">
-                                    <select
-                                        className="input-field text-xs py-1"
+                                    <Select
+                                        ariaLabel="Traffic kind"
                                         value={tlKind}
-                                        onChange={e => setTlKind(e.target.value)}
-                                        aria-label="Traffic kind"
-                                    >
-                                        {TRAFFIC_KINDS.map(k => (
-                                            <option key={k} value={k}>{KIND_LABELS[k] ?? k}</option>
-                                        ))}
-                                    </select>
+                                        onChange={setTlKind}
+                                        className="w-44"
+                                        options={TRAFFIC_KINDS.map(k => ({ value: k, label: KIND_LABELS[k] ?? k }))}
+                                    />
                                     {isRegionalKind(tlKind) && (
                                         trafficRegions.length > 0 ? (
-                                            <select
-                                                className="input-field text-xs py-1"
+                                            <Select
+                                                ariaLabel="Region"
                                                 value={effectiveTrafficRegion}
-                                                onChange={e => setTlRegion(e.target.value)}
-                                                aria-label="Region"
-                                            >
-                                                {trafficRegions.map(r => (
-                                                    <option key={r} value={r}>{r}</option>
-                                                ))}
-                                            </select>
+                                                onChange={setTlRegion}
+                                                className="w-40"
+                                                options={trafficRegions.map(r => ({ value: r, label: r }))}
+                                            />
                                         ) : (
                                             // Nothing to pick from is not the same as an empty
                                             // dropdown: say WHY, and where the region comes from.
@@ -1811,15 +1706,13 @@ function CeilingField({ label, purchased, value, onChange }: { label: string; pu
     return (
         <div className="flex flex-wrap items-center gap-3">
             <label className="input-label w-48 shrink-0">{label}</label>
-            <select
+            <Select
                 value={own ? 'own' : 'purchase'}
-                onChange={e => onChange(e.target.value === 'own' ? (purchased ?? 1) : null)}
-                className="input-field w-48"
-                aria-label={`${label} source`}
-            >
-                <option value="purchase">Follow purchase ({bought})</option>
-                <option value="own">Own ceiling</option>
-            </select>
+                onChange={v => onChange(v === 'own' ? (purchased ?? 1) : null)}
+                className="w-56"
+                ariaLabel={`${label} source`}
+                options={[{ value: 'purchase', label: `Follow purchase (${bought})` }, { value: 'own', label: 'Own ceiling' }]}
+            />
             {own && (
                 <SharedLimitField
                     value={value === 'unlimited' ? null : value}

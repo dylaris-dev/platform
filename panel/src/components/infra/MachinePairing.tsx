@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from 'react';
+import Tooltip from '@/components/ui/Tooltip';
 import { KeyRound, Loader2 } from 'lucide-react';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import {
@@ -29,17 +30,18 @@ export function ResetPairingButton({ nodeId, label, onDone }: { nodeId: number; 
         onDone(res.success ? (res.note || 'Pairing reset.') : (res.message || 'Could not reset pairing'), !!res.success);
     };
     return (
-        <button
-            type="button"
-            onClick={reset}
-            disabled={busy}
-            title={`Reset pairing of ${label}`}
-            aria-label={`Reset pairing of ${label}`}
-            className="shrink-0 text-(--base-06) hover:text-(--base-09) p-1.5 rounded-md transition-colors disabled:opacity-40
-                       focus-visible:outline-none focus-visible:[box-shadow:var(--focus-ring)]"
-        >
-            {busy ? <Loader2 size={14} className="animate-spin" /> : <KeyRound size={14} />}
-        </button>
+        <Tooltip content={`Reset pairing of ${label}`}>
+            <button
+                type="button"
+                onClick={reset}
+                disabled={busy}
+                aria-label={`Reset pairing of ${label}`}
+                className="shrink-0 text-(--base-06) hover:text-(--base-09) p-1.5 rounded-md transition-colors disabled:opacity-40
+                           focus-visible:outline-none focus-visible:[box-shadow:var(--focus-ring)]"
+            >
+                {busy ? <Loader2 size={14} className="animate-spin" /> : <KeyRound size={14} />}
+            </button>
+        </Tooltip>
     );
 }
 

@@ -1,0 +1,153 @@
+/* Files tab. The file browser comes from @dylaris/ui-filebrowser (shared with
+   templates and admin) and exposes no class hooks, so it is restyled here by
+   structure, scoped to .srv-files so no other screen is touched. Selectors lean
+   on the package's markup: card > [toolbar div, status <p>s, ul]. If that
+   markup changes, this file is what to revisit. */
+
+.srv-files > div > .card {
+  background: var(--base-02);
+  border: 0;
+  border-radius: var(--radius-lg);
+  padding: 20px;
+}
+
+/* Toolbar: breadcrumb, search, actions. */
+.srv-files .card > div:first-of-type {
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.srv-files .card > div:first-of-type > div:first-child {
+  flex: 1 1 240px;
+}
+.srv-files .card > div:first-of-type > div:first-child > div {
+  font-size: 14px;
+  font-weight: 500;
+  gap: 2px;
+}
+.srv-files .card > div:first-of-type > div:first-child > div > span:not(:last-child) {
+  margin: 0 2px;
+  color: var(--base-05);
+}
+.srv-files .card > div:first-of-type > div:first-child button,
+.srv-files .card > div:first-of-type > div:first-child > div > span:last-child {
+  padding: 2px 8px;
+  border-radius: var(--radius-md);
+}
+.srv-files .card > div:first-of-type > div:first-child button {
+  color: var(--base-07);
+  transition: background 0.15s ease-out, color 0.15s ease-out;
+}
+.srv-files .card > div:first-of-type > div:first-child button:hover {
+  background: var(--base-03);
+  color: var(--base-09);
+}
+.srv-files .card > div:first-of-type > div:first-child button:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+.srv-files .card > div:first-of-type > div:first-child > div > span:last-child {
+  color: var(--base-09);
+}
+.srv-files .card > div:first-of-type > label {
+  flex: 1 1 200px;
+  max-width: 280px;
+  width: auto;
+  height: 36px;
+  background: var(--base-01);
+  border: 0;
+  border-radius: var(--radius-md);
+  transition: box-shadow 0.15s ease-out;
+}
+.srv-files .card > div:first-of-type > label:focus-within {
+  border: 0;
+  box-shadow: var(--focus-ring);
+}
+.srv-files .card > div:first-of-type > div:last-child .btn {
+  height: 36px;
+  min-width: 36px;
+  border-radius: var(--radius-md);
+}
+
+/* Loading, searching and error lines: status text, not headlines. */
+.srv-files .card > p {
+  font-size: 13px;
+  padding: 16px 0;
+  color: var(--base-06);
+}
+.srv-files .card > p.text-\(--error\) { color: var(--error-light); }
+
+/* Selection bars. */
+.srv-files .card > div.mb-3 {
+  border: 0;
+  border-radius: var(--radius-md);
+}
+
+/* Rows: quiet, hover fill, violet only when selected. */
+.srv-files .card > ul > li { margin: 0; }
+.srv-files .server-row {
+  min-height: 44px;
+  padding: 6px 12px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  transition: background 0.12s ease-out;
+}
+.srv-files .server-row:hover { background: var(--base-03); }
+.srv-files .server-row[aria-selected="true"] {
+  background: var(--accent-ghost);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.srv-files .server-row svg[width="36"] {
+  width: 20px;
+  height: 20px;
+  margin-right: 12px;
+  color: var(--base-06);
+}
+.srv-files .server-row[aria-selected="true"] svg[width="36"] { color: var(--accent-light); }
+.srv-files .server-row span.text-lg {
+  font-size: 14px;
+  line-height: 1.4;
+}
+.srv-files .server-row > div:last-child > span:first-child {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  color: var(--base-06);
+  min-width: 64px;
+  text-align: right;
+}
+.srv-files .server-row > div:last-child { gap: 2px; }
+.srv-files .server-row > div:last-child > button {
+  padding: 6px;
+  color: var(--base-06);
+  transition: background 0.12s ease-out, color 0.12s ease-out;
+}
+.srv-files .server-row > div:last-child > button svg { width: 16px; height: 16px; }
+.srv-files .server-row > div:last-child > button:not(:disabled):hover {
+  background: var(--base-04);
+  color: var(--base-09);
+}
+.srv-files .server-row > div:last-child > button:not(:disabled):active { background: var(--base-05); }
+.srv-files .server-row > div:last-child > button:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+.srv-files .server-row > div:last-child > button[title="Delete"]:not(:disabled):hover {
+  background: var(--error-ghost);
+  color: var(--error-light);
+}
+
+/* Empty folder. */
+.srv-files .card > ul > li:not(.server-row) {
+  padding: 56px 0;
+  font-size: 13px;
+  color: var(--base-06);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .srv-files .card > div:first-of-type > label,
+  .srv-files .server-row,
+  .srv-files .server-row > div:last-child > button,
+  .srv-files .card > div:first-of-type > div:first-child button { transition: none; }
+}

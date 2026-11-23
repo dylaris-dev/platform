@@ -3,7 +3,7 @@
 import { toast as notifyToast } from '@/components/ui/Toast';
 
 import { useCallback, useEffect, useState } from 'react';
-import { AlertTriangle, Plus, Network, Trash2, Server, Circle, Shield } from 'lucide-react';
+import { AlertTriangle, Plus, Network, Trash2, Server, Circle, MoreHorizontal } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import {
     getWarpRegions, upsertWarpRegion, deleteWarpRegion,
@@ -12,6 +12,11 @@ import {
     type WarpRegionView,
 } from '@/lib/api/types';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
+import Menu from '@/components/ui/Menu';
+import Section from '@/components/ui/Section';
+import EmptyState from '@/components/ui/EmptyState';
+import Callout from '@/components/server/Callout';
+import { RowList, Row } from '@/components/ui/RowList';
 
 export default function WarpTab() {
     const { gatewayEnabled, fileAccessMode } = useAppData();
@@ -127,14 +132,11 @@ export default function WarpTab() {
 
     return (
         <div className="space-y-6">
-            <div className={`flex items-start gap-3 p-3 rounded-md border ${gateOpen ? 'border-(--success)/30 bg-(--success)/5' : 'border-(--warning)/40 bg-(--warning)/5'}`}>
-                <AlertTriangle size={15} className={`mt-0.5 shrink-0 ${gateOpen ? 'text-(--success-light)' : 'text-(--warning-light)'}`} />
-                <p className="text-xs text-(--base-07)">
-                    {gateOpen
-                        ? 'Gateway routing + Beam files are active - external/home nodes are supported. Each region is one WG identity (subnet + key); its leaders are interchangeable endpoints clients fail over between without changing IP.'
-                        : 'External nodes require routing_mode=gateway or both, AND file_access=beam (set in the Gateway tab). Until then, connecting external nodes is disabled - their servers could not receive player traffic or file access.'}
-                </p>
-            </div>
+            <Callout tone={gateOpen ? 'info' : 'warning'} icon={<AlertTriangle size={15} />}>
+                {gateOpen
+                    ? 'Gateway routing + Beam files are active - external/home nodes are supported. Each region is one WG identity (subnet + key); its leaders are interchangeable endpoints clients fail over between without changing IP.'
+                    : 'External nodes require routing_mode=gateway or both, AND file_access=beam (set in the Gateway tab). Until then, connecting external nodes is disabled - their servers could not receive player traffic or file access.'}
+            </Callout>
 
             <p className="text-xs text-(--base-06)">
                 External nodes are added, deployed and given new keys under{' '}
@@ -142,11 +144,10 @@ export default function WarpTab() {
             </p>
 
             {/* Regions + leaders */}
-            <div className="card p-5 space-y-4">
-                <h3 className="text-sm font-display font-semibold text-(--accent-light) flex items-center gap-2"><Network size={15} /> Regions & Hubs</h3>
-
+            <Section title="Regions & Hubs" description="Each region is one overlay subnet with its leader endpoints.">
+            <div className="srv-surface p-5 space-y-4">
                 {regions.length === 0 && (
-                    <p className="text-xs text-(--base-06)">No regions yet. Add one below (e.g. <span className="font-mono">eu-central</span> = <span className="font-mono">10.99.1.0/24</span>).</p>
+                    <EmptyState bare icon={<Network size={20} />} title="No regions yet" description="Add one below, for example eu-central = 10.99.1.0/24." />
                 )}
 
                 <div className="space-y-3">
@@ -171,10 +172,11 @@ export default function WarpTab() {
                 </div>
                 <p className="text-xs text-(--base-06)">Subnets must be disjoint from your DC + overlay ranges and from each other. The first host (.1) is reserved for the region&apos;s leaders.</p>
             </div>
+            </Section>
 
             {/* Overlay segmentation: spoke firewall allowlist */}
-            <div className="card p-5 space-y-4">
-                <h3 className="text-sm font-display font-semibold text-(--accent-light) flex items-center gap-2"><Shield size={15} /> Overlay Segmentation</h3>
+            <Section title="Overlay segmentation" description="Which ports spokes may reach, and which networks clients route through the tunnel.">
+            <div className="srv-surface p-5 space-y-4">
                 <p className="text-xs text-(--base-07)">
                     Each region&apos;s leader firewalls spoke (external/home node) traffic. Spokes are always isolated
                     from one another and may reach ONLY these destination TCP ports. Everything else (Postgres, the Hub,
@@ -234,18 +236,15 @@ export default function WarpTab() {
                         </p>
                     )}
                 </div>
-                <div className="flex items-start gap-2 p-3 rounded-md border border-(--warning)/40 bg-(--warning)/5">
-                    <AlertTriangle size={14} className="text-(--warning-light) shrink-0 mt-0.5" />
-                    <p className="text-xs text-(--base-07)">
-                        Adding ports widens what an untrusted external host can reach inside your network. Only add a port
-                        you fully understand. Peer isolation (spoke to spoke) is always enforced and cannot be changed here.
-                    </p>
-                </div>
+                <Callout tone="warning" icon={<AlertTriangle size={14} />}>
+                    Adding ports widens what an untrusted external host can reach inside your network. Only add a port
+                    you fully understand. Peer isolation (spoke to spoke) is always enforced and cannot be changed here.
+                </Callout>
                 <button onClick={saveFw} disabled={savingFw || !fwLoaded} className="btn btn-primary disabled:opacity-40">
                     Save allowlist
                 </button>
             </div>
-
+            </Section>
 
         </div>
     );
@@ -264,22 +263,20 @@ function RegionCard({ region, onSaveRegion, onDeleteRegion, onSaveLeader, onDele
     const subnetDirty = subnet.trim() !== region.subnet;
 
     return (
-        <div className="rounded-md border border-(--base-04) p-4 space-y-3">
+        <div className="rounded-lg bg-(--base-03) p-4 space-y-3">
             <div className="flex flex-wrap items-center gap-3">
                 <span className="font-mono text-sm text-(--base-09)">{region.region}</span>
                 <span className="badge badge-neutral">{region.peerCount} peer{region.peerCount === 1 ? '' : 's'}</span>
                 <span className={`badge ${region.enabled ? 'badge-success' : 'badge-neutral'}`}>{region.enabled ? 'enabled' : 'disabled'}</span>
-                <div className="ml-auto flex items-center gap-2">
-                    <button
-                        type="button"
-                        onClick={() => onSaveRegion(region.region, region.subnet, !region.enabled)}
-                        className="btn btn-secondary btn-sm"
-                    >
-                        {region.enabled ? 'Disable' : 'Enable'}
-                    </button>
-                    <button type="button" onClick={() => onDeleteRegion(region.region)} className="btn btn-danger btn-sm" title="Delete region (and its leaders)">
-                        <Trash2 size={13} />
-                    </button>
+                <div className="ml-auto">
+                    <Menu
+                        trigger={<button type="button" className="app-icon-btn" aria-label={`Actions for region ${region.region}`}><MoreHorizontal size={16} /></button>}
+                        items={[
+                            { label: region.enabled ? 'Disable region' : 'Enable region', onSelect: () => onSaveRegion(region.region, region.subnet, !region.enabled) },
+                            { type: 'separator', id: 'sep' },
+                            { label: 'Delete region (and its leaders)', icon: <Trash2 size={14} />, danger: true, onSelect: () => onDeleteRegion(region.region) },
+                        ]}
+                    />
                 </div>
             </div>
 
@@ -296,21 +293,28 @@ function RegionCard({ region, onSaveRegion, onDeleteRegion, onSaveLeader, onDele
             <div className="space-y-2">
                 <label className="input-label flex items-center gap-1.5"><Server size={12} /> Leaders</label>
                 {leaders.length === 0 && <p className="text-xs text-(--warning-light)">No leader endpoints yet, so enrolling into this region is refused. A running leader registers itself within a minute; add one by hand only if it cannot detect its own public address.</p>}
-                {leaders.map(l => (
-                    <div key={l.leaderId} className="flex flex-wrap items-center gap-2 rounded-md border border-(--base-03) px-3 py-2">
-                        <Circle size={9} className={l.alive ? 'text-(--success-light) fill-current' : 'text-(--base-05) fill-current'} aria-label={l.alive ? 'live' : 'no heartbeat'} />
-                        <span className="font-mono text-xs text-(--base-08)">{l.leaderId}</span>
-                        <span className="font-mono text-xs text-(--base-06)">{l.endpoint}</span>
-                        <div className="ml-auto flex items-center gap-2">
-                            <button type="button" onClick={() => onSaveLeader(l.leaderId, region.region, l.endpoint, !l.enabled)} className="btn btn-secondary btn-sm">
-                                {l.enabled ? 'Disable' : 'Enable'}
-                            </button>
-                            <button type="button" onClick={() => onDeleteLeader(l.leaderId)} className="btn btn-danger btn-sm" title="Delete leader">
-                                <Trash2 size={12} />
-                            </button>
-                        </div>
-                    </div>
-                ))}
+                {leaders.length > 0 && (
+                    <RowList label={`Leaders of ${region.region}`} className="rounded-lg bg-(--base-02)">
+                        {leaders.map(l => (
+                            <Row
+                                key={l.leaderId}
+                                leading={<Circle size={9} className={l.alive ? 'text-(--success-light) fill-current' : 'text-(--base-05) fill-current'} aria-label={l.alive ? 'live' : 'no heartbeat'} />}
+                                title={<span className="font-mono text-xs">{l.leaderId}</span>}
+                                meta={<span className="font-mono">{l.endpoint}{l.enabled ? '' : ' (disabled)'}</span>}
+                                actions={
+                                    <Menu
+                                        trigger={<button type="button" className="app-icon-btn" aria-label={`Actions for leader ${l.leaderId}`}><MoreHorizontal size={16} /></button>}
+                                        items={[
+                                            { label: l.enabled ? 'Disable leader' : 'Enable leader', onSelect: () => onSaveLeader(l.leaderId, region.region, l.endpoint, !l.enabled) },
+                                            { type: 'separator', id: 'sep' },
+                                            { label: 'Delete leader', icon: <Trash2 size={14} />, danger: true, onSelect: () => onDeleteLeader(l.leaderId) },
+                                        ]}
+                                    />
+                                }
+                            />
+                        ))}
+                    </RowList>
+                )}
                 <div className="flex flex-col md:flex-row gap-3 md:items-end">
                     <div className="flex-1 flex flex-col gap-[5px]">
                         <label className="input-label">Leader id</label>

@@ -36,6 +36,7 @@ import ModProjectDetails from '@/components/mods/ModProjectDetails';
 import PackDownloadDialog from '@/components/modpacks/PackDownloadDialog';
 import ForkBuildDialog from '@/components/modpacks/ForkBuildDialog';
 import DeleteBuildButton from '@/components/modpacks/DeleteBuildButton';
+import Callout from '@/components/server/Callout';
 import styles from '@/components/modpacks/workspace.module.css';
 import { getModrinthCategories, type ModrinthCategory } from '@/lib/api/modrinth';
 import { categoryLabel } from '@/lib/modrinthCategories';
@@ -453,8 +454,8 @@ export default function BuildContentEditorPage() {
     if (!build || !pack) return <div className="p-6 text-sm text-(--base-06)">Build not found. <Link href={`/modpacks/${packId}`} className="text-(--accent-light)">Back to pack</Link></div>;
     return <div className={styles.editor}>
         <WorkspaceDetails>
-            <div className="flex items-center justify-between gap-2 mb-4"><span className="mono-label text-(--base-06)">Build details</span>{isFrozen && <Lock size={13} aria-label="Frozen" />}</div>
-            <h2 className="text-xl font-mono text-(--base-09) mb-3 break-all">{build.versionString}</h2><div className="mb-4"><PackBuildBadges build={build} builds={workspace.builds} recommendedBuildId={workspace.pack?.recommendedBuildId}/></div>
+            <div className="flex items-center justify-between gap-2 mb-4"><span className="srv-label">Build details</span>{isFrozen && <Lock size={13} aria-label="Frozen" />}</div>
+            <h2 className="srv-num text-xl font-semibold text-(--base-09) mb-3 break-all">{build.versionString}</h2><div className="mb-4"><PackBuildBadges build={build} builds={workspace.builds} recommendedBuildId={workspace.pack?.recommendedBuildId}/></div>
             <dl className={styles.metadata}><div><dt>Minecraft</dt><dd>{build.minecraft || 'Unspecified'}</dd></div><div><dt>Loader</dt><dd>{build.loader || 'Vanilla'}</dd></div><div><dt>Loader build</dt><dd>{build.loaderVersion || 'None'}</dd></div><div><dt>Mods / plugins</dt><dd>{groups.mods.length}</dd></div><div><dt>Resource / shader packs</dt><dd>{groups.resources.length}</dd></div><div><dt>Config files / bundles</dt><dd>{groups.configs.length}</dd></div><div><dt>Channel</dt><dd>{build.channel}</dd></div><div><dt>Modrinth</dt><dd>{build.modrinthPublished ? 'Published' : 'Not published'}</dd></div></dl>
             <div className="flex flex-col gap-2 mt-5">
                 <button onClick={()=>setForkOpen(true)} disabled={modpacksDisabled} className="btn btn-secondary btn-sm">Fork build into another pack</button>
@@ -465,8 +466,8 @@ export default function BuildContentEditorPage() {
                 {canEdit && !modpacksDisabled && <Link href={`/modpacks/${packId}/builds/new`} className="btn btn-secondary btn-sm">Create another build</Link>}
             </div>
         </WorkspaceDetails>
-        {(isFrozen || (!canEdit && !modpacksDisabled)) && <div role="status" className="rounded-md border border-(--base-04) p-3 text-xs text-(--base-07) shrink-0"><Lock size={13} className="inline mr-2" />{isFrozen ? <>This build is read-only. {build.modrinthPublished ? 'Its published contents stay reproducible.' : 'Its publication artifact has already been frozen; you can retry publishing it.'} Create or fork a new build to make changes.</> : 'You have read access to this pack: browse, download and favorite its content. Changes need edit access from the owner.'}</div>}
-        <header className="flex items-center justify-between gap-3 flex-wrap shrink-0"><div><h2 className="text-base font-medium text-(--base-09)">{browsing ? 'Add from Modrinth' : `Build ${build.versionString}`}</h2><p className="text-xs text-(--base-06) mt-1">{groups.mods.length} mods / plugins · {groups.configs.length} configs · MC {build.minecraft} · {build.loader}</p></div><div className={styles.tools}>
+        {(isFrozen || (!canEdit && !modpacksDisabled)) && <div className="shrink-0"><Callout tone="info" role="status" icon={<Lock size={14} />}>{isFrozen ? <>This build is read-only. {build.modrinthPublished ? 'Its published contents stay reproducible.' : 'Its publication artifact has already been frozen; you can retry publishing it.'} Create or fork a new build to make changes.</> : 'You have read access to this pack: browse, download and favorite its content. Changes need edit access from the owner.'}</Callout></div>}
+        <header className="flex items-center justify-between gap-3 flex-wrap shrink-0"><div><h2 className="text-[15px] font-semibold text-(--base-09)">{browsing ? 'Add from Modrinth' : `Build ${build.versionString}`}</h2><p className="text-xs text-(--base-06) mt-1">{groups.mods.length} mods / plugins · {groups.configs.length} configs · MC {build.minecraft} · {build.loader}</p></div><div className={styles.tools}>
             {browsing && <Select ariaLabel="Project type" className="w-40" value={modrinthType} onChange={value => setModrinthType(value as typeof modrinthType)} options={[...(build.loader === 'vanilla' ? [] : [{ value: 'mod', label: 'Mods' }]), { value: 'resourcepack', label: 'Resource packs' }, { value: 'shader', label: 'Shaders' }]} />}
             {!browsing && hasAnyUpdate && <button onClick={handleUpdateAll} disabled={disabled || updatingAll} className="btn btn-secondary btn-sm"><ArrowUpCircle size={12} /> {updatingAll ? 'Updating...' : 'Update all'}</button>}
             {!disabled && <button onClick={() => setUploadOpen(true)} title="Upload files or folders" className="btn btn-secondary btn-sm"><Upload size={12} /> Upload</button>}
@@ -509,7 +510,7 @@ export default function BuildContentEditorPage() {
                 <div className="flex justify-between text-[10px] uppercase tracking-wider text-(--base-06)"><span>Installed · {visibleContent.length}</span><span>Environment / actions</span></div>
                 <section className={styles.rows} aria-label="Installed content">
                     {visibleContent.length === 0 && (query || category || groups[activeTab].length > 0 ? <p className="text-sm text-(--base-06) text-center py-12">No matching content.</p> : <div className="text-center py-12 space-y-3"><p className="text-sm text-(--base-07)">{activeTab === 'mods' ? 'No mods in this build yet.' : 'No resource or shader packs in this build yet.'}</p>{!disabled && <div className="flex justify-center gap-2"><button onClick={() => { setModrinthType(activeTab === 'mods' && build.loader !== 'vanilla' ? 'mod' : 'resourcepack'); setBrowsing(true); }} className="btn btn-primary btn-sm"><Search size={12} />Add from Modrinth</button><button onClick={() => setUploadOpen(true)} className="btn btn-secondary btn-sm"><Upload size={12} />Upload files</button></div>}</div>)}
-                    {visibleContent.map(entry => <article key={entry.id} className="card px-3 py-2.5 mb-2">
+                    {visibleContent.map(entry => <article key={entry.id} className="srv-surface px-3 py-2.5 mb-2">
                         {/* One row per entry: sides and actions beside the name, so a long list stays scannable. */}
                         <div className="flex items-center gap-3">
                             <ProjectIcon name={contentName(entry)} contentType={entry.contentType} url={projectMetadata.projects[entry.modrinthProjectId]?.icon_url} className="w-10 h-10" />

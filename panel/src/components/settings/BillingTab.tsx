@@ -7,7 +7,7 @@ import {
 import { useSettingsForm } from '@/lib/useSettingsForm';
 import SettingsPage from '@/components/settings/SettingsPage';
 import SettingsCard, { SettingsGroup } from '@/components/settings/SettingsCard';
-import HelpTip from '@/components/ui/HelpTip';
+import Callout from '@/components/server/Callout';
 
 const SPEC_RE = /^\d+[dwm]$/;
 const NUM_RE = /^\d+$/;
@@ -76,16 +76,13 @@ export default function BillingTab() {
             width="2xl"
             loading={form.loading}
         >
-            <div className="flex items-start gap-2 rounded-md border border-(--base-04) bg-(--base-01) p-3">
-                <Info size={15} className="text-(--base-06) shrink-0 mt-0.5" />
-                <p className="text-sm text-(--base-07) leading-relaxed">
-                    A tenant who does not pay enters a grace period: everything keeps running, a dunning
-                    email goes out and a red banner shows in their panel. After grace they are suspended,
-                    with servers stopped and data plus backups kept and still viewable. Their R2 backups
-                    and node connection are only removed after the retention windows below. User accounts
-                    and server metadata are never deleted.
-                </p>
-            </div>
+            <Callout tone="info" icon={<Info size={15} />}>
+                A tenant who does not pay enters a grace period: everything keeps running, a dunning
+                email goes out and a red banner shows in their panel. After grace they are suspended,
+                with servers stopped and data plus backups kept and still viewable. Their R2 backups
+                and node connection are only removed after the retention windows below. User accounts
+                and server metadata are never deleted.
+            </Callout>
 
             <SettingsCard
                 title="Non-payment windows"

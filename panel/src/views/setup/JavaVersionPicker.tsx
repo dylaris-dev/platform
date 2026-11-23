@@ -2,6 +2,8 @@
 
 import React from 'react';
 import { Info, AlertTriangle } from 'lucide-react';
+import Callout from '@/components/server/Callout';
+import '@/styles/server-setup.css';
 
 // The pure part lives in src/lib/javaVersion so the vitest suite can cover it.
 // Re-exported here because SetupNewWizard/SetupEditMode import
@@ -30,9 +32,9 @@ export default function JavaVersionPicker({ value, onChange, disabled, readOnly,
     const showMismatchWarning = !!recommended && !!recommendedImage && value !== recommended;
 
     return (
-        <div className="flex flex-col gap-[5px]">
-            <label className="input-label">Java Version</label>
-            <div className="flex flex-wrap gap-2">
+        <div className="flex flex-col gap-2">
+            <span className="srv-label" id="java-version-label">Java version</span>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4" role="group" aria-labelledby="java-version-label">
                 {JAVA_IMAGES.map(j => {
                     const isRecommended = recommended === j.id;
                     if (readOnly) {
@@ -41,14 +43,9 @@ export default function JavaVersionPicker({ value, onChange, disabled, readOnly,
                             <span
                                 key={j.id}
                                 aria-current={selected ? 'true' : undefined}
-                                className={`flex items-center gap-2 px-4 py-2.5 rounded-md border text-sm ${
-                                    selected
-                                        ? 'border-(--accent-border) bg-(--accent-ghost) text-(--accent-light)'
-                                        : 'border-(--base-03) text-(--base-06)'
-                                }`}
+                                className="srv-setup-option" data-selected={selected}
                             >
-                                <span className="font-medium">{j.label}</span>
-                                <span className="text-xs text-(--base-06)">{isProxy ? j.proxyNote : j.note}</span>
+                                <span className="flex min-w-0 flex-col"><span className="font-medium">{j.label}</span><span className="srv-num text-xs text-(--base-06)">{isProxy ? j.proxyNote : j.note}</span></span>
                             </span>
                         );
                     }
@@ -58,44 +55,30 @@ export default function JavaVersionPicker({ value, onChange, disabled, readOnly,
                             type="button"
                             onClick={() => !disabled && onChange(j.id)}
                             disabled={disabled}
-                            className={`relative flex items-center gap-2 px-4 py-2.5 rounded-md border text-sm transition-all ${
-                                value === j.id
-                                    ? 'border-(--accent-border) bg-(--accent-ghost) text-(--accent-light)'
-                                    : isRecommended
-                                    ? 'border-(--success)/40 bg-(--success)/5 text-(--base-07) hover:border-(--success)/60'
-                                    : 'border-(--base-03) text-(--base-07) hover:border-(--base-05)'
-                            } ${disabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}
+                            className="srv-setup-option" data-selected={value === j.id} data-recommended={isRecommended && value !== j.id}
+                            aria-pressed={value === j.id}
                         >
-                            <span className="font-medium">{j.label}</span>
-                            <span className="text-xs text-(--base-06)">{isProxy ? j.proxyNote : j.note}</span>
+                            <span className="flex min-w-0 flex-col"><span className="font-medium">{j.label}</span><span className="srv-num text-xs text-(--base-06)">{isProxy ? j.proxyNote : j.note}</span></span>
                             {isRecommended && value !== j.id && (
-                                <span className="absolute -top-2 -right-2 flex items-center gap-0.5 bg-(--success) text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full">
-                                    <Info size={9} />
-                                </span>
+                                <span className="ml-auto inline-flex items-center gap-1 text-xs text-(--success-light)"><Info size={14} /> Recommended</span>
                             )}
                         </button>
                     );
                 })}
             </div>
             {versionUnknown && !showMismatchWarning && (
-                <div className="alert alert-warning flex items-start gap-2 mt-1 rounded-lg text-sm">
-                    <AlertTriangle size={15} className="shrink-0 mt-0.5 text-(--warning)" />
-                    <span>
-                        The upload does not say which Minecraft version it runs, so no Java version is recommended.
-                        Check the one the pack needs; the wrong one can stop the server from starting.
-                    </span>
-                </div>
+                <Callout tone="warning" icon={<AlertTriangle size={16} />}>
+                    The upload does not say which Minecraft version it runs, so no Java version is recommended.
+                    Check the one the pack needs; the wrong one can stop the server from starting.
+                </Callout>
             )}
             {showMismatchWarning && (
-                <div className="alert alert-error flex items-start gap-2 mt-1 rounded-lg text-sm">
-                    <AlertTriangle size={15} className="shrink-0 mt-0.5 text-(--error-light)" />
-                    <span>
-                        {mcVersion
-                            ? <>Minecraft {mcVersion} needs {recommendedImage.label} — running a different Java version can prevent the server from starting.</>
-                            : <>{recommendedImage.label} is recommended — running a different Java version can prevent the server from starting.</>
-                        }
-                    </span>
-                </div>
+                <Callout tone="error" icon={<AlertTriangle size={16} />}>
+                    {mcVersion
+                        ? <>Minecraft {mcVersion} needs {recommendedImage.label}. Running a different Java version can prevent the server from starting.</>
+                        : <>{recommendedImage.label} is recommended. Running a different Java version can prevent the server from starting.</>
+                    }
+                </Callout>
             )}
         </div>
     );

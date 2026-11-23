@@ -9,6 +9,7 @@ import { useSettingsForm } from '@/lib/useSettingsForm';
 import { SwitchRow } from '@/components/ui/Switch';
 import SettingsPage from '@/components/settings/SettingsPage';
 import SettingsCard, { SettingsGroup } from '@/components/settings/SettingsCard';
+import EmptyState from '@/components/ui/EmptyState';
 import HelpTip from '@/components/ui/HelpTip';
 import { LimitField } from '@/components/settings/LimitField';
 import ModalPanel from '@/components/ui/ModalPanel';
@@ -268,19 +269,13 @@ export default function BeamTab() {
 
     if (!settings) {
         return (
-            <div className="card p-5 flex items-start gap-2">
-                <AlertTriangle size={16} className="mt-0.5 shrink-0 text-(--error-light)" />
-                <div>
-                    <p className="text-sm text-(--base-09)">Could not read the Beam settings.</p>
-                    <p className="text-xs text-(--base-06) mt-1">
-                        Nothing is shown rather than showing defaults: an empty form saved over a
-                        real configuration is worse than no form.
-                    </p>
-                    <button onClick={() => void form.reload()} className="btn btn-secondary btn-sm mt-3">
-                        Try again
-                    </button>
-                </div>
-            </div>
+            <EmptyState
+                tone="error"
+                icon={<AlertTriangle size={20} />}
+                title="Could not read the Beam settings"
+                description="Nothing is shown rather than showing defaults: an empty form saved over a real configuration is worse than no form."
+                action={<button onClick={() => void form.reload()} className="btn btn-secondary btn-sm">Try again</button>}
+            />
         );
     }
 
@@ -331,7 +326,7 @@ export default function BeamTab() {
                         offered a discovered value for editing and stored the edit
                         as an override - saving anything on this page pinned it. */}
                     <div className="rounded-md bg-(--base-02) px-3 py-2 mb-1">
-                        <div className="mono-label text-[10px] mb-1">In use right now</div>
+                        <div className="srv-label text-[10px] mb-1">In use right now</div>
                         <div className="font-mono text-xs text-(--base-09) break-all">
                             {settings.relayAddress?.trim() || 'none - no relay is registered'}
                         </div>
@@ -455,7 +450,7 @@ export default function BeamTab() {
                 </div>
 
                 <div>
-                    <h4 className="mono-label mb-2">Internal — node to relay, enforced by the node</h4>
+                    <h4 className="srv-label mb-2">Internal — node to relay, enforced by the node</h4>
                     <div className="grid grid-cols-2 gap-3">
                         <BwField
                             label="Up (into the node)"
@@ -473,7 +468,7 @@ export default function BeamTab() {
                 </div>
 
                 <div>
-                    <h4 className="mono-label mb-2">External — relay to the Beam app, enforced by the relay</h4>
+                    <h4 className="srv-label mb-2">External — relay to the Beam app, enforced by the relay</h4>
                     <div className="grid grid-cols-2 gap-3">
                         <BwField
                             label="Up (from the user)"
@@ -583,7 +578,7 @@ export default function BeamTab() {
                 </div>
 
                 <div>
-                    <h4 className="mono-label mb-2">Internal (datacenter network)</h4>
+                    <h4 className="srv-label mb-2">Internal (datacenter network)</h4>
                     <div className="grid grid-cols-2 gap-3">
                         <RefField
                             label="Up"
@@ -599,7 +594,7 @@ export default function BeamTab() {
                 </div>
 
                 <div>
-                    <h4 className="mono-label mb-2">External (public uplink)</h4>
+                    <h4 className="srv-label mb-2">External (public uplink)</h4>
                     <div className="grid grid-cols-2 gap-3">
                         <RefField
                             label="Up"

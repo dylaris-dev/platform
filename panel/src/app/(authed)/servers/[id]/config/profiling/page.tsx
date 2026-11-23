@@ -11,6 +11,10 @@ import { listSparkProfiles, recordSparkProfile, deleteSparkProfile, SPARK_URL_RE
 import { subscribeEventSource } from '@/lib/sse';
 import { useBusy } from '@/lib/useBusy';
 import { toast } from '@/components/ui/Toast';
+import Select from '@/components/ui/Select';
+import Tooltip from '@/components/ui/Tooltip';
+import Callout from '@/components/server/Callout';
+import ConfigSection from '../ConfigSection';
 import { useRouteId } from '@/lib/routeParams';
 import { fmtDateTime } from '@/lib/time';
 
@@ -177,117 +181,102 @@ export default function ServerConfigProfilingPage() {
     if (!server) return null;
 
     return (
-        <div className="max-w-3xl space-y-4">
-            <header className="flex items-start gap-3">
-                <div className="w-9 h-9 rounded-md bg-(--accent-ghost) flex items-center justify-center shrink-0">
-                    <Activity size={16} className="text-(--accent-light)" />
-                </div>
-                <div className="min-w-0 flex-1">
-                    <h2 className="text-base font-display font-semibold text-(--base-09)">Spark Profiler</h2>
-                    <p className="text-xs text-(--base-06) mt-0.5">
-                        CPU + memory profiles via{' '}
-                        <a href="https://spark.lucko.me" target="_blank" rel="noopener noreferrer" className="text-(--accent-light) inline-flex items-center gap-1">
-                            spark <ExternalLink size={9} />
+        <div className="flex flex-col gap-6">
+            <div className="srv-config-head">
+                <div className="min-w-0">
+                    <h1 className="srv-config-title">Spark profiler</h1>
+                    <p className="srv-config-desc max-w-2xl">
+                        CPU and memory profiles via{' '}
+                        <a href="https://spark.lucko.me" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-(--accent-light) hover:underline">
+                            spark <ExternalLink size={12} />
                         </a>
                         . Profile data is uploaded to spark.lucko.me and we save the share URL here for cross-session history.
                     </p>
                 </div>
-            </header>
+            </div>
 
-            {/* Install status */}
             {sparkInstalled === false && (
-                <section className="card p-4 flex items-start gap-3 border-(--warning)/30">
-                    <AlertTriangle size={16} className="text-(--warning-light) shrink-0 mt-0.5" />
-                    <div className="flex-1">
-                        <div className="text-sm font-medium text-(--base-09)">Spark not installed</div>
-                        <p className="text-xs text-(--base-06) mt-0.5">
-                            Add <code className="font-mono">spark</code> from the Content tab — pick the
-                            version that matches your server&apos;s loader.
-                        </p>
-                    </div>
-                </section>
+                <Callout tone="warning" role="status" icon={<AlertTriangle size={16} />} title="Spark not installed">
+                    Add <code className="srv-num">spark</code> from the Content tab — pick the
+                    version that matches your server&apos;s loader.
+                </Callout>
             )}
 
-            {/* Controls */}
-            <section className="card p-5 space-y-4">
-                <h3 className="text-sm font-medium text-(--base-09)">Run a profile</h3>
-
+            <ConfigSection title="Run a profile">
                 {!active ? (
                     <>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                            <div>
-                                <label className="input-label">Duration</label>
-                                <select
-                                    value={duration}
-                                    onChange={e => setDuration(parseInt(e.target.value, 10))}
-                                    className="input-field w-full"
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+                            <div className="flex flex-col gap-1.5 sm:w-64">
+                                <span className="srv-label">Duration</span>
+                                <Select
+                                    ariaLabel="Duration"
+                                    value={String(duration)}
+                                    onChange={v => setDuration(parseInt(v, 10))}
+                                    options={DURATIONS.map(d => ({ value: String(d.sec), label: d.label }))}
                                     disabled={sparkInstalled === false}
-                                >
-                                    {DURATIONS.map(d => (
-                                        <option key={d.sec} value={d.sec}>{d.label}</option>
-                                    ))}
-                                </select>
+                                />
                             </div>
-                            <div className="flex items-end">
-                                <button
-                                    onClick={handleStart}
-                                    className="btn btn-primary w-full"
-                                    disabled={sparkInstalled === false}
-                                >
-                                    <Play size={13} />
-                                    Start profile
-                                </button>
-                            </div>
+                            <button
+                                type="button"
+                                onClick={handleStart}
+                                className="btn btn-primary"
+                                disabled={sparkInstalled === false}
+                            >
+                                <Play size={14} />
+                                Start profile
+                            </button>
                         </div>
                         <p className="text-xs text-(--base-06)">
-                            Sends <code className="font-mono">spark profiler --timeout {duration}</code> to
+                            Sends <code className="srv-num text-(--base-08)">spark profiler --timeout {duration}</code> to
                             the console; URL appears when spark finishes.
                         </p>
                     </>
                 ) : (
-                    <div className="flex items-center justify-between gap-4">
+                    <div className="flex items-center justify-between gap-4" role="status">
                         <div className="flex items-center gap-3">
-                            <RefreshCw size={14} className="animate-spin text-(--accent-light)" />
+                            <RefreshCw size={16} className="animate-spin text-(--accent-light)" />
                             <div>
-                                <div className="text-sm text-(--base-09)">Profiling… {elapsed}s elapsed</div>
-                                <div className="text-xs text-(--base-06) flex items-center gap-1">
-                                    <Clock size={11} />
-                                    ~{remaining}s remaining
+                                <div className="text-sm text-(--base-09)">Profiling… <span className="srv-num">{elapsed}s</span> elapsed</div>
+                                <div className="flex items-center gap-1 text-xs text-(--base-06)">
+                                    <Clock size={14} />
+                                    <span className="srv-num">~{remaining}s</span> remaining
                                 </div>
                             </div>
                         </div>
-                        <button onClick={() => runStop(handleStop)} disabled={stoppingProfiler} className="btn btn-secondary btn-sm disabled:opacity-40">
-                            <Square size={12} />
+                        <button type="button" onClick={() => runStop(handleStop)} disabled={stoppingProfiler} className="btn btn-secondary btn-sm disabled:opacity-40">
+                            <Square size={14} />
                             Stop
                         </button>
                     </div>
                 )}
-            </section>
+            </ConfigSection>
 
-            {/* History */}
-            <section className="card p-5">
-                <div className="flex items-center justify-between mb-3">
-                    <h3 className="text-sm font-medium text-(--base-09)">History</h3>
-                    <button onClick={refresh} className="btn btn-secondary btn-sm">
-                        <RefreshCw size={12} />
-                    </button>
-                </div>
-
+            <ConfigSection
+                title="History"
+                actions={
+                    <Tooltip content="Refresh history">
+                        <button type="button" onClick={refresh} aria-label="Refresh history" className="btn btn-ghost btn-icon btn-sm">
+                            <RefreshCw size={14} />
+                        </button>
+                    </Tooltip>
+                }
+            >
                 {profiles.length === 0 ? (
-                    <p className="text-xs text-(--base-06) text-center py-6">
-                        No profiles captured yet.
-                    </p>
+                    <div className="flex flex-col items-center gap-2 py-6 text-center">
+                        <Activity size={28} className="text-(--base-05)" />
+                        <p className="text-sm text-(--base-07)">No profiles captured yet.</p>
+                    </div>
                 ) : (
-                    <div className="space-y-2">
+                    <ul className="-mx-5 -mb-5">
                         {profiles.map(p => (
-                            <article key={p.id} className="flex items-center gap-3 p-2 rounded-md border border-(--base-04)">
-                                <Download size={14} className="text-(--accent-light) shrink-0" />
+                            <li key={p.id} className="srv-config-item items-center">
+                                <Download size={16} className="shrink-0 text-(--base-06)" />
                                 <div className="min-w-0 flex-1">
                                     <a
                                         href={p.url}
                                         target="_blank"
                                         rel="noopener noreferrer"
-                                        className="text-sm text-(--accent-light) font-mono truncate block hover:underline"
+                                        className="srv-num block truncate text-sm text-(--accent-light) hover:underline"
                                     >
                                         {p.url}
                                     </a>
@@ -296,15 +285,16 @@ export default function ServerConfigProfilingPage() {
                                         {p.subServerName && <> · {p.subServerName}</>}
                                     </div>
                                 </div>
-                                <button onClick={() => handleDelete(p)} className="btn btn-secondary btn-sm">
-                                    <Trash2 size={12} className="text-(--error-light)" />
-                                </button>
-                            </article>
+                                <Tooltip content="Delete profile">
+                                    <button type="button" onClick={() => handleDelete(p)} aria-label={`Delete profile ${p.url}`} className="btn btn-ghost btn-icon btn-sm">
+                                        <Trash2 size={14} className="text-(--error-light)" />
+                                    </button>
+                                </Tooltip>
+                            </li>
                         ))}
-                    </div>
+                    </ul>
                 )}
-            </section>
-
+            </ConfigSection>
         </div>
     );
 }

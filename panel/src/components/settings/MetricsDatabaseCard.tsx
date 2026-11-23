@@ -16,6 +16,7 @@ import { SwitchRow } from '@/components/ui/Switch';
 import Select from '@/components/ui/Select';
 import HelpTip from '@/components/ui/HelpTip';
 import Checkbox from '@/components/ui/Checkbox';
+import Callout from '@/components/server/Callout';
 
 /**
  * Long-term statistics: whether to record, and into which database.
@@ -144,30 +145,24 @@ export default function MetricsDatabaseCard() {
             />
 
             {!enabled && (
-                <p className="flex items-start gap-1.5 text-xs text-(--base-06) leading-relaxed">
-                    <AlertTriangle size={12} className="mt-0.5 shrink-0 text-(--warning-light)" />
-                    <span>
-                        Nothing is being recorded. History starts when you switch this on and there
-                        is no way to fill in what came before, so fill in the database below and
-                        save both together rather than turning it on first.
-                    </span>
-                </p>
+                <Callout tone="warning" icon={<AlertTriangle size={14} />}>
+                    Nothing is being recorded. History starts when you switch this on and there
+                    is no way to fill in what came before, so fill in the database below and
+                    save both together rather than turning it on first.
+                </Callout>
             )}
 
             {/* Above the fields, not in the help panel behind the icon: these
                 two requirements are what makes a filled-in form wrong rather
                 than incomplete, and a form cannot warn about that afterwards -
                 the first minute bucket is already written by then. */}
-            <p className="flex items-start gap-1.5 text-xs text-(--base-06) leading-relaxed max-w-2xl">
-                <Info size={12} className="mt-0.5 shrink-0 text-(--base-07)" />
-                <span>
-                    Needs a PostgreSQL with <strong>TimescaleDB</strong>, and its <strong>own
-                    database</strong> inside it. The same server the platform already uses is the
-                    expected answer - a second database on it, never the platform&apos;s own. Without
-                    the extension every minute becomes an ordinary row: it works, and it is the one
-                    combination here that ends badly.
-                </span>
-            </p>
+            <Callout tone="info" icon={<Info size={14} />}>
+                Needs a PostgreSQL with <strong>TimescaleDB</strong>, and its <strong>own
+                database</strong> inside it. The same server the platform already uses is the
+                expected answer - a second database on it, never the platform&apos;s own. Without
+                the extension every minute becomes an ordinary row: it works, and it is the one
+                combination here that ends badly.
+            </Callout>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <Field label="Host" value={target.host} onChange={v => set({ host: v })}
@@ -243,10 +238,7 @@ export default function MetricsDatabaseCard() {
             <ConnectionTestNote result={test.result} />
 
             {saveWarning && (
-                <p className="flex items-start gap-1.5 text-xs leading-relaxed text-(--warning-light)">
-                    <AlertTriangle size={12} className="mt-0.5 shrink-0" />
-                    <span>{saveWarning}</span>
-                </p>
+                <Callout tone="warning" icon={<AlertTriangle size={14} />} role="alert">{saveWarning}</Callout>
             )}
 
             {value?.active && <ActiveLine active={value.active} />}
@@ -264,13 +256,13 @@ export default function MetricsDatabaseCard() {
 function ActiveLine({ active }: { active: { recording: boolean; resolution?: string } }) {
     if (!active.recording) {
         return (
-            <p className="text-[11px] font-mono text-(--base-06)">
+            <p className="text-xs text-(--base-06)">
                 Not recording: no statistics database is open.
             </p>
         );
     }
     return (
-        <p className="text-[11px] font-mono text-(--base-06)">
+        <p className="text-xs text-(--base-06)">
             Recording now, {active.resolution || 'minute'} buckets.
         </p>
     );

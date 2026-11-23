@@ -11,9 +11,11 @@ import {
 } from '@/lib/api/gatewayDns';
 import { useSettingsForm } from '@/lib/useSettingsForm';
 import { CONN_TEST_TIMEOUT_MS } from '@/lib/connectionTest';
+import '@/styles/settings-net.css';
 import SettingsCard from '@/components/settings/SettingsCard';
 import Switch from '@/components/ui/Switch';
 import HelpTip from '@/components/ui/HelpTip';
+import Select from '@/components/ui/Select';
 
 // The DNS credential lives in the gateway Hub. This card is a form over it, not
 // a second copy: Core forwards what is typed here and stores nothing, so there
@@ -188,16 +190,12 @@ export default function GatewayDnsCard() {
 
                     <div>
                         <label className="input-label">Provider</label>
-                        <select
+                        <Select
+                            ariaLabel="Provider"
                             value={v.provider}
-                            onChange={e => { form.patch({ provider: e.target.value }); setProbe(null); }}
-                            className="input-field text-sm w-full"
-                        >
-                            <option value="">— none —</option>
-                            {(meta?.providers ?? []).map(p => (
-                                <option key={p.name} value={p.name}>{p.label}</option>
-                            ))}
-                        </select>
+                            onChange={p => { form.patch({ provider: p }); setProbe(null); }}
+                            options={[{ value: '', label: '— none —' }, ...(meta?.providers ?? []).map(p => ({ value: p.name, label: p.label }))]}
+                        />
                     </div>
 
                     <div>
@@ -331,7 +329,7 @@ export default function GatewayDnsCard() {
 
                     <div className="pt-4 border-t border-(--base-03) space-y-4">
                         <div>
-                            <h3 className="mono-label">Certificates</h3>
+                            <h3 className="srv-label">Certificates</h3>
                             <p className="text-xs text-(--base-06) mt-1.5">
                                 The beam relay&apos;s client port is the one listener that needs a
                                 publicly trusted certificate — the Beam app checks its chain and
@@ -358,14 +356,12 @@ export default function GatewayDnsCard() {
 
                         <div>
                             <label className="input-label">Certificate authority</label>
-                            <select
+                            <Select
+                                ariaLabel="Certificate authority"
                                 value={v.acmeDirectory}
-                                onChange={e => form.patch({ acmeDirectory: e.target.value })}
-                                className="input-field text-sm w-full"
-                            >
-                                <option value="">Let&apos;s Encrypt</option>
-                                <option value="staging">Let&apos;s Encrypt (staging)</option>
-                            </select>
+                                onChange={d => form.patch({ acmeDirectory: d })}
+                                options={[{ value: '', label: "Let's Encrypt" }, { value: 'staging', label: "Let's Encrypt (staging)" }]}
+                            />
                             <p className="text-xs text-(--base-06) mt-1.5">
                                 Staging issues untrusted certificates against generous rate limits.
                                 Use it to prove the DNS challenge works, then switch.
@@ -392,28 +388,28 @@ export default function GatewayDnsCard() {
                                 )}
                                 {(meta.cert_status.names ?? []).length > 0 && (
                                     <div className="overflow-x-auto">
-                                        <table className="w-full text-xs">
+                                        <table className="set-net-table">
                                             <thead>
-                                                <tr className="text-(--base-06) text-left">
-                                                    <th className="font-normal py-1 pr-3">Name</th>
-                                                    <th className="font-normal py-1 pr-3">Certificate</th>
-                                                    <th className="font-normal py-1 pr-3">Expires</th>
-                                                    <th className="font-normal py-1">Last error</th>
+                                                <tr>
+                                                    <th>Name</th>
+                                                    <th>Certificate</th>
+                                                    <th>Expires</th>
+                                                    <th>Last error</th>
                                                 </tr>
                                             </thead>
                                             <tbody>
                                                 {(meta.cert_status.names ?? []).map(n => (
-                                                    <tr key={n.name} className="border-t border-(--base-03)">
-                                                        <td className="py-1.5 pr-3 font-mono text-(--base-09)">{n.name}</td>
-                                                        <td className="py-1.5 pr-3">
+                                                    <tr key={n.name}>
+                                                        <td className="font-mono text-(--base-09)">{n.name}</td>
+                                                        <td className="pr-3">
                                                             {n.have
                                                                 ? <span className="text-(--success-light)">issued</span>
                                                                 : <span className="text-(--base-06)">none yet</span>}
                                                         </td>
-                                                        <td className="py-1.5 pr-3 text-(--base-07)">
+                                                        <td className="text-(--base-07)">
                                                             {n.have && n.expires ? n.expires.slice(0, 10) : '—'}
                                                         </td>
-                                                        <td className="py-1.5 text-(--base-06) break-all">{n.error || '—'}</td>
+                                                        <td className="text-(--base-06) break-all">{n.error || '—'}</td>
                                                     </tr>
                                                 ))}
                                             </tbody>

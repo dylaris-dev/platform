@@ -9,7 +9,8 @@ import React, { useState, useEffect } from 'react';
 import {
   Server, Globe, Network, Trash2, AlertTriangle, Users,
   Cpu, MemoryStick, ArrowDownToLine, ArrowUpFromLine,
-  Link2, HardDrive, Layers, ArrowUpCircle, AlertCircle, Info
+  Link2, HardDrive, Layers, ArrowUpCircle, AlertCircle, Info,
+  ChevronDown,
 } from 'lucide-react';
 import { getNodeServers, setNodeStoragePlacement, GatewayEdge, GatewayLink, EdgeStats, API_URL } from '@/lib/api';
 import StoragePlacement from '@/components/StoragePlacement';
@@ -28,6 +29,11 @@ import { nodeLabel } from '@/lib/nodeLabel';
 import { isAttention, type FlatServiceError, type ServiceErrorEntry } from '@/lib/serviceErrors';
 import { linkMissing, LINK_MISSING_MESSAGE } from '@/lib/linkPresence';
 import { formatBytes } from '@/lib/format';
+import { Meter, MeterIndicator, MeterTrack } from '@ui-sdk/react/meter';
+import Callout from '@/components/server/Callout';
+import Tooltip from '@/components/ui/Tooltip';
+import EmptyState from '@/components/ui/EmptyState';
+import { RowList, Row } from '@/components/ui/RowList';
 
 export interface StorageInfo {
   path: string;
@@ -161,25 +167,38 @@ export function formatSpeed(bytesPerSec: number): string {
   return `${formatBytes(bytesPerSec)}/s`;
 }
 
-export function ProgressBar({ value, max, color = 'accent' }: { value: number; max: number; color?: 'accent' | 'primary' | 'success' }) {
-  const pct = max > 0 ? Math.min(100, (value / max) * 100) : 0;
-  const colorClass = color === 'success' ? 'bg-(--success-light)' : color === 'primary' ? 'bg-(--primary)' : 'bg-(--accent)';
+export function ProgressBar({ value, max, label, tone }: { value: number; max: number; label: string; tone?: 'warning' | 'error' }) {
+  const safeMax = max > 0 ? max : 1;
   return (
-    <div className="h-1.5 rounded-full bg-(--base-03) overflow-hidden">
-      <div className={`h-full rounded-full transition-all duration-500 ${colorClass}`} style={{ width: `${pct}%` }} />
+    <Meter value={Math.min(Math.max(value, 0), safeMax)} min={0} max={safeMax} aria-label={label}>
+      <MeterTrack className="srv-meter-track">
+        <MeterIndicator className="srv-meter-fill" data-tone={tone} />
+      </MeterTrack>
+    </Meter>
+  );
+}
+
+function toneFor(pct: number): 'warning' | 'error' | undefined {
+  return pct > 90 ? 'error' : pct > 70 ? 'warning' : undefined;
+}
+
+function Stat({ icon, label, value }: { icon?: React.ReactNode; label: string; value: React.ReactNode }) {
+  return (
+    <div className="flex items-center justify-between gap-3 text-[13px]">
+      <span className="srv-label flex items-center gap-1.5">{icon}{label}</span>
+      <span className="srv-num text-(--base-08)">{value}</span>
     </div>
   );
 }
 
-export function StatCard({ label, value, sub, icon }: { label: string; value: string | number; sub?: string; icon: React.ReactNode }) {
+function MeterRow({ icon, label, detail, value, max }: { icon: React.ReactNode; label: string; detail: React.ReactNode; value: number; max: number }) {
   return (
-    <div className="card p-4 flex flex-col gap-1.5">
-      <span className="mono-label">{label}</span>
-      <div className="flex items-baseline gap-1.5">
-        <div className="text-(--accent-light) flex items-center" style={{ marginBottom: 1 }}>{icon}</div>
-        <span className="font-display text-2xl font-bold text-(--base-09) tabular-nums leading-none">{value}</span>
-        {sub && <span className="text-sm font-normal text-(--base-05)">{sub}</span>}
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between gap-3 text-[13px]">
+        <span className="srv-label flex items-center gap-1.5">{icon}{label}</span>
+        <span className="srv-num text-(--base-08)">{detail}</span>
       </div>
+      <ProgressBar value={value} max={max} label={label} tone={max > 0 ? toneFor((value / max) * 100) : undefined} />
     </div>
   );
 }
@@ -222,69 +241,66 @@ export function NodeCard({
   }, [node.id]);
 
   return (
-    <div className="card p-4 flex flex-col gap-3">
-      {/* Header */}
-      <div className="flex items-center justify-between gap-2">
+    <div className="srv-surface p-5 flex flex-col gap-4">
+      <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2.5 min-w-0">
           {(() => {
             const { tier } = nodeConnectivity(node.status, node.lastSeenAt, Date.now());
-            const dot = dotFor(tier, 'bg-(--success-light) shadow-[0_0_6px_var(--success-light)]');
-            return <div className={`w-2 h-2 rounded-full shrink-0 ${dot}`} />;
+            const dot = dotFor(tier, 'bg-(--success-light)');
+            return <span className={`size-2 rounded-full shrink-0 ${dot}`} aria-hidden="true" />;
           })()}
           <div className="min-w-0">
             <p className="text-sm font-semibold text-(--base-09) truncate">{label}</p>
             {identity && (
-              <p className="mono-label text-(--base-05) truncate" title={identity}>{identity}</p>
+              <Tooltip content={identity}>
+                <p className="srv-num text-[11px] text-(--base-06) truncate">{identity}</p>
+              </Tooltip>
             )}
           </div>
         </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <span className={`mono-label ${isOnline ? 'text-(--success-light)' : 'text-(--error-light)'}`}>
-            {node.status}
-          </span>
-        </div>
+        <span className={`text-xs font-medium capitalize shrink-0 ${isOnline ? 'text-(--success-light)' : 'text-(--error-light)'}`}>
+          {node.status}
+        </span>
       </div>
 
-      {/* Info row */}
       {(() => {
         const diskCount = storageData
           ? storageData.reduce((sum, s) => sum + (s.server_uuids?.length ?? s.server_count), 0)
           : null;
         const orphaned = diskCount !== null ? Math.max(0, diskCount - serverCount) : 0;
         return (
-          <div className="flex items-center justify-between gap-2 pt-2 border-t border-(--base-03)">
-            {/* Server count + orphaned button */}
+          <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5 text-[13px]">
             <div className="flex items-center gap-2 min-w-0">
-              <Server size={11} className="text-(--base-05) shrink-0" />
-              <span className="text-xs font-mono text-(--base-07)">
-                <span className="text-(--base-09) font-semibold">{serverCount}</span>
-                <span className="text-(--base-06)"> server{serverCount !== 1 ? 's' : ''}</span>
+              <Server size={14} className="text-(--base-06) shrink-0" aria-hidden="true" />
+              <span className="text-(--base-07)">
+                <span className="srv-num text-(--base-09)">{serverCount}</span> server{serverCount !== 1 ? 's' : ''}
               </span>
               {orphaned > 0 && (
-                <button
-                  onClick={() => onNavigateToAdminDisk(node.id)}
-                  className="px-1.5 py-0.5 rounded border border-(--warning-border) bg-(--warning-ghost) text-(--warning) text-[10px] font-mono hover:bg-(--warning-border)/30 transition-colors cursor-pointer"
-                  title="Open in Disk Analysis"
-                >
-                  {orphaned} orphaned
-                </button>
+                <Tooltip content="Open in Disk Analysis">
+                  <button
+                    type="button"
+                    onClick={() => onNavigateToAdminDisk(node.id)}
+                    className="srv-chip bg-(--warning-ghost)! text-(--warning-light)! cursor-pointer"
+                  >
+                    {orphaned} orphaned
+                  </button>
+                </Tooltip>
               )}
             </div>
 
-            {/* Links — only when Gateway module is enabled */}
+            {/* Links: only when the Gateway module is enabled */}
             {gatewayEnabled && (
               <div className="flex items-center gap-1.5 shrink-0">
-                <Link2 size={11} className="text-(--base-05)" />
+                <Link2 size={14} className="text-(--base-06)" aria-hidden="true" />
                 {/* The Link's own answer where Core has one; the node's count of
                     Link containers stays at 1 while that Link reaches no edge. */}
                 {linkOnline !== undefined ? (
-                  <span className={`text-xs font-mono ${linkOnline ? 'text-(--success-light)' : 'text-(--error-light)'}`}>
+                  <span className={linkOnline ? 'text-(--success-light)' : 'text-(--error-light)'}>
                     {linkOnline ? 'Link online' : 'Link offline'}
                   </span>
                 ) : (
-                  <span className="text-xs font-mono text-(--base-07)">
-                    <span className="text-(--base-09) font-semibold">{linkCount}</span>
-                    <span className="text-(--base-06)"> link{linkCount !== 1 ? 's' : ''}</span>
+                  <span className="text-(--base-07)">
+                    <span className="srv-num text-(--base-09)">{linkCount}</span> link{linkCount !== 1 ? 's' : ''}
                   </span>
                 )}
               </div>
@@ -296,127 +312,85 @@ export function NodeCard({
       {/* Directly under the link count it explains: a node with no Link looks
           healthy everywhere else, while its servers cannot be reached. */}
       {gatewayEnabled && linkOnline === false ? (
-        <p className="flex items-start gap-1.5 rounded-sm border border-(--error-border) bg-(--error-ghost) px-2 py-1.5 text-[10px] font-mono text-(--error-light)">
-          <AlertTriangle size={10} className="mt-0.5 shrink-0" />
-          <span>{LINK_OFFLINE_MESSAGE}</span>
-        </p>
+        <Callout tone="error" icon={<AlertTriangle size={16} />}>{LINK_OFFLINE_MESSAGE}</Callout>
       ) : linkMissing(gatewayEnabled, node) && (
-        <p className="flex items-start gap-1.5 rounded-sm border border-(--warning-border) bg-(--warning-ghost) px-2 py-1.5 text-[10px] font-mono text-(--warning-light)">
-          <AlertTriangle size={10} className="mt-0.5 shrink-0" />
-          <span>{LINK_MISSING_MESSAGE}</span>
-        </p>
+        <Callout tone="warning" icon={<AlertTriangle size={16} />}>{LINK_MISSING_MESSAGE}</Callout>
       )}
 
-      {/* CPU */}
       {hasStats && node.cpuUsage !== undefined && (
-        <div>
-          <div className="flex items-center justify-between mb-1">
-            <span className="flex items-center gap-1.5 mono-label">
-              <Cpu size={10} /> CPU
-            </span>
-            <span className="text-[10px] font-mono text-(--base-07) tabular-nums">{node.cpuUsage.toFixed(1)}%</span>
-          </div>
-          <ProgressBar value={node.cpuUsage} max={100} color="accent" />
-        </div>
+        <MeterRow icon={<Cpu size={14} />} label="CPU" detail={`${node.cpuUsage.toFixed(1)}%`} value={node.cpuUsage} max={100} />
       )}
 
-      {/* RAM */}
       {hasStats && node.ramFree !== undefined && node.ramTotal !== undefined && (
-        <div>
-          <div className="flex items-center justify-between mb-1">
-            <span className="flex items-center gap-1.5 mono-label">
-              <MemoryStick size={10} /> RAM
-            </span>
-            <span className="text-[10px] font-mono text-(--base-07) tabular-nums">
-              {formatBytes(node.ramFree)} free / {formatBytes(node.ramTotal)}
-            </span>
-          </div>
-          <ProgressBar value={node.ramTotal - node.ramFree} max={node.ramTotal} color="primary" />
-        </div>
+        <MeterRow
+          icon={<MemoryStick size={14} />}
+          label="RAM"
+          detail={`${formatBytes(node.ramFree)} free / ${formatBytes(node.ramTotal)}`}
+          value={node.ramTotal - node.ramFree}
+          max={node.ramTotal}
+        />
       )}
 
-      {/* Shared storage — placed above everything else on the card because it
+      {/* Shared storage: placed above everything else on the card because it
           is not a warning about degraded behaviour: the node cannot work in this
           topology at all, and the next migration destroys a server while
           reporting success. */}
       {node.sharedStorage && node.sharedStorage.length > 0 && (
-        <div className="rounded-sm border border-(--error-border) bg-(--error-ghost) px-2 py-2 space-y-1.5">
-          <p className="flex items-start gap-1.5 text-[10px] font-mono font-semibold uppercase tracking-[0.08em] text-(--error-light)">
-            <AlertTriangle size={11} className="mt-px shrink-0" />
-            <span>{sharedStorageSummary(node.sharedStorage)}</span>
-          </p>
+        <Callout tone="error" icon={<AlertTriangle size={16} />} title={sharedStorageSummary(node.sharedStorage)}>
           <ul className="space-y-1">
             {node.sharedStorage.map((c: SharedStorageConflict) => (
-              <li key={`${c.path}-${c.peerNode ?? ''}-${c.kind}`} className="text-[10px] text-(--error-light) leading-snug">
-                {sharedStorageMessage(c)}
-              </li>
+              <li key={`${c.path}-${c.peerNode ?? ''}-${c.kind}`}>{sharedStorageMessage(c)}</li>
             ))}
           </ul>
-          <p className="text-[10px] text-(--base-06) leading-snug">
+          <p className="mt-1.5 text-(--base-07)">
             Give each node its own storage path. Sharing one is not supported: node
             identity is stored there, so the nodes overwrite each other.
           </p>
-        </div>
+        </Callout>
       )}
 
       {node.noMemoryLimit && (
-        <p className="flex items-start gap-1.5 rounded-sm border border-(--warning-border) bg-(--warning-ghost) px-2 py-1.5 text-[10px] text-(--warning-light) leading-snug">
-          <AlertTriangle size={11} className="mt-px shrink-0" />
-          <span>{NO_MEMORY_LIMIT_MESSAGE}</span>
-        </p>
+        <Callout tone="warning" icon={<AlertTriangle size={16} />}>{NO_MEMORY_LIMIT_MESSAGE}</Callout>
       )}
 
-      {/* MC host-port range — these are the ports the host firewall must open,
+      {/* MC host-port range: these are the ports the host firewall must open,
           so it is shown unconditionally rather than hidden behind a detail view. */}
       {node.portRange && (
-        <div>
-          <div className="flex items-center justify-between">
-            <span className="flex items-center gap-1.5 mono-label">
-              <Network size={10} /> Port range
-            </span>
-            <span className="text-[10px] font-mono text-(--base-07) tabular-nums">{node.portRange}</span>
-          </div>
+        <div className="space-y-2">
+          <Stat icon={<Network size={14} />} label="Port range" value={node.portRange} />
           {node.portRangeNotice && (
-            <p className="mt-1.5 flex items-start gap-1.5 rounded-sm border border-(--warning-border) bg-(--warning-ghost) px-2 py-1.5 text-[10px] font-mono text-(--warning-light)">
-              <AlertTriangle size={10} className="mt-0.5 shrink-0" />
-              <span>{node.portRangeNotice}</span>
-            </p>
+            <Callout tone="warning" icon={<AlertTriangle size={16} />}>{node.portRangeNotice}</Callout>
           )}
         </div>
       )}
 
-      {/* Last seen */}
       {!isOnline && node.lastSeenAt && (
-        <p className="text-[10px] text-(--base-05) font-mono">Last seen {timeAgo(node.lastSeenAt)}</p>
+        <p className="text-xs text-(--base-06)">Last seen {timeAgo(node.lastSeenAt)}</p>
       )}
 
-      {/* Storage */}
-      <div className="border-t border-(--base-03) pt-2 space-y-1.5">
-        <div className="flex items-center gap-1.5 mono-label">
-          <HardDrive size={10} />
+      <div className="space-y-2 border-t border-(--base-03) pt-3">
+        <div className="srv-label flex items-center gap-1.5">
+          <HardDrive size={14} aria-hidden="true" />
           Storage
         </div>
         {storageData === null ? (
           <SkeletonCard height="h-10" />
         ) : storageData.length === 0 ? (
-          <p className="text-[10px] font-mono text-(--base-05) italic">No storage info available</p>
+          <p className="text-[13px] text-(--base-06)">No storage info available</p>
         ) : (
           storageData.map((s, i) => {
             const pct = s.total_bytes > 0 ? (s.used_bytes / s.total_bytes) * 100 : 0;
-            const barColor = pct > 90 ? 'bg-(--error-light)' : pct > 70 ? 'bg-(--warning)' : 'bg-(--accent)';
             const cap = capacity.find((c) => c.path === s.path);
             return (
-              <div key={i} className="bg-(--base-02) rounded p-2 border border-(--base-03)">
-                <div className="flex justify-between items-center mb-1">
-                  <span className="font-mono text-[10px] text-(--base-07) truncate">{s.path}</span>
-                  <span className="text-[10px] text-(--base-06) ml-2 shrink-0">{s.server_count} srv</span>
+              <div key={i} className="rounded-lg bg-(--base-03) p-3 space-y-2">
+                <div className="flex justify-between items-center gap-2">
+                  <span className="srv-num text-xs text-(--base-08) truncate">{s.path}</span>
+                  <span className="text-xs text-(--base-06) shrink-0">{s.server_count} srv</span>
                 </div>
-                <div className="h-1 rounded-full bg-(--base-03) overflow-hidden">
-                  <div className={`h-full rounded-full ${barColor}`} style={{ width: `${Math.min(pct, 100)}%` }} />
-                </div>
-                <div className="flex justify-between mt-1">
-                  <span className="text-[10px] font-mono text-(--base-06)">{formatBytes(s.used_bytes)} / {formatBytes(s.total_bytes)}</span>
-                  <span className="text-[10px] font-mono text-(--base-06)">{formatBytes(s.free_bytes)} free</span>
+                <ProgressBar value={s.used_bytes} max={s.total_bytes} label={`Storage ${s.path}`} tone={toneFor(pct)} />
+                <div className="flex justify-between srv-num text-xs text-(--base-06)">
+                  <span>{formatBytes(s.used_bytes)} / {formatBytes(s.total_bytes)}</span>
+                  <span>{formatBytes(s.free_bytes)} free</span>
                 </div>
                 {cap && <StorageCapacityNote cap={cap} />}
               </div>
@@ -424,7 +398,7 @@ export function NodeCard({
           })
         )}
 
-        {/* Placement policy — only meaningful with more than one path to choose from. */}
+        {/* Placement policy: only meaningful with more than one path to choose from. */}
         {placement && storageData && storageData.length > 1 && (
           <StoragePlacement
             paths={storageData.map((s) => s.path)}
@@ -461,14 +435,14 @@ export function StorageCapacityNote({ cap }: { cap: DiskPathStatus }) {
   };
 
   return (
-    <div className="mt-1.5 space-y-1 border-t border-(--base-03) pt-1.5">
-      <div className="flex items-center justify-between">
-        <span className="mono-label">Promised</span>
-        <span className={`font-mono text-[10px] tabular-nums ${tone[cap.status]}`}>
+    <div className="space-y-2 border-t border-(--base-04) pt-2">
+      <div className="flex items-center justify-between text-xs">
+        <span className="srv-label">Promised</span>
+        <span className={`srv-num ${tone[cap.status]}`}>
           {label[cap.status]} &middot; {cap.projectedPercent}%
         </span>
       </div>
-      <p className="font-mono text-[10px] leading-relaxed text-(--base-05)">
+      <p className="text-xs leading-relaxed text-(--base-06)">
         {cap.committedGb} GB committed, {cap.unwrittenGb} GB of it not yet written.
         {' '}
         {cap.availableGb >= 0
@@ -476,32 +450,28 @@ export function StorageCapacityNote({ cap }: { cap: DiskPathStatus }) {
           : `${Math.abs(cap.availableGb)} GB past the ${cap.headroomGb} GB buffer.`}
       </p>
       {!cap.quotaEnforceable && (
-        <p className="flex items-start gap-1.5 rounded-sm border border-(--warning-border) bg-(--warning-ghost) px-2 py-1.5 text-[10px] font-mono text-(--warning-light)">
-          <AlertTriangle size={10} className="mt-0.5 shrink-0" />
+        // One line; the explanation and the remedy fold out, so a node card is
+        // not dominated by a paragraph about project quotas.
+        <Callout foldable tone="warning" icon={<AlertTriangle size={16} />} title="Disk limits are not enforced on this node">
           {/* The remedy belongs here. The warning alone was accurate and useless:
-              the node already proved at startup which step is missing, and that
-              detail only existed in its log. */}
-          <span>
+                the node already proved at startup which step is missing, and that
+                detail only existed in its log. */}
             Disk limits cannot be enforced here, so they are recorded but nothing stops a server from
-            exceeding them. Usage is still measured (via <code className="font-mono">du</code>).
-            {' '}Project quotas need xfs mounted with <code className="font-mono">pquota</code>, or ext4 with
-            the <code className="font-mono">project</code> feature (<code className="font-mono">tune2fs -O project,quota</code>,
-            filesystem unmounted) and mounted with <code className="font-mono">prjquota</code>, and setting a
-            limit needs the node container to hold <code className="font-mono">CAP_SYS_ADMIN</code>. The node
-            logs which step is missing on startup (search its log for <code className="font-mono">quota:</code>);
+            exceeding them. Usage is still measured (via <code className="srv-num">du</code>).
+            {' '}Project quotas need xfs mounted with <code className="srv-num">pquota</code>, or ext4 with
+            the <code className="srv-num">project</code> feature (<code className="srv-num">tune2fs -O project,quota</code>,
+            filesystem unmounted) and mounted with <code className="srv-num">prjquota</code>, and setting a
+            limit needs the node container to hold <code className="srv-num">CAP_SYS_ADMIN</code>. The node
+            logs which step is missing on startup (search its log for <code className="srv-num">quota:</code>);
             it re-checks on restart.
-          </span>
-        </p>
+        </Callout>
       )}
       {cap.inodesFreePercent >= 0 && cap.inodesFreePercent < 10 && (
-        <p className="flex items-start gap-1.5 rounded-sm border border-(--warning-border) bg-(--warning-ghost) px-2 py-1.5 text-[10px] font-mono text-(--warning-light)">
-          <AlertTriangle size={10} className="mt-0.5 shrink-0" />
-          <span>
-            Only {cap.inodesFreePercent}% of this filesystem&apos;s inodes are free. When they run out no server on
-            it can create a file, a world save included, however much disk space is left. Look for a server
-            with an unusual number of small files.
-          </span>
-        </p>
+        <Callout tone="warning" icon={<AlertTriangle size={16} />}>
+          Only {cap.inodesFreePercent}% of this filesystem&apos;s inodes are free. When they run out no server on
+          it can create a file, a world save included, however much disk space is left. Look for a server
+          with an unusual number of small files.
+        </Callout>
       )}
     </div>
   );
@@ -527,95 +497,69 @@ export function EdgeCard({ edge }: { edge: GatewayEdge }) {
   const imageMismatch = spliceImageMismatch(runImg, availImg);
 
   return (
-    <div className="card p-4 flex flex-col gap-3">
-      <div className="flex items-center justify-between">
+    <div className="srv-surface p-5 flex flex-col gap-4">
+      <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2.5 min-w-0">
-          <div className={`w-2 h-2 rounded-full shrink-0 ${isOnline ? 'bg-(--success-light) shadow-[0_0_6px_var(--success-light)]' : 'bg-(--error)'}`} />
+          <span className={`size-2 rounded-full shrink-0 ${isOnline ? 'bg-(--success-light)' : 'bg-(--error)'}`} aria-hidden="true" />
           <div className="min-w-0">
             <p className="text-sm font-semibold text-(--base-09) truncate">{edge.name}</p>
-            <p className="text-[10px] font-mono text-(--base-05) truncate">{edge.ip}:{edge.service_port}</p>
+            <p className="srv-num text-[11px] text-(--base-06) truncate">{edge.ip}:{edge.service_port}</p>
           </div>
         </div>
-        <span className={`mono-label shrink-0 ${isOnline ? 'text-(--success-light)' : 'text-(--error-light)'}`}>
+        <span className={`text-xs font-medium capitalize shrink-0 ${isOnline ? 'text-(--success-light)' : 'text-(--error-light)'}`}>
           {edge.status}
         </span>
       </div>
 
       {(running || latest) && (
-        <div className="flex items-center justify-between gap-2">
-          <span className="flex items-center gap-1.5 mono-label text-(--base-06)">
-            <Layers size={10} /> Splice
+        <div className="flex items-center justify-between gap-2 text-[13px]">
+          <span className="srv-label flex items-center gap-1.5">
+            <Layers size={14} aria-hidden="true" /> Splice
           </span>
           {spliceBehind ? (
-            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-(--warning)/10 mono-label text-(--warning-light)">
-              <ArrowUpCircle size={9} /> {running ? `v${running}` : 'unknown'} &rarr; v{latest}
+            <span className="srv-chip bg-(--warning-ghost)! text-(--warning-light)!">
+              <ArrowUpCircle size={12} aria-hidden="true" /> <span className="srv-num">{running ? `v${running}` : 'unknown'} &rarr; v{latest}</span>
             </span>
           ) : imageMismatch ? (
-            <span
-              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-(--error)/10 mono-label text-(--error-light)"
-              title={`Running image ${runImg.slice(7, 19)}, SPLICE_IMAGE resolves to ${availImg.slice(7, 19)}. The pinned tag moved; redeploy the edge stack to recreate the sidecar.`}
-            >
-              <ArrowUpCircle size={9} /> v{running || latest} &middot; wrong image
-            </span>
+            <Tooltip content={`Running image ${runImg.slice(7, 19)}, SPLICE_IMAGE resolves to ${availImg.slice(7, 19)}. The pinned tag moved; redeploy the edge stack to recreate the sidecar.`}>
+              <span className="srv-chip bg-(--error-ghost)! text-(--error-light)!">
+                <ArrowUpCircle size={12} aria-hidden="true" /> <span className="srv-num">v{running || latest}</span> &middot; wrong image
+              </span>
+            </Tooltip>
           ) : (
-            <span className="text-[10px] font-mono text-(--base-07) tabular-nums">v{running || latest}</span>
+            <span className="srv-num text-(--base-07)">v{running || latest}</span>
           )}
         </div>
       )}
 
       {isOnline && stats ? (
-        <div className="flex flex-col gap-2.5 pt-1 border-t border-(--base-03)">
-          <div>
-            <div className="flex items-center justify-between mb-1">
-              <span className="flex items-center gap-1.5 mono-label">
-                <Cpu size={10} /> CPU
-              </span>
-              <span className="text-[10px] font-mono text-(--base-07) tabular-nums">{stats.cpu.toFixed(1)}%</span>
-            </div>
-            <ProgressBar value={stats.cpu} max={100} color="accent" />
-          </div>
-          <div>
-            <div className="flex items-center justify-between mb-1">
-              <span className="flex items-center gap-1.5 mono-label">
-                <MemoryStick size={10} /> RAM
-              </span>
-              <span className="text-[10px] font-mono text-(--base-07) tabular-nums">
-                {formatBytes(stats.ram_used)} / {formatBytes(stats.ram_total)}
-              </span>
-            </div>
-            <ProgressBar value={stats.ram_pct} max={100} color="primary" />
-          </div>
-          <div className="flex items-center gap-5 pt-0.5">
-            <div className="flex items-center gap-1.5">
-              <Users size={11} className="text-(--accent-light)" />
-              <span className="text-[11px] font-mono text-(--base-07)">
-                <span className="text-(--base-09) font-semibold tabular-nums">{stats.active_mc_streams}</span> players connected
-              </span>
-            </div>
-          </div>
-          <div className="flex items-center gap-4 flex-wrap">
-            <div className="flex items-center gap-1.5">
-              <ArrowDownToLine size={10} className="text-(--success-light)" />
-              <span className="text-[10px] font-mono text-(--base-07) tabular-nums">{formatSpeed(stats.rx_speed)}</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <ArrowUpFromLine size={10} className="text-(--accent-light)" />
-              <span className="text-[10px] font-mono text-(--base-07) tabular-nums">{formatSpeed(stats.tx_speed)}</span>
-            </div>
+        <div className="flex flex-col gap-3 border-t border-(--base-03) pt-3">
+          <MeterRow icon={<Cpu size={14} />} label="CPU" detail={`${stats.cpu.toFixed(1)}%`} value={stats.cpu} max={100} />
+          <MeterRow
+            icon={<MemoryStick size={14} />}
+            label="RAM"
+            detail={`${formatBytes(stats.ram_used)} / ${formatBytes(stats.ram_total)}`}
+            value={stats.ram_pct}
+            max={100}
+          />
+          <Stat icon={<Users size={14} />} label="Players connected" value={stats.active_mc_streams} />
+          <div className="flex items-center gap-4 flex-wrap text-xs">
+            <span className="flex items-center gap-1.5 srv-num text-(--base-07)">
+              <ArrowDownToLine size={14} className="text-(--base-06)" aria-label="Download" />{formatSpeed(stats.rx_speed)}
+            </span>
+            <span className="flex items-center gap-1.5 srv-num text-(--base-07)">
+              <ArrowUpFromLine size={14} className="text-(--base-06)" aria-label="Upload" />{formatSpeed(stats.tx_speed)}
+            </span>
             {hasTotal && (
-              <div className="flex items-center gap-1 ml-auto">
-                <HardDrive size={10} className="text-(--base-05)" />
-                <span className="text-[10px] font-mono text-(--base-06) tabular-nums">
-                  {formatBytes((rxBytes ?? 0) + (txBytes ?? 0))} total
-                </span>
-              </div>
+              <span className="flex items-center gap-1.5 srv-num text-(--base-06) ml-auto">
+                <HardDrive size={14} aria-hidden="true" />
+                {formatBytes((rxBytes ?? 0) + (txBytes ?? 0))} total
+              </span>
             )}
           </div>
         </div>
       ) : (
-        <div className="pt-1 border-t border-(--base-03)">
-          <p className="text-[10px] font-mono text-(--base-05) italic">No stats available</p>
-        </div>
+        <p className="border-t border-(--base-03) pt-3 text-[13px] text-(--base-06)">No stats available</p>
       )}
     </div>
   );
@@ -644,35 +588,33 @@ export function SpliceVersionSummary({ edges }: { edges: GatewayEdge[] }) {
   if (rows.length === 0) return null;
 
   return (
-    <div className="card p-4 flex flex-col gap-3 mb-3">
-      <div className="flex items-center gap-2">
-        <Layers size={14} className="text-(--accent-light)" />
-        <h3 className="text-sm font-semibold text-(--base-09)">Splice versions</h3>
-      </div>
-      <div className="flex flex-col divide-y divide-(--base-03)">
+    <div className="srv-surface">
+      <RowList label="Splice versions">
         {rows.map(r => {
           const runningList = [...r.running].sort();
           const pending = r.behind > 0;
           return (
-            <div key={r.region} className="flex items-center justify-between gap-3 py-2 first:pt-0 last:pb-0">
-              <div className="flex items-center gap-2 min-w-0">
-                <span className="mono-label text-(--base-06) shrink-0">{r.region}</span>
-                <span className="text-[11px] font-mono text-(--base-07) truncate">
+            <Row
+              key={r.region}
+              leading={<Layers size={14} />}
+              title={r.region}
+              meta={
+                <span className="srv-num">
                   running {runningList.length ? runningList.map(v => `v${v}`).join(', ') : 'unknown'}
-                  {r.latest && <span className="text-(--base-05)"> &middot; latest v{r.latest}</span>}
+                  {r.latest && <> &middot; latest v{r.latest}</>}
                 </span>
-              </div>
-              {pending ? (
-                <span className="inline-flex items-center gap-1 shrink-0 px-1.5 py-0.5 rounded bg-(--warning)/10 mono-label text-(--warning-light)">
-                  <ArrowUpCircle size={9} /> update available
+              }
+              trailing={pending ? (
+                <span className="srv-chip bg-(--warning-ghost)! text-(--warning-light)!">
+                  <ArrowUpCircle size={12} aria-hidden="true" /> Update available
                 </span>
               ) : (
-                <span className="mono-label shrink-0 text-(--success-light)">up to date</span>
+                <span className="text-(--success-light)">Up to date</span>
               )}
-            </div>
+            />
           );
         })}
-      </div>
+      </RowList>
     </div>
   );
 }
@@ -686,40 +628,40 @@ export function SpliceVersionSummary({ edges }: { edges: GatewayEdge[] }) {
 // problem on the customer's machine, and the edge above it is perfectly healthy.
 export function ServiceErrorList({ entries }: { entries: FlatServiceError[] }) {
   if (entries.length === 0) {
-    return (
-      <div className="card p-8 text-center text-(--base-06) text-sm">
-        No service errors reported
-      </div>
-    );
+    return <EmptyState icon={<Info size={20} />} title="No service errors reported" description="Nothing has reported a problem recently." />;
   }
   return (
-    <div className="card divide-y divide-(--base-03)">
-      {entries.map((e, i) => (
-        <div key={`${e.ts}-${e.service}-${i}`} className="flex items-start gap-3 p-3">
-          <LevelIcon level={e.level} />
-          <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="mono-label text-(--accent-light)">{e.service}</span>
-              {e.source && <span className="mono-label text-(--base-06)">{e.source}</span>}
+    <div className="srv-surface">
+      <RowList label="Service errors">
+        {entries.map((e, i) => (
+          <div key={`${e.ts}-${e.service}-${i}`} role="listitem" className="app-row items-start!">
+            <LevelIcon level={e.level} />
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                <span className="font-medium text-(--accent-light)">{e.service}</span>
+                {e.source && <span className="text-(--base-06)">{e.source}</span>}
+              </div>
+              {/* break-words, not truncate: the whole value of these lines is the
+                  address or name at the end of the message. */}
+              <p className={`text-sm mt-0.5 break-words ${isAttention(e) ? 'text-(--base-09)' : 'text-(--base-07)'}`}>
+                {e.message}
+              </p>
             </div>
-            {/* break-words, not truncate: the whole value of these lines is the
-                address or name at the end of the message. */}
-            <p className={`text-sm mt-0.5 break-words ${isAttention(e) ? 'text-(--base-09)' : 'text-(--base-07)'}`}>
-              {e.message}
-            </p>
+            <Tooltip content={e.ts || 'no timestamp'}>
+              <span className="srv-num text-xs shrink-0 text-(--base-06)">
+                {Number.isNaN(Date.parse(e.ts)) ? e.ts || 'no timestamp' : timeAgo(e.ts)}
+              </span>
+            </Tooltip>
           </div>
-          <span className="mono-label shrink-0 text-(--base-06)" title={e.ts}>
-            {Number.isNaN(Date.parse(e.ts)) ? e.ts || 'no timestamp' : timeAgo(e.ts)}
-          </span>
-        </div>
-      ))}
+        ))}
+      </RowList>
     </div>
   );
 }
 
 export function LevelIcon({ level }: { level: ServiceErrorEntry['level'] }) {
   const l = level?.toUpperCase();
-  if (l === 'ERROR') return <AlertCircle size={15} className="shrink-0 mt-0.5 text-(--error-light)" aria-label="Error" />;
-  if (l === 'WARN') return <AlertTriangle size={15} className="shrink-0 mt-0.5 text-(--warning-light)" aria-label="Warning" />;
-  return <Info size={15} className="shrink-0 mt-0.5 text-(--base-06)" aria-label="Info" />;
+  if (l === 'ERROR') return <AlertCircle size={16} className="shrink-0 mt-0.5 text-(--error-light)" aria-label="Error" />;
+  if (l === 'WARN') return <AlertTriangle size={16} className="shrink-0 mt-0.5 text-(--warning-light)" aria-label="Warning" />;
+  return <Info size={16} className="shrink-0 mt-0.5 text-(--base-06)" aria-label="Info" />;
 }

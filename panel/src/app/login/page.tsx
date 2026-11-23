@@ -53,7 +53,7 @@ function LoginPageInner() {
   }, [router, wantsDemo]);
 
   return (
-    <div className="relative min-h-screen flex items-center justify-center p-4 pb-16 bg-(--background)">
+    <div className="relative app-auth pb-16">
       <div className="w-full max-w-md space-y-4">
         {demoError && (
           <div className="alert alert-warning text-sm">{demoError}</div>

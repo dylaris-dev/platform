@@ -250,7 +250,7 @@ export function UnsavedDialog({
                     <button
                         type="button"
                         onClick={onDiscard}
-                        className="btn btn-secondary text-(--error-light) border-(--error) hover:bg-(--error)/10"
+                        className="btn btn-danger"
                         disabled={saving}
                     >
                         Discard

@@ -94,11 +94,11 @@ export default function SettingsCard({
     const loadFailed = form?.loadFailed ?? false;
 
     return (
-        <section className={`card settings-card ${className}`}>
+        <section className={`srv-surface settings-card ${className}`}>
             <header className="settings-card-header">
                 <div className="min-w-0">
                     <h3 className="settings-card-title">
-                        {Icon && <Icon size={14} className="text-(--accent-light) shrink-0" />}
+                        {Icon && <Icon size={15} className="text-(--base-06) shrink-0" />}
                         {title}
                         {help && (
                             <HelpTip label={typeof title === 'string' ? `About ${title}` : 'Help'}>
@@ -130,7 +130,7 @@ export default function SettingsCard({
                 }`}
             >
                 {loadFailed && (
-                    <div className="alert alert-error text-xs" role="alert">
+                    <div className="srv-callout" data-tone="error" role="alert">
                         {loadFailedMessage ?? (
                             <>
                                 These settings could not be loaded, so the values shown are defaults
@@ -268,7 +268,7 @@ export function SettingsGroup({
     return (
         <div className={`${first ? '' : 'settings-group-divided'} ${className}`}>
             {title && (
-                <h4 className="mono-label flex items-center gap-1.5">
+                <h4 className="srv-label flex items-center gap-1.5">
                     {title}
                     {help && (
                         <HelpTip label={typeof title === 'string' ? `About ${title}` : 'Help'}>
@@ -362,7 +362,7 @@ export function SettingsRow({
 export function StatusBadge({ active, activeLabel = 'Active', inactiveLabel = 'Off' }: { active: boolean; activeLabel?: string; inactiveLabel?: string }) {
     return (
         <span
-            className={`text-[9px] font-mono uppercase tracking-[0.08em] px-1.5 py-0.5 rounded-sm ${
+            className={`inline-flex h-5 items-center text-[11px] font-medium px-2 rounded-full ${
                 active ? 'text-(--success-light) bg-(--success-ghost)' : 'text-(--base-06) bg-(--base-03)'
             }`}
         >

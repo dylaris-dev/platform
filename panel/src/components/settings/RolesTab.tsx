@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { CircleCheck, Plus, Pencil, Trash2, X, ShieldCheck, UserCog, Eye, Search } from 'lucide-react';
+import { CircleCheck, Plus, Pencil, Trash2, X, ShieldCheck, UserCog, Eye, Search, MoreHorizontal } from 'lucide-react';
 import { getCatalog, getPermissionsMode, type CatalogScope, type PermissionsMode } from '@/lib/api/authzCatalog';
 import { reauthDialog } from '@/components/ui/ReauthDialog';
 import { useAppData } from '@/lib/AppDataContext';
@@ -27,6 +27,12 @@ import { toast } from '@/components/ui/Toast';
 import SettingsPage from '@/components/settings/SettingsPage';
 import SettingsCard from '@/components/settings/SettingsCard';
 import ModalPanel from '@/components/ui/ModalPanel';
+import Select from '@/components/ui/Select';
+import Segmented from '@/components/ui/Segmented';
+import Menu from '@/components/ui/Menu';
+import Tooltip from '@/components/ui/Tooltip';
+import EmptyState from '@/components/ui/EmptyState';
+import { RowList, Row } from '@/components/ui/RowList';
 
 // Panel-admin Settings tab (F6): (A) the global permissions_mode 3-state
 // switch, (B) panel-role CRUD, (C) assigning a panel role + grant/deny
@@ -145,23 +151,12 @@ export default function RolesTab() {
                 title="Permissions mode"
                 description="Whether and how server owners can delegate access to invited friends on their Access page. Panel roles and per-user overrides below are unaffected and always enforced."
             >
-                    <div className="flex items-center gap-2">
-                        {MODE_OPTIONS.map(opt => (
-                            <button
-                                key={opt.value}
-                                type="button"
-                                disabled={modeSaving}
-                                onClick={() => handleSetMode(opt.value)}
-                                className={`btn btn-sm ${
-                                    opt.value === mode
-                                        ? 'bg-(--accent-ghost) text-(--accent-light) border border-(--accent-border)'
-                                        : 'btn-secondary'
-                                } disabled:opacity-40`}
-                            >
-                                {opt.label}
-                            </button>
-                        ))}
-                    </div>
+                    <Segmented
+                        ariaLabel="Permissions mode"
+                        value={mode}
+                        onChange={handleSetMode}
+                        options={MODE_OPTIONS.map(opt => ({ id: opt.value, label: opt.label, disabled: modeSaving }))}
+                    />
                     <p className="text-xs text-(--base-06)">{MODE_HELP[mode]}</p>
             </SettingsCard>
 
@@ -177,59 +172,36 @@ export default function RolesTab() {
                     </button>
                 }
             >
-
                 {roles.length === 0 ? (
-                    <div className="card p-6 flex flex-col items-center text-center gap-2">
-                        <ShieldCheck size={24} className="text-(--base-05)" />
-                        <p className="text-sm text-(--base-07)">No panel roles yet.</p>
-                    </div>
+                    <EmptyState bare icon={<ShieldCheck size={20} />} title="No panel roles yet" />
                 ) : (
-                    <div className="space-y-2">
+                    <RowList label="Panel roles" className="-mx-1.5 !p-0">
                         {roles.map(role => (
-                            <div key={role.id} className="card p-3.5 flex items-center gap-3">
-                                <div className="min-w-0 flex-1">
-                                    <div className="flex items-center gap-2">
-                                        <span className="font-medium text-sm text-(--base-09)">{role.name}</span>
+                            <Row
+                                key={role.id}
+                                title={
+                                    <span className="inline-flex items-center gap-2">
+                                        {role.name}
                                         {role.isSystem && <span className="badge badge-neutral">system</span>}
-                                    </div>
-                                    <span className="mono-label">{role.capabilities.length} capabilities</span>
-                                </div>
-                                <div className="flex items-center gap-2 shrink-0">
-                                    <button
-                                        type="button"
-                                        onClick={() => setViewingRole(role)}
-                                        className="btn btn-secondary btn-sm"
-                                        title="View capabilities"
-                                    >
-                                        <Eye size={12} />
-                                        View
-                                    </button>
-                                    {!role.isSystem && (
-                                        <>
-                                            <button
-                                                type="button"
-                                                onClick={() => setRoleModal({ role })}
-                                                className="btn btn-secondary btn-sm"
-                                                title="Edit role"
-                                            >
-                                                <Pencil size={12} />
-                                                Edit
-                                            </button>
-                                            <button
-                                                type="button"
-                                                onClick={() => setDeletingRole(role)}
-                                                className="btn btn-danger btn-sm"
-                                                title="Delete role"
-                                            >
-                                                <Trash2 size={12} />
-                                                Delete
-                                            </button>
-                                        </>
-                                    )}
-                                </div>
-                            </div>
+                                    </span>
+                                }
+                                meta={`${role.capabilities.length} capabilities`}
+                                actions={
+                                    <Menu
+                                        trigger={<button type="button" className="app-icon-btn" aria-label={`Actions for ${role.name}`}><MoreHorizontal size={16} /></button>}
+                                        items={[
+                                            { label: 'View capabilities', icon: <Eye size={14} />, onSelect: () => setViewingRole(role) },
+                                            ...(role.isSystem ? [] : [
+                                                { label: 'Edit role', icon: <Pencil size={14} />, onSelect: () => setRoleModal({ role }) },
+                                                { type: 'separator' as const },
+                                                { label: 'Delete role', icon: <Trash2 size={14} />, danger: true, onSelect: () => setDeletingRole(role) },
+                                            ]),
+                                        ]}
+                                    />
+                                }
+                            />
                         ))}
-                    </div>
+                    </RowList>
                 )}
             </SettingsCard>
 
@@ -241,59 +213,54 @@ export default function RolesTab() {
                     description="Everyone the panel has given something: a role, a capability override, or platform admin. Admins are listed because admin short-circuits every capability."
                 >
                     {privileged.length === 0 ? (
-                        <div className="card p-6 flex flex-col items-center text-center gap-2">
-                            <ShieldCheck size={22} className="text-(--base-05)" />
-                            <p className="text-sm text-(--base-07)">Nobody holds a panel role yet.</p>
-                            <p className="text-xs text-(--base-06)">Find someone in the list beside this one and assign one.</p>
-                        </div>
+                        <EmptyState
+                            bare
+                            icon={<ShieldCheck size={20} />}
+                            title="Nobody holds a panel role yet"
+                            description="Find someone in the list beside this one and assign one."
+                        />
                     ) : (
-                        <div className="table-wrapper">
-                            <table className="w-full">
-                                <thead>
-                                    <tr>
-                                        <th className="table-th text-left">User</th>
-                                        <th className="table-th text-left">Panel role</th>
-                                        <th className="table-th text-right">Edit</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {privileged.map(p => (
-                                        <tr key={p.user.id} className="table-tr table-tr-hover">
-                                            <td className="table-td">
-                                                <span className="font-mono font-medium text-(--base-09)">{p.user.username}</span>
-                                                {p.isAdmin && (
-                                                    <span className="badge badge-accent ml-2" title="Platform admin: holds every panel capability regardless of the role beside it">
-                                                        admin
-                                                    </span>
-                                                )}
-                                            </td>
-                                            <td className="table-td">
-                                                {p.roleName
-                                                    ? <span className="badge badge-neutral">{p.roleName}</span>
-                                                    : <span className="text-xs text-(--base-05)">no role</span>}
-                                                {(p.grantCount > 0 || p.denyCount > 0) && (
-                                                    <span className="mono-label ml-2" title="Per-user capability overrides on top of the role">
-                                                        {p.grantCount > 0 && `+${p.grantCount}`}
-                                                        {p.grantCount > 0 && p.denyCount > 0 && ' '}
-                                                        {p.denyCount > 0 && `-${p.denyCount}`}
-                                                    </span>
-                                                )}
-                                            </td>
-                                            <td className="table-td text-right">
-                                                <button
-                                                    type="button"
-                                                    onClick={() => setAssignUser(p.user)}
-                                                    className="btn px-2.5 py-1 text-xs bg-(--base-03) border border-(--base-04) text-(--base-07) hover:text-(--base-09) transition-colors"
-                                                    title={`Edit ${p.user.username}'s panel role`}
-                                                >
-                                                    <UserCog size={13} />
-                                                </button>
-                                            </td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                        </div>
+                        <RowList label="Panel role holders" className="-mx-1.5 !p-0">
+                            {privileged.map(p => (
+                                <Row
+                                    key={p.user.id}
+                                    title={
+                                        <span className="inline-flex items-center gap-2">
+                                            <span className="font-mono">{p.user.username}</span>
+                                            {p.isAdmin && (
+                                                <span className="badge badge-accent" title="Platform admin: holds every panel capability regardless of the role beside it">
+                                                    admin
+                                                </span>
+                                            )}
+                                        </span>
+                                    }
+                                    meta={
+                                        <>
+                                            {p.roleName ? p.roleName : 'No role'}
+                                            {(p.grantCount > 0 || p.denyCount > 0) && (
+                                                <span className="ml-2 font-mono" title="Per-user capability overrides on top of the role">
+                                                    {p.grantCount > 0 && `+${p.grantCount}`}
+                                                    {p.grantCount > 0 && p.denyCount > 0 && ' '}
+                                                    {p.denyCount > 0 && `-${p.denyCount}`}
+                                                </span>
+                                            )}
+                                        </>
+                                    }
+                                    actions={
+                                        <Tooltip content="Edit panel role">
+                                            <button
+                                                type="button"
+                                                onClick={() => setAssignUser(p.user)}
+                                                className="app-icon-btn"
+                                                aria-label={`Edit ${p.user.username}'s panel role`}
+                                            >
+                                                <UserCog size={15} />
+                                            </button>
+                                        </Tooltip>
+                                    }
+                                />
+                            ))}
+                        </RowList>
                     )}
                 </SettingsCard>
 
@@ -314,39 +281,33 @@ export default function RolesTab() {
                             spellCheck={false}
                         />
                     </div>
-                    <div className="table-wrapper max-h-[420px] overflow-y-auto">
-                        <table className="w-full">
-                            <thead>
-                                <tr>
-                                    <th className="table-th text-left">User</th>
-                                    <th className="table-th text-right">Assign</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {matchingUsers.map(u => (
-                                    <tr key={u.id} className="table-tr table-tr-hover">
-                                        <td className="table-td min-w-0">
-                                            <span className="font-mono font-medium text-(--base-09)">{u.username}</span>
-                                            {u.email && <span className="block text-xs text-(--base-06) truncate">{u.email}</span>}
-                                        </td>
-                                        <td className="table-td text-right">
-                                            <button
-                                                type="button"
-                                                onClick={() => setAssignUser(u)}
-                                                className="btn px-2.5 py-1 text-xs bg-(--base-03) border border-(--base-04) text-(--base-07) hover:text-(--base-09) transition-colors"
-                                                title={`Assign a panel role to ${u.username}`}
-                                            >
-                                                <UserCog size={13} />
-                                            </button>
-                                        </td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                        {matchingUsers.length === 0 && (
+                    <div className="max-h-[420px] overflow-y-auto">
+                        {matchingUsers.length === 0 ? (
                             <p className="p-6 text-center text-sm text-(--base-06)">
                                 {users.length === 0 ? 'No users.' : `Nobody matches "${userQuery}".`}
                             </p>
+                        ) : (
+                            <RowList label="Users" className="-mx-1.5 !p-0">
+                                {matchingUsers.map(u => (
+                                    <Row
+                                        key={u.id}
+                                        title={<span className="font-mono">{u.username}</span>}
+                                        meta={u.email || undefined}
+                                        actions={
+                                            <Tooltip content="Assign panel role">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setAssignUser(u)}
+                                                    className="app-icon-btn"
+                                                    aria-label={`Assign a panel role to ${u.username}`}
+                                                >
+                                                    <UserCog size={15} />
+                                                </button>
+                                            </Tooltip>
+                                        }
+                                    />
+                                ))}
+                            </RowList>
                         )}
                     </div>
                 </SettingsCard>
@@ -473,7 +434,7 @@ function ViewCapabilitiesModal({
                                 )}
                                 {scope.categories.map(cat => (
                                     <div key={`${scope.scope}.${cat.category}`}>
-                                        <div className="mono-label text-(--base-06) mb-1.5">{cat.category}</div>
+                                        <div className="srv-label mb-1.5">{cat.category}</div>
                                         <ul className="space-y-1">
                                             {cat.caps.map(c => (
                                                 <li key={c.id} className="flex items-center gap-2 text-sm text-(--base-09)">
@@ -489,7 +450,7 @@ function ViewCapabilitiesModal({
                     )}
                     {unknown.length > 0 && (
                         <div>
-                            <div className="mono-label text-(--base-06) mb-1.5">Other</div>
+                            <div className="srv-label mb-1.5">Other</div>
                             <ul className="space-y-1">
                                 {unknown.map(id => (
                                     <li key={id} className="text-sm font-mono text-(--base-07)">{id}</li>
@@ -674,17 +635,13 @@ function AssignRoleModal({
                     <div className="modal-body overflow-y-auto flex-1 space-y-5">
                         <div className="flex flex-col gap-[5px]">
                             <label className="input-label">Panel role</label>
-                            <select
-                                value={panelRoleId ?? ''}
-                                onChange={e => setPanelRoleId(e.target.value === '' ? null : Number(e.target.value))}
-                                className="input-field w-full"
+                            <Select
+                                ariaLabel="Panel role"
+                                value={panelRoleId == null ? '' : String(panelRoleId)}
+                                onChange={v => setPanelRoleId(v === '' ? null : Number(v))}
                                 disabled={saving}
-                            >
-                                <option value="">None</option>
-                                {roles.map(r => (
-                                    <option key={r.id} value={r.id}>{r.name}</option>
-                                ))}
-                            </select>
+                                options={[{ value: '', label: 'None' }, ...roles.map(r => ({ value: String(r.id), label: r.name }))]}
+                            />
                         </div>
                         <div>
                             <label className="input-label">Grant overrides</label>

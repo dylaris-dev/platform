@@ -3,7 +3,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
     HardDrive, Loader2, CircleCheck, CircleAlert, Play, ShieldAlert,
-    Download, FileSearch, X, ArrowRight, Info,
+    Download, FileSearch, X, ArrowRight, Info, MoreHorizontal,
 } from 'lucide-react';
 import {
     getStorageOverview, getStorageMigration, startStorageMigration,
@@ -23,6 +23,13 @@ import { toast } from '@/components/ui/Toast';
 import SettingsPage from '@/components/settings/SettingsPage';
 import ModalPanel from '@/components/ui/ModalPanel';
 import { fmtDateTime } from '@/lib/time';
+import Select from '@/components/ui/Select';
+import Checkbox from '@/components/ui/Checkbox';
+import Callout from '@/components/server/Callout';
+import Menu from '@/components/ui/Menu';
+import EmptyState from '@/components/ui/EmptyState';
+import Section from '@/components/ui/Section';
+import '@/styles/settings-storage.css';
 
 const PHASE_LABEL: Record<StorageMigrationPhase, string> = {
     preparing: 'Preparing',
@@ -249,15 +256,7 @@ export default function StorageMigrationTab() {
         if (!res.success) flash(res.message || 'Download failed.', false);
     };
 
-    if (loading) {
-        return (
-            <div className="space-y-6">
-                <div className="card p-5 flex items-center gap-2 text-sm text-(--base-06)">
-                    <Loader2 size={14} className="animate-spin" /> Loading storage overview...
-                </div>
-            </div>
-        );
-    }
+    if (loading) return <SettingsPage title="Storage" icon={HardDrive} width="full" loading skeletonCards={2}>{null}</SettingsPage>;
 
     return (
         <SettingsPage
@@ -278,44 +277,46 @@ export default function StorageMigrationTab() {
         >
 
             {jobError && (
-                <p className="alert alert-error text-xs">{jobError}</p>
+                <Callout tone="error" icon={<CircleAlert size={14} />} role="alert">{jobError}</Callout>
             )}
             {job && (
                 <JobPanel job={job} onCancel={doCancel} cancelling={cancelling} />
             )}
 
-            <div className="card p-5 space-y-3">
-                <div className="mono-label">Data sets</div>
+            <Section title="Data sets" description="Each blob data set Core knows about, with its last inventory.">
                 {overviewError && (
-                    <p className="alert alert-error text-xs">{overviewError}</p>
+                    <Callout tone="error" icon={<CircleAlert size={14} />} role="alert">{overviewError}</Callout>
                 )}
                 {dataSets.length > 0 ? (
-                    <div className="space-y-2">
-                        {dataSets.map(ds => (
-                            <DataSetRow
-                                key={ds.id}
-                                ds={ds}
-                                busy={busy || busyDataSet === ds.id}
-                                downloading={downloading}
-                                onManifest={() => captureManifest(ds.id)}
-                                onVerifyFull={() => verifyAgainstLatest(ds, 'full')}
-                                onVerifySample={() => verifyAgainstLatest(ds, 'sample')}
-                                onDownload={() => ds.latestManifest && doDownload(ds.latestManifest.id, ds.id)}
-                            />
-                        ))}
+                    <div className="srv-surface">
+                        <div role="list" aria-label="Data sets" className="flex flex-col gap-0.5 p-1.5">
+                            {dataSets.map(ds => (
+                                <DataSetRow
+                                    key={ds.id}
+                                    ds={ds}
+                                    busy={busy || busyDataSet === ds.id}
+                                    downloading={downloading}
+                                    onManifest={() => captureManifest(ds.id)}
+                                    onVerifyFull={() => verifyAgainstLatest(ds, 'full')}
+                                    onVerifySample={() => verifyAgainstLatest(ds, 'sample')}
+                                    onDownload={() => ds.latestManifest && doDownload(ds.latestManifest.id, ds.id)}
+                                />
+                            ))}
+                        </div>
                     </div>
                 ) : !overviewError ? (
-                    <p className="alert alert-info text-xs">
-                        No storage data sets are configured yet. Configure Core file storage first.
-                    </p>
+                    <EmptyState
+                        icon={<HardDrive size={20} />}
+                        title="No storage data sets yet"
+                        description="Configure Core file storage first."
+                    />
                 ) : null}
-            </div>
+            </Section>
 
-            <div className="card p-5 space-y-3">
-                <div className="mono-label">Manual migration (three steps, in this order)</div>
-                <ol className="space-y-2 text-xs text-(--base-07)">
+            <Section title="Manual migration" description="Three steps, in this order.">
+                <ol className="srv-surface space-y-3 p-5 text-[13px] text-(--base-07)">
                     <li className="flex gap-3">
-                        <span className="mono-label shrink-0 pt-0.5">1</span>
+                        <span className="srv-num w-4 shrink-0 text-(--base-06)">1</span>
                         <span>
                             <strong className="text-(--base-09)">Capture a manifest.</strong>{' '}
                             Use <em>Inventory</em> on the data set below. This reads every object the data set
@@ -324,7 +325,7 @@ export default function StorageMigrationTab() {
                         </span>
                     </li>
                     <li className="flex gap-3">
-                        <span className="mono-label shrink-0 pt-0.5">2</span>
+                        <span className="srv-num w-4 shrink-0 text-(--base-06)">2</span>
                         <span>
                             <strong className="text-(--base-09)">Move the data and reconfigure.</strong>{' '}
                             Copy the objects to the new backend with whatever tool you like (rclone, aws s3 sync, rsync),
@@ -332,7 +333,7 @@ export default function StorageMigrationTab() {
                         </span>
                     </li>
                     <li className="flex gap-3">
-                        <span className="mono-label shrink-0 pt-0.5">3</span>
+                        <span className="srv-num w-4 shrink-0 text-(--base-06)">3</span>
                         <span>
                             <strong className="text-(--base-09)">Verify.</strong>{' '}
                             Run <em>Verify (full)</em> against the manifest you captured. A full verification hashes
@@ -341,7 +342,7 @@ export default function StorageMigrationTab() {
                         </span>
                     </li>
                 </ol>
-            </div>
+            </Section>
 
             {wizardOpen && (
                 <div className="modal-overlay animate-fade-in" onClick={() => !submitting && setWizardOpen(false)}>
@@ -354,7 +355,7 @@ export default function StorageMigrationTab() {
                         </div>
                         <div className="modal-body max-h-[70vh] overflow-y-auto space-y-5">
                             <div className="space-y-2">
-                                <div className="mono-label">1. Source</div>
+                                <div className="srv-label">1. Source</div>
                                 {migratable.map(d => (
                                     <ModeOption
                                         key={d.id}
@@ -367,7 +368,7 @@ export default function StorageMigrationTab() {
                             </div>
 
                             <div className="space-y-2">
-                                <div className="mono-label">2. Target</div>
+                                <div className="srv-label">2. Target</div>
                                 {/* The source's own note is the only place the operator learns
                                     this data set's caveat before deciding a target - whether
                                     that is WHY a namespace inside the shared Core file storage
@@ -379,9 +380,7 @@ export default function StorageMigrationTab() {
                                     operators most able to opt into a delete never saw the
                                     caveat that bears on it. */}
                                 {sourceSet?.note && (
-                                    <p className="alert alert-info text-xs flex items-start gap-1.5">
-                                        <Info size={12} className="mt-0.5 shrink-0" /> {sourceSet.note}
-                                    </p>
+                                    <Callout tone="info" icon={<Info size={14} />}>{sourceSet.note}</Callout>
                                 )}
                                 {/* supportsTargetConfig gates the ad-hoc-config shape only, not
                                     whether this source may ALSO pair row-to-row with another data
@@ -412,7 +411,7 @@ export default function StorageMigrationTab() {
                                         onChange={patch => setForm(f => ({ ...f, targetConfig: { ...f.targetConfig, ...patch } }))}
                                     />
                                 ) : targets.length === 0 ? (
-                                    <p className="alert alert-info text-xs">No other migratable data set is available as a target.</p>
+                                    <Callout tone="info" icon={<Info size={14} />}>No other migratable data set is available as a target.</Callout>
                                 ) : targets.map(d => (
                                     <ModeOption
                                         key={d.id}
@@ -427,7 +426,7 @@ export default function StorageMigrationTab() {
                                     not, so a warning placed at the bottom sits below the fold
                                     while Start stays clickable. This is the decision point. */}
                                 {sameLocationSuspected && (
-                                    <p className="alert alert-warning text-xs">
+                                    <Callout tone="warning" icon={<ShieldAlert size={14} />} role="alert">
                                         Source and target report the same backend location ({sourceSet?.backendLabel}). If
                                         they really are the same place, the copy would do nothing, a verification would
                                         pass trivially by comparing the target against its own manifest, and removing
@@ -435,7 +434,7 @@ export default function StorageMigrationTab() {
                                         compares the displayed labels and is not exhaustive - it can miss cases where two
                                         data sets alias the same storage under different labels, so the absence of this
                                         warning does not mean the locations are actually different.
-                                    </p>
+                                    </Callout>
                                 )}
                             </div>
 
@@ -447,22 +446,22 @@ export default function StorageMigrationTab() {
                                 below already says so, so the wizard was contradicting itself on
                                 the screen where the operator decides. */}
                             {form.targetKind === 'config' ? (
-                                <p className="alert alert-info text-xs">
+                                <Callout tone="info" icon={<Info size={14} />}>
                                     Order: copy, verify, switch the active config to the target, then delete the
                                     source objects named in the manifest if you opt in. The switch happens only
                                     after a passing verification, and if it fails nothing is deleted - the data
                                     stays in both places and the job panel tells you which config is live.
-                                </p>
+                                </Callout>
                             ) : (
-                                <p className="alert alert-info text-xs">
+                                <Callout tone="info" icon={<Info size={14} />}>
                                     Order: copy, then verify. This target is another data set, so the job repoints
                                     no config and deletes nothing; repoint the consuming subsystem yourself once
                                     the verification has passed.
-                                </p>
+                                </Callout>
                             )}
 
                             <div className="space-y-2">
-                                <div className="mono-label">3. Verification scope</div>
+                                <div className="srv-label">3. Verification scope</div>
                                 <ModeOption
                                     selected={form.verifyMode === 'full'}
                                     onClick={() => setForm(f => ({ ...f, verifyMode: 'full' }))}
@@ -476,38 +475,34 @@ export default function StorageMigrationTab() {
                                     desc="Hash every small object plus a bounded draw of the large ones. Missing and extra objects are still detected in full."
                                 />
                                 {form.verifyMode === 'sample' && (
-                                    <p className="alert alert-warning text-xs">
+                                    <Callout tone="warning" icon={<ShieldAlert size={14} />}>
                                         A sampled verification does not check every object, so it can never authorize deleting the source.
-                                    </p>
+                                    </Callout>
                                 )}
                             </div>
 
                             <div className="space-y-2">
-                                <div className="mono-label">4. After a passing verification</div>
+                                <div className="srv-label">4. After a passing verification</div>
                                 {!canOfferDelete ? (
-                                    <p className="alert alert-info text-xs">
+                                    <Callout tone="info" icon={<Info size={14} />}>
                                         Moving into another data set leaves the active config pointing at the source, so this
                                         job cannot delete it: nothing would repoint the subsystem that reads it. Migrate,
                                         verify, repoint the storage yourself, and remove the old backend afterwards.
-                                    </p>
+                                    </Callout>
                                 ) : (
                                     <>
-                                        <label className={`flex items-start gap-2 text-xs ${deleteSourceAllowed(form.verifyMode) ? 'text-(--base-07)' : 'text-(--base-05) cursor-not-allowed'}`}>
-                                            <input
-                                                type="checkbox"
-                                                className="checkbox mt-0.5"
-                                                checked={form.deleteSource}
-                                                disabled={!deleteSourceAllowed(form.verifyMode)}
-                                                onChange={e => setForm(f => ({ ...f, deleteSource: e.target.checked }))}
-                                            />
-                                            <span>Delete the source after a passing verification</span>
-                                        </label>
-                                        <p className="alert alert-warning text-xs">
+                                        <Checkbox
+                                            checked={form.deleteSource}
+                                            disabled={!deleteSourceAllowed(form.verifyMode)}
+                                            onChange={c => setForm(f => ({ ...f, deleteSource: c }))}
+                                            label="Delete the source after a passing verification"
+                                        />
+                                        <Callout tone="warning" icon={<ShieldAlert size={14} />} role="alert">
                                             This is irreversible and cannot be cancelled once it starts. Objects written to the source
                                             after the manifest was captured are not in it, are not copied to the target, and are not
                                             deleted - and this verification cannot see them at all, because it compares the target
                                             against the manifest. Quiesce the source before a delete run, or capture a fresh inventory first.
-                                        </p>
+                                        </Callout>
                                     </>
                                 )}
                             </div>
@@ -546,42 +541,49 @@ function DataSetRow({
 }) {
     const m = ds.latestManifest;
     return (
-        <div className="flex items-center justify-between gap-3 bg-(--base-03) border border-(--base-04) rounded-md px-3 py-2.5">
-            <div className="flex items-center gap-3 min-w-0">
-                <HardDrive size={16} className="text-(--primary-light) shrink-0" />
-                <div className="min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-sm font-medium text-(--base-09)">{ds.label}</span>
-                        {ds.migratable
-                            ? <span className="badge badge-accent">migratable</span>
-                            : <span className="badge badge-neutral">manual only</span>}
-                    </div>
-                    <div className="mono-label truncate">{ds.backendLabel}</div>
-                    <div className="text-[11px] text-(--base-06) mt-0.5">
-                        {m
-                            ? <>Last inventory: {m.objectCount.toLocaleString()} objects, {formatBytes(m.totalBytes)} ({fmtDateTime(m.capturedAt)})</>
-                            : <>Not yet inventoried</>}
-                    </div>
-                    {ds.note && (
-                        <div className="text-[11px] text-(--base-05) mt-0.5 flex items-start gap-1">
-                            <Info size={11} className="mt-0.5 shrink-0" /> {ds.note}
-                        </div>
-                    )}
+        <div role="listitem" className="app-row">
+            <HardDrive size={16} className="shrink-0 text-(--base-06)" />
+            <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-sm font-medium text-(--base-09)">{ds.label}</span>
+                    {ds.migratable
+                        ? <span className="badge badge-accent">migratable</span>
+                        : <span className="badge badge-neutral">manual only</span>}
                 </div>
+                <div className="srv-num mt-0.5 truncate text-xs text-(--base-06)">{ds.backendLabel}</div>
+                <div className="mt-0.5 text-xs text-(--base-06)">
+                    {m
+                        ? <>Last inventory: {m.objectCount.toLocaleString()} objects, {formatBytes(m.totalBytes)} ({fmtDateTime(m.capturedAt)})</>
+                        : <>Not yet inventoried</>}
+                </div>
+                {ds.note && (
+                    <div className="mt-0.5 flex items-start gap-1 text-xs text-(--base-05)">
+                        <Info size={12} className="mt-0.5 shrink-0" /> {ds.note}
+                    </div>
+                )}
             </div>
-            <div className="flex items-center gap-1.5 shrink-0">
+            <div className="flex shrink-0 items-center gap-1.5">
                 <button onClick={onManifest} className="btn btn-secondary btn-sm" disabled={busy || !ds.migratable} title="Read every object this data set lists once and record its checksum">
                     <FileSearch size={12} /> Inventory
                 </button>
-                <button onClick={onVerifyFull} className="btn btn-secondary btn-sm" disabled={busy || !m} title="Hash every object the last manifest lists against the target">
-                    Verify (full)
-                </button>
-                <button onClick={onVerifySample} className="btn btn-secondary btn-sm" disabled={busy || !m} title="Hash a bounded sample against the last manifest">
-                    Verify (sample)
-                </button>
-                <button onClick={onDownload} className="btn btn-secondary btn-sm" disabled={!m || downloading === m?.id} title="Download the manifest as CSV">
-                    {m && downloading === m.id ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
-                </button>
+                <Menu
+                    trigger={
+                        <button type="button" className="app-icon-btn" aria-label={`More actions for ${ds.label}`}>
+                            <MoreHorizontal size={16} />
+                        </button>
+                    }
+                    items={[
+                        { label: 'Verify (full)', icon: <ShieldAlert size={14} />, disabled: busy || !m, onSelect: onVerifyFull },
+                        { label: 'Verify (sample)', icon: <ShieldAlert size={14} />, disabled: busy || !m, onSelect: onVerifySample },
+                        { type: 'separator' },
+                        {
+                            label: m && downloading === m.id ? 'Downloading...' : 'Download manifest (CSV)',
+                            icon: m && downloading === m.id ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />,
+                            disabled: !m || downloading === m?.id,
+                            onSelect: onDownload,
+                        },
+                    ]}
+                />
             </div>
         </div>
     );
@@ -600,7 +602,7 @@ function PhaseBadge({ phase, stale }: { phase: StorageMigrationPhase; stale: boo
                         ? 'bg-(--error-ghost) text-(--error-light) border-(--error-border)'
                         : 'bg-(--accent-ghost) text-(--accent-light) border-(--accent)';
     return (
-        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono uppercase tracking-wide border ${cls}`}>
+        <span className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-medium ${cls}`}>
             {storageMigrationInProgress(phase) && !stale && <Loader2 size={10} className="animate-spin" />}
             {PHASE_LABEL[phase]}
         </span>
@@ -613,9 +615,9 @@ function JobPanel({ job, onCancel, cancelling }: { job: StorageMigrationJob; onC
     const inProgress = storageMigrationInProgress(job.phase);
 
     return (
-        <div className="card p-5 space-y-4">
+        <div className="srv-surface space-y-4 p-5">
             <div className="flex items-center justify-between">
-                <div className="mono-label">{job.kind} job</div>
+                <div className="text-sm font-semibold capitalize text-(--base-09)">{job.kind} job</div>
                 <PhaseBadge phase={job.phase} stale={job.stale} />
             </div>
 
@@ -670,26 +672,24 @@ function JobPanel({ job, onCancel, cancelling }: { job: StorageMigrationJob; onC
                             {job.objectsSkipped > 0 && <> &middot; {job.objectsSkipped.toLocaleString()} skipped</>}
                         </span>
                     </div>
-                    <div className="h-2 rounded-full bg-(--base-03) overflow-hidden">
+                    <div className="srv-meter-track" role="progressbar" aria-label="Migration progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(pct)}>
                         <div
-                            className={`h-full transition-all ${job.phase === 'done' ? 'bg-(--success-light)' : 'bg-(--accent)'}`}
-                            style={{ width: `${pct}%` }}
+                            className="srv-meter-fill"
+                            style={{ width: `${pct}%`, ...(job.phase === 'done' ? { background: 'var(--success-light)' } : {}) }}
                         />
                     </div>
                 </div>
             )}
 
             {job.error && (
-                <div className="text-xs text-(--error-light) bg-(--error-ghost) border border-(--error-border) rounded-md p-3">
-                    {job.error}
-                </div>
+                <Callout tone="error" icon={<CircleAlert size={14} />} role="alert">{job.error}</Callout>
             )}
 
             {/* A manifest job carries no verification report, so it must not be
                 labelled NOT VERIFIED and must not point at a report that is not
                 there. Only a run that actually produced one gets a verdict. */}
             {job.phase === 'done' && (
-                <div className="text-xs text-(--success-light) bg-(--success-ghost) border border-(--success-border) rounded-md p-3 space-y-1">
+                <div className="space-y-1 rounded-lg bg-(--success-ghost) p-3 text-xs text-(--success-light)">
                     <div className="flex items-center gap-1">
                         <CircleCheck size={12} />
                         {job.verify
@@ -714,8 +714,8 @@ function JobPanel({ job, onCancel, cancelling }: { job: StorageMigrationJob; onC
                     className="text-xs"
                     open={inProgress || job.phase === 'done' || job.phase === 'failed' || job.phase === 'cancelled'}
                 >
-                    <summary className="cursor-pointer text-(--base-06) mono-label">Log ({job.log.length})</summary>
-                    <pre className="mt-2 max-h-64 overflow-auto bg-(--base-01) border border-(--base-03) rounded-md p-3 font-mono text-[11px] text-(--base-06) whitespace-pre-wrap">
+                    <summary className="srv-label cursor-pointer">Log ({job.log.length})</summary>
+                    <pre className="mt-2 max-h-64 overflow-auto rounded-lg bg-(--base-01) p-3 font-mono text-[11px] text-(--base-06) whitespace-pre-wrap">
 {job.log.join('\n')}
                     </pre>
                 </details>
@@ -727,7 +727,7 @@ function JobPanel({ job, onCancel, cancelling }: { job: StorageMigrationJob; onC
                         Cancel job
                     </button>
                 ) : (
-                    <div className="flex flex-wrap items-center gap-2 bg-(--warning-ghost) border border-(--warning-border) rounded-md px-3 py-2">
+                    <div className="flex flex-wrap items-center gap-2 rounded-lg bg-(--warning-ghost) px-3 py-2">
                         <ShieldAlert size={14} className="text-(--warning-light)" />
                         <span className="text-xs text-(--base-07)">
                             Cancelling stops at the next object boundary. Nothing half-written is left behind, but any
@@ -748,7 +748,7 @@ function JobPanel({ job, onCancel, cancelling }: { job: StorageMigrationJob; onC
 function VerifyView({ report, dataSet }: { report: StorageVerifyReport; dataSet: string }) {
     return (
         <div className="space-y-2">
-            <div className={`text-xs ${report.mode === 'sample' ? 'alert alert-info' : 'text-(--base-06)'}`}>
+            <div className={`text-xs ${report.mode === 'sample' ? 'rounded-lg bg-(--accent-ghost) px-3.5 py-2.5 text-(--base-08)' : 'text-(--base-06)'}`}>
                 {/* "Examined", not "Checked": objectsChecked counts every object the
                     run attempted, including one reported missing or unreadable, so a
                     run where every object was unreadable still reaches 100% here while
@@ -762,7 +762,7 @@ function VerifyView({ report, dataSet }: { report: StorageVerifyReport; dataSet:
                     read as though nearly every byte had failed. The whole-manifest
                     share is still worth stating, so sample mode gets it as its own
                     sentence where its denominator is named. */}
-                <span className="font-mono uppercase tracking-wide mr-2">{verifyVerdictLabel(report)}</span>
+                <span className="mr-2 font-semibold text-(--base-09)">{verifyVerdictLabel(report)}</span>
                 Examined {report.objectsChecked.toLocaleString()} of {report.objectsInManifest.toLocaleString()} objects
                 ({formatPercent(report.checkedFraction)}); of those, {formatBytes(report.bytesChecked)} of {formatBytes(report.bytesExamined)}
                 {' '}({formatPercent(examinedBytesFraction(report))}) were successfully read. A missing or unreadable
@@ -771,15 +771,15 @@ function VerifyView({ report, dataSet }: { report: StorageVerifyReport; dataSet:
             </div>
 
             {dataSet.startsWith(MODPACKS_PREFIX) && (
-                <div className="alert alert-info text-xs">
+                <Callout tone="info" icon={<Info size={14} />}>
                     Modpack keys come from the database, so this verification covers database-referenced objects only.
                     An object in storage that no row points at is invisible to it.
-                </div>
+                </Callout>
             )}
 
             {report.problemsTotal > 0 && (
                 <details className="text-xs" open>
-                    <summary className="cursor-pointer text-(--base-06) mono-label">
+                    <summary className="srv-label cursor-pointer">
                         Problems ({report.problemsTotal.toLocaleString()}
                         {report.problems.length < report.problemsTotal && `, showing the first ${report.problems.length.toLocaleString()}`})
                     </summary>
@@ -857,18 +857,16 @@ function TargetConfigFields({
             {cfg.backend === 's3' && (
                 <div className="space-y-2">
                     <div className="flex flex-col gap-[5px]">
-                        <label className="mono-label">Storage connection</label>
-                        <select
-                            value={cfg.connectionId}
-                            onChange={e => onChange({ connectionId: Number(e.target.value) })}
-                            className="input-field w-full"
-                        >
-                            <option value={0}>Enter credentials manually</option>
-                            {connections.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                        </select>
+                        <label className="srv-label">Storage connection</label>
+                        <Select
+                            ariaLabel="Storage connection"
+                            value={String(cfg.connectionId)}
+                            onChange={v => onChange({ connectionId: Number(v) })}
+                            options={[{ value: '0', label: 'Enter credentials manually' }, ...connections.map(c => ({ value: String(c.id), label: c.name }))]}
+                        />
                     </div>
                     {cfg.connectionId > 0 ? (
-                        <p className="alert alert-info text-xs">Migrating to the saved connection. Its credentials are managed on the Storage Connections page.</p>
+                        <Callout tone="info" icon={<Info size={14} />}>Migrating to the saved connection. Its credentials are managed on the Storage Connections page.</Callout>
                     ) : (
                     <>
                     <Field label="Endpoint" value={cfg.s3Endpoint} onChange={v => onChange({ s3Endpoint: v })} placeholder="https://s3.example.com" />
@@ -877,11 +875,8 @@ function TargetConfigFields({
                     <Field label="Access key" value={cfg.s3AccessKey} onChange={v => onChange({ s3AccessKey: v })} />
                     <Field label="Secret key" value={cfg.s3SecretKey} onChange={v => onChange({ s3SecretKey: v })} type="password" autoComplete="new-password" />
                     <Field label="Prefix (optional)" value={cfg.s3Prefix} onChange={v => onChange({ s3Prefix: v })} placeholder="prod" />
-                    <label className="flex items-center gap-2 text-xs text-(--base-07)">
-                        <input type="checkbox"
-                            className="checkbox" checked={cfg.s3PathStyle} onChange={e => onChange({ s3PathStyle: e.target.checked })} />
-                        <span>Use path-style addressing (required by MinIO and some S3-compatible providers)</span>
-                    </label>
+                    <Checkbox checked={cfg.s3PathStyle} onChange={c => onChange({ s3PathStyle: c })}
+                        label="Use path-style addressing (required by MinIO and some S3-compatible providers)" />
                     </>
                     )}
                 </div>
@@ -890,14 +885,8 @@ function TargetConfigFields({
             {cfg.backend === 'path' && (
                 <div className="space-y-2">
                     <Field label="Absolute path" value={cfg.path} onChange={v => onChange({ path: v })} placeholder="/mnt/new-storage" />
-                    <label className="flex items-start gap-2 text-xs text-(--base-07)">
-                        <input type="checkbox" className="checkbox mt-0.5" checked={cfg.pathConfirmed} onChange={e => onChange({ pathConfirmed: e.target.checked })} />
-                        <span>
-                            I confirm this path is reachable from every Core instance and is not the same directory
-                            as the current one. The server checks that too, by device and inode rather than by name,
-                            so a symlink or a bind mount to the current location is refused.
-                        </span>
-                    </label>
+                    <Checkbox checked={cfg.pathConfirmed} onChange={c => onChange({ pathConfirmed: c })}
+                        label="I confirm this path is reachable from every Core instance and is not the same directory as the current one. The server checks that too, by device and inode rather than by name, so a symlink or a bind mount to the current location is refused." />
                 </div>
             )}
         </div>
@@ -918,14 +907,14 @@ function Field({
 }) {
     return (
         <label className="block">
-            <span className="mono-label">{label}</span>
+            <span className="srv-label">{label}</span>
             <input
                 type={type}
                 value={value}
                 placeholder={placeholder}
                 autoComplete={autoComplete}
                 onChange={e => onChange(e.target.value)}
-                className="mt-1 w-full bg-(--base-02) border border-(--base-04) rounded-md px-3 py-2 text-sm text-(--base-09) focus:border-(--accent) focus:shadow-[0_0_0_3px_rgba(112,72,200,0.15)] outline-none transition"
+                className="input-field mt-1 w-full"
             />
         </label>
     );
@@ -944,16 +933,11 @@ function ModeOption({
         <button
             type="button"
             onClick={onClick}
-            className={`w-full text-left rounded-md border px-3 py-2.5 transition flex items-start gap-3
-                ${selected
-                    ? 'border-(--accent) bg-(--accent)/8 shadow-[0_0_0_3px_rgba(112,72,200,0.10)]'
-                    : 'border-(--base-04) bg-(--base-03) hover:border-(--base-05)'}`}
+            className="set-sto-option"
+            aria-pressed={selected}
+            data-selected={selected ? '' : undefined}
         >
-            <span
-                aria-hidden
-                className={`mt-1 inline-flex w-3.5 h-3.5 rounded-full border-2 shrink-0
-                    ${selected ? 'border-(--accent) bg-(--accent)' : 'border-(--base-05) bg-transparent'}`}
-            />
+            <span aria-hidden className="set-sto-option-dot" />
             <span className="min-w-0">
                 <span className="block text-sm font-medium text-(--base-09)">{title}</span>
                 <span className="block text-xs text-(--base-06) mt-0.5 break-all">{desc}</span>

@@ -47,12 +47,10 @@ export default function NodeConnectionBanner() {
     // it might still come back on its own, which is exactly what decides
     // whether the reader should get up and go look at the machine.
     const down = state.tier === 'down';
-    const tone = down
-        ? 'bg-(--error-ghost) border-(--error)/40 text-(--error-light)'
-        : 'bg-(--warning-ghost) border-(--warning)/40 text-(--warning-light)';
+    const tone = down ? 'error' : 'warning';
 
     return (
-        <div role="status" className={`flex items-center gap-2.5 border-b px-4 py-2 text-sm ${tone}`}>
+        <div role="status" className="app-banner shrink-0 items-center" data-tone={tone}>
             <AlertTriangle size={15} className="shrink-0" aria-hidden="true" />
             <span className="min-w-0 flex-1">{state.text}</span>
             <Link

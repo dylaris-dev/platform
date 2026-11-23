@@ -2,15 +2,19 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { Image as ImageIcon, Upload, Trash2, MessageSquare, RotateCcw, Globe } from 'lucide-react';
+import { Image as ImageIcon, Upload, Trash2 } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import { getFileContent, saveFile, getEdgeMotd, setEdgeMotd, type EdgeMotdMode } from '@/lib/api';
 import { uploadFiles } from '@/lib/api/files';
 import { API_URL, getAuthHeader } from '@/lib/api/core';
 import { parseProperties, serializeProperties } from '@/lib/properties-codec';
 import { toast } from '@/components/ui/Toast';
+import Select from '@/components/ui/Select';
 import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
-import SettingsCard from '@/components/settings/SettingsCard';
+import Tooltip from '@/components/ui/Tooltip';
+import { Input } from '@ui-sdk/react/input';
+import { Textarea } from '@ui-sdk/react/textarea';
+import ConfigSection from '../ConfigSection';
 import {
     parseMotd, motdVisibleLengths, insertMotdCode,
     MOTD_COLORS, MOTD_STYLES, MOTD_MAX_LINES, MOTD_SOFT_LINE_LIMIT,
@@ -241,74 +245,79 @@ export default function ServerConfigDisplayPage() {
     if (!server) return null;
     if (!activeSubServer) {
         return (
-            <div className="max-w-2xl">
-                <div className="card p-5 text-sm text-(--base-07)">
-                    Install or switch to a sub-server in Setup before editing display options.
-                </div>
+            <div className="srv-surface flex flex-col items-center gap-2 px-6 py-14 text-center">
+                <ImageIcon size={32} className="text-(--base-05)" />
+                <p className="text-sm text-(--base-07)">Install or switch to a sub-server in Setup before editing display options.</p>
             </div>
         );
     }
 
     return (
-        <div className="max-w-3xl space-y-6">
-            {/* MOTD */}
-            <SettingsCard
+        <div className="flex flex-col gap-6">
+            <div className="srv-config-head">
+                <div className="min-w-0">
+                    <h1 className="srv-config-title">Display</h1>
+                    <p className="srv-config-desc">How this server looks in the multiplayer list: its message of the day and its icon.</p>
+                </div>
+            </div>
+
+            <ConfigSection
                 title="MOTD"
-                icon={MessageSquare}
                 form={{ dirty: motdDirty, saving: savingMotd, save: handleSaveMotd, discard: () => setMotd(motdInitial) }}
                 description="Two lines, shown in the multiplayer server list. Click a colour or a style to insert its code at the cursor; a colour also clears the styles before it, exactly as the game does. Requires a server restart to take effect."
             >
-                {/* Toolbar. The codes are typeable by hand and always were -
-                    this is so nobody has to remember that &o is italic. */}
+                {/* The codes are typeable by hand and always were; the toolbar
+                    is so nobody has to remember that &o is italic. */}
                 <div className="space-y-2">
-                    <div className="flex flex-wrap gap-1">
+                    <div className="flex flex-wrap gap-1.5">
                         {MOTD_COLORS.map(c => (
-                            <button
-                                key={c.code}
-                                type="button"
-                                onClick={() => applyCode(c.code)}
-                                disabled={!propertiesLoaded}
-                                title={`${c.name} (&${c.code})`}
-                                aria-label={c.name}
-                                className="w-7 h-7 rounded-sm border border-(--base-04) hover:scale-110 focus-visible:scale-110 transition-transform disabled:opacity-40 disabled:hover:scale-100"
-                                style={{ backgroundColor: c.hex }}
-                            />
+                            <Tooltip key={c.code} content={`${c.name} (&${c.code})`}>
+                                <button
+                                    type="button"
+                                    onClick={() => applyCode(c.code)}
+                                    disabled={!propertiesLoaded}
+                                    aria-label={c.name}
+                                    className="h-7 w-7 rounded-md transition-transform hover:scale-110 focus-visible:outline-none focus-visible:[box-shadow:var(--focus-ring)] active:scale-95 disabled:opacity-40 disabled:hover:scale-100"
+                                    style={{ backgroundColor: c.hex }}
+                                />
+                            </Tooltip>
                         ))}
                     </div>
-                    <div className="flex flex-wrap gap-1">
+                    <div className="flex flex-wrap gap-1.5">
                         {MOTD_STYLES.map(st => (
-                            <button
-                                key={st.code}
-                                type="button"
-                                onClick={() => applyCode(st.code)}
-                                disabled={!propertiesLoaded}
-                                title={`${st.name} (&${st.code}) — ${st.hint}`}
-                                className="px-2.5 py-1 rounded-md text-xs bg-(--base-02) border border-(--base-04) text-(--base-07) hover:bg-(--base-03) hover:text-(--base-09) transition-colors disabled:opacity-40"
-                            >
-                                <span
-                                    style={{
-                                        fontWeight: st.code === 'l' ? 700 : undefined,
-                                        fontStyle: st.code === 'o' ? 'italic' : undefined,
-                                        textDecoration: st.code === 'n' ? 'underline'
-                                            : st.code === 'm' ? 'line-through' : undefined,
-                                    }}
+                            <Tooltip key={st.code} content={`${st.name} (&${st.code}): ${st.hint}`}>
+                                <button
+                                    type="button"
+                                    onClick={() => applyCode(st.code)}
+                                    disabled={!propertiesLoaded}
+                                    className="btn btn-secondary btn-sm"
                                 >
-                                    {st.name}
-                                </span>
-                            </button>
+                                    <span
+                                        style={{
+                                            fontWeight: st.code === 'l' ? 700 : undefined,
+                                            fontStyle: st.code === 'o' ? 'italic' : undefined,
+                                            textDecoration: st.code === 'n' ? 'underline'
+                                                : st.code === 'm' ? 'line-through' : undefined,
+                                        }}
+                                    >
+                                        {st.name}
+                                    </span>
+                                </button>
+                            </Tooltip>
                         ))}
                     </div>
                 </div>
 
-                <textarea
+                <Textarea
                     ref={motdRef}
+                    aria-label="MOTD"
                     value={motd}
                     onChange={e => setMotd(e.target.value)}
                     placeholder="A Minecraft Server"
                     rows={2}
                     maxLength={240}
                     disabled={!propertiesLoaded}
-                    className="input-field font-mono text-sm resize-none w-full"
+                    className="input-field w-full resize-none font-mono text-sm"
                 />
 
                 {/* Counted WITHOUT the codes: they are not drawn, so counting
@@ -316,7 +325,7 @@ export default function ServerConfigDisplayPage() {
                     is not. */}
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
                     {lineLengths.map((n, i) => (
-                        <span key={i} className={n > MOTD_SOFT_LINE_LIMIT ? 'text-(--warning-light)' : 'text-(--base-06)'}>
+                        <span key={i} className={`srv-num ${n > MOTD_SOFT_LINE_LIMIT ? 'text-(--warning-light)' : 'text-(--base-06)'}`}>
                             Line {i + 1}: {n}/{MOTD_SOFT_LINE_LIMIT}
                         </span>
                     ))}
@@ -332,10 +341,10 @@ export default function ServerConfigDisplayPage() {
                     )}
                 </div>
 
-                {/* Preview pane — emulates the multiplayer server-list MOTD slot */}
+                {/* Preview pane: emulates the multiplayer server-list MOTD slot */}
                 <div>
-                    <div className="mono-label mb-1.5">Preview</div>
-                    <div className="bg-[#1a1a1a] border border-(--base-04) rounded-md p-3 font-mono text-sm leading-tight space-y-0.5">
+                    <div className="srv-label mb-1.5">Preview</div>
+                    <div className="space-y-0.5 rounded-lg bg-[#1a1a1a] p-3 font-mono text-sm leading-tight">
                         {previewLines.map((segments, i) => (
                             <div key={i}>
                                 {segments.map((seg, j) => (
@@ -348,36 +357,33 @@ export default function ServerConfigDisplayPage() {
                                             textDecoration: [seg.underline && 'underline', seg.strike && 'line-through'].filter(Boolean).join(' ') || 'none',
                                         }}
                                     >
-                                        {seg.text || ' '}
+                                        {seg.text || ' '}
                                     </span>
                                 ))}
                             </div>
                         ))}
                     </div>
                 </div>
+            </ConfigSection>
 
-            </SettingsCard>
-
-            {/* Server Icon. Uploads on pick, so it owns no form and shows no
-                save: there is nothing pending for a button to commit. */}
-            <SettingsCard
+            {/* Uploads on pick, so it owns no form and shows no save: there is
+                nothing pending for a button to commit. */}
+            <ConfigSection
                 title="Server icon"
-                icon={ImageIcon}
                 description={<>
                     64x64 PNG, max 1 MB. Stored as{' '}
-                    <code className="font-mono">{activeSubServer}/server-icon.png</code>.
+                    <code className="srv-num text-(--base-08)">{activeSubServer}/server-icon.png</code>.
                     Requires a server restart to take effect.
                 </>}
             >
-
                 <div className="flex items-center gap-4">
-                    <div className="w-16 h-16 rounded-md border border-(--base-04) bg-(--base-02) flex items-center justify-center overflow-hidden shrink-0">
+                    <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-(--base-03)">
                         {/* Cache-bust on every upload so the new icon shows immediately */}
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img
                             src={iconUrl}
                             alt="server icon"
-                            className="w-full h-full object-contain"
+                            className="h-full w-full object-contain"
                             onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
                             style={{ imageRendering: 'pixelated' }}
                         />
@@ -400,21 +406,21 @@ export default function ServerConfigDisplayPage() {
                             className="btn btn-secondary btn-sm"
                             disabled={uploadingIcon}
                         >
-                            <Upload size={13} />
+                            <Upload size={14} />
                             {uploadingIcon ? 'Uploading…' : 'Upload PNG'}
                         </button>
                         <button
                             type="button"
                             onClick={handleDeleteIcon}
-                            className="btn btn-secondary btn-sm"
+                            className="btn btn-ghost btn-sm"
                             disabled={uploadingIcon}
                         >
-                            <Trash2 size={13} className="text-(--error-light)" />
+                            <Trash2 size={14} className="text-(--error-light)" />
                             Remove
                         </button>
                     </div>
                 </div>
-            </SettingsCard>
+            </ConfigSection>
 
             {/* Edge MOTD (transitional). Only the gateway edge can answer a ping
                 for a server whose container is not running - it is the thing
@@ -422,58 +428,58 @@ export default function ServerConfigDisplayPage() {
                 listener at all while the server is down, so the whole card would
                 configure something nothing reads. */}
             {edgeMotdShown && (
-            <SettingsCard
-                title="Edge MOTD (transitional)"
-                icon={Globe}
-                form={{
-                    dirty: edgeMotdDirty,
-                    saving: savingEdgeMotd,
-                    save: handleSaveEdgeMotd,
-                    discard: () => { setEdgeMotdMode(edgeMotdInitial.mode); setEdgeMotdText(edgeMotdInitial.text); },
-                }}
-                description="What players see via the gateway edge while the server is down, starting, or migrating. Applies when gateway routing is enabled. Takes effect within a few seconds, no restart needed."
-            >
-                <div className="flex flex-col gap-[5px] max-w-xs">
-                    <label className="mono-label">Mode</label>
-                    <select
-                        value={edgeMotdMode}
-                        onChange={e => setEdgeMotdMode(e.target.value as EdgeMotdMode)}
-                        disabled={!edgeMotdLoaded}
-                        className="input-field text-sm"
-                    >
-                        <option value="auto">Auto (built-in status notice)</option>
-                        <option value="private">Auto, without host status</option>
-                        <option value="custom">Custom (your own message)</option>
-                        <option value="off">Off (no message, vanilla)</option>
-                    </select>
-                </div>
-
-                {edgeMotdMode === 'private' && (
-                    <p className="text-xs text-(--base-06)">
-                        Like Auto, but when the host is unreachable players see &quot;Server Offline&quot; instead of being told the host is offline.
-                    </p>
-                )}
-
-                {edgeMotdMode === 'custom' && (
-                    <div className="flex flex-col gap-[5px]">
-                        <label className="mono-label">Custom message</label>
-                        <input
-                            type="text"
-                            value={edgeMotdText}
-                            onChange={e => setEdgeMotdText(e.target.value)}
-                            placeholder="Be right back, the server is moving to a new home."
-                            maxLength={256}
+                <ConfigSection
+                    title="Edge MOTD (transitional)"
+                    form={{
+                        dirty: edgeMotdDirty,
+                        saving: savingEdgeMotd,
+                        save: handleSaveEdgeMotd,
+                        discard: () => { setEdgeMotdMode(edgeMotdInitial.mode); setEdgeMotdText(edgeMotdInitial.text); },
+                    }}
+                    description="What players see via the gateway edge while the server is down, starting, or migrating. Applies when gateway routing is enabled. Takes effect within a few seconds, no restart needed."
+                >
+                    <div className="flex max-w-xs flex-col gap-1.5">
+                        <span className="srv-label">Mode</span>
+                        <Select
+                            ariaLabel="Mode"
+                            value={edgeMotdMode}
+                            onChange={v => setEdgeMotdMode(v as EdgeMotdMode)}
                             disabled={!edgeMotdLoaded}
-                            className="input-field font-mono text-sm w-full"
+                            options={[
+                                { value: 'auto', label: 'Auto (built-in status notice)' },
+                                { value: 'private', label: 'Auto, without host status' },
+                                { value: 'custom', label: 'Custom (your own message)' },
+                                { value: 'off', label: 'Off (no message, vanilla)' },
+                            ]}
                         />
-                        <p className="text-xs text-(--base-06)">
-                            Shown while the server is down or migrating. Supports Minecraft colour codes (<code className="font-mono">&amp;a</code>, <code className="font-mono">&amp;l</code>).
-                        </p>
                     </div>
-                )}
-            </SettingsCard>
-            )}
 
+                    {edgeMotdMode === 'private' && (
+                        <p className="text-xs text-(--base-06)">
+                            Like Auto, but when the host is unreachable players see &quot;Server Offline&quot; instead of being told the host is offline.
+                        </p>
+                    )}
+
+                    {edgeMotdMode === 'custom' && (
+                        <div className="flex flex-col gap-1.5">
+                            <label htmlFor="edge-motd-text" className="srv-label">Custom message</label>
+                            <Input
+                                id="edge-motd-text"
+                                type="text"
+                                value={edgeMotdText}
+                                onChange={e => setEdgeMotdText(e.target.value)}
+                                placeholder="Be right back, the server is moving to a new home."
+                                maxLength={256}
+                                disabled={!edgeMotdLoaded}
+                                className="input-field w-full font-mono text-sm"
+                            />
+                            <p className="text-xs text-(--base-06)">
+                                Shown while the server is down or migrating. Supports Minecraft colour codes (<code className="srv-num">&amp;a</code>, <code className="srv-num">&amp;l</code>).
+                            </p>
+                        </div>
+                    )}
+                </ConfigSection>
+            )}
         </div>
     );
 }

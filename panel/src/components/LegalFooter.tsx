@@ -36,7 +36,7 @@ export default function LegalFooter({ className = '' }: { className?: string }) 
     }, []);
 
     return (
-        <footer className={`flex flex-wrap items-center justify-center gap-x-4 gap-y-1 px-4 py-1.5 text-[11px] text-(--base-06) ${className}`}>
+        <footer className={`flex flex-wrap items-center justify-center gap-x-4 gap-y-1 px-4 py-2 text-[11px] text-(--base-05) ${className}`}>
             {base && (
                 <nav aria-label="Legal" className="flex items-center gap-4">
                     {LINKS.map((l) => (

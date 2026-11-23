@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+import { Popover, PopoverContent, PopoverTrigger } from '@ui-sdk/react/popover';
 import Link from 'next/link';
 import { Bell, AlertTriangle, ExternalLink, Inbox, CheckCheck, Trash2 } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
@@ -111,7 +112,6 @@ export default function NotificationsDropdown() {
     const [items, setItems] = useState<Notification[]>([]);
     const [inbox, setInbox] = useState<InboxNotification[]>([]);
     const [unread, setUnread] = useState(0);
-    const wrapRef = useRef<HTMLDivElement>(null);
 
     const isAdmin = user?.isAdmin ?? false;
 
@@ -154,16 +154,6 @@ export default function NotificationsDropdown() {
         if (open) refreshInbox();
     }, [open, refreshInbox]);
 
-    // Click-outside closes the dropdown — matches the profile dropdown's
-    // behavior in the same navbar.
-    useEffect(() => {
-        const handler = (e: MouseEvent) => {
-            if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
-        };
-        document.addEventListener('click', handler);
-        return () => document.removeEventListener('click', handler);
-    }, []);
-
     const handleClickItem = async (n: InboxNotification) => {
         if (!n.readAt) {
             await markNotificationRead(n.id);
@@ -188,36 +178,28 @@ export default function NotificationsDropdown() {
     const hasChecks = items.length > 0;
 
     return (
-        <div ref={wrapRef} className="relative mr-2">
-            <button
-                type="button"
-                onClick={() => setOpen(o => !o)}
+        <div className="relative">
+          <Popover open={open} onOpenChange={setOpen}>
+            <PopoverTrigger
+                render={<button type="button" />}
                 title={hasItems ? `${badgeCount} unread` : 'No notifications'}
                 // The badge count was the button's whole accessible name, so a
                 // screen reader announced "1" with nothing to say what it counted.
                 aria-label={hasItems ? `Notifications, ${badgeCount} unread` : 'Notifications'}
-                aria-expanded={open}
-                aria-haspopup="true"
-                className={`relative flex items-center justify-center w-9 h-9 rounded-md transition-colors border ${
-                    open
-                        ? 'bg-(--base-03) border-(--base-04) text-(--base-09)'
-                        : hasItems
-                            ? 'bg-(--accent-ghost) text-(--accent-light) border-(--accent-border) hover:bg-(--accent-ghost)/80'
-                            : 'text-(--base-07) hover:bg-(--base-04)/50 hover:text-(--base-09) border-transparent'
-                }`}
+                className={`app-icon-btn relative ${hasItems ? 'text-(--base-09)' : ''}`}
             >
-                <Bell size={18} />
+                <Bell size={16} />
                 {hasItems && (
                     <span className="absolute -top-1 -right-1 min-w-[16px] h-[16px] px-1 rounded-full bg-(--accent-light) text-(--base-00) text-[10px] font-mono font-bold flex items-center justify-center leading-none">
                         {badgeCount}
                     </span>
                 )}
-            </button>
+            </PopoverTrigger>
 
-            {open && (
-                <div className="dropdown-menu right-0 mt-3 w-96 animate-fade-in origin-top-right">
-                    <div className="px-4 py-2 border-b border-(--base-03) flex items-center justify-between">
-                        <div className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06)">
+            <PopoverContent side="bottom" align="end" sideOffset={12} aria-label="Notifications" className="ui-popup w-96 max-w-[calc(100vw-1rem)]">
+                <div>
+                    <div className="px-4 py-2.5 flex items-center justify-between">
+                        <div className="text-sm font-medium text-(--base-09)">
                             Notifications
                         </div>
                         {unread > 0 && (
@@ -234,8 +216,8 @@ export default function NotificationsDropdown() {
 
                     {/* System checks — admin only */}
                     {isAdmin && hasChecks && (
-                        <div className="border-b border-(--base-03)">
-                            <div className="px-4 py-1.5 text-[9px] font-mono uppercase tracking-[0.08em] text-(--base-06) bg-(--base-02)">
+                        <div>
+                            <div className="px-4 py-1.5 srv-label">
                                 System
                             </div>
                             <div className="py-1">
@@ -303,7 +285,8 @@ export default function NotificationsDropdown() {
                         </div>
                     ) : null}
                 </div>
-            )}
+            </PopoverContent>
+          </Popover>
         </div>
     );
 }

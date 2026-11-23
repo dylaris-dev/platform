@@ -22,6 +22,9 @@ import {
 import { useInfra } from './context';
 import { liveStatus } from './livePlayers';
 import { fmtDate, fmtDateTime, fmtTime } from '@/lib/time';
+import Segmented from '@/components/ui/Segmented';
+import HoverTip from '@/components/ui/Tooltip';
+import EmptyState from '@/components/ui/EmptyState';
 
 /**
  * The long-term record.
@@ -61,20 +64,14 @@ function formatTick(iso: string, range: string): string {
 
 function Unavailable({ reason, message }: { reason?: MetricsUnavailableReason; message?: string }) {
     return (
-        <div className="card p-8 flex flex-col items-center text-center gap-3">
-            <div className="w-10 h-10 rounded-md bg-(--base-03) flex items-center justify-center">
-                <BarChart3 size={18} className="text-(--base-06)" />
-            </div>
-            <p className="text-sm text-(--base-08) max-w-md">
-                {message ?? 'There is nothing recorded yet.'}
-            </p>
-            {reason === 'disabled' && (
-                <p className="text-xs text-(--base-06) max-w-md">
-                    Recording is off by default. Nothing that happened before it is switched on can be
-                    recovered afterwards, so the sooner it is on, the further back the record goes.
-                </p>
-            )}
-        </div>
+        <EmptyState
+            tone={reason === 'unavailable' ? 'error' : 'neutral'}
+            icon={<BarChart3 size={20} />}
+            title={message ?? 'There is nothing recorded yet.'}
+            description={reason === 'disabled'
+                ? 'Recording is off by default. Nothing that happened before it is switched on can be recovered afterwards, so the sooner it is on, the further back the record goes.'
+                : undefined}
+        />
     );
 }
 
@@ -91,23 +88,18 @@ function HeadlineChip({ h, onOpen }: { h: MetricHeadline; onOpen?: () => void })
     const body = (
         <>
             <span className="text-(--base-06)">{h.label}</span>
-            <span className="font-mono tabular-nums text-(--base-09)">{formatMetric(h.value, h.unit)}</span>
+            <span className="srv-num text-(--base-09)">{formatMetric(h.value, h.unit)}</span>
         </>
     );
-    return onOpen ? (
-        <button
-            type="button"
-            onClick={onOpen}
-            title={h.help ?? `${howLabel(h.how)} over the period. Opens its chart.`}
-            className="inline-flex items-center gap-2 rounded-md border border-(--base-03) bg-(--base-02) px-2.5 py-1 text-xs transition-colors hover:border-(--base-05) focus-visible:outline-2 focus-visible:outline-(--accent)"
-        >
+    const chip = onOpen ? (
+        <button type="button" onClick={onOpen} className="srv-chip h-7 gap-2">
             {body}
         </button>
     ) : (
-        <span title={h.help} className="inline-flex items-center gap-2 rounded-md border border-(--base-03) bg-(--base-02) px-2.5 py-1 text-xs">
-            {body}
-        </span>
+        <span className="srv-chip h-7 gap-2">{body}</span>
     );
+    const tip = onOpen ? (h.help ?? `${howLabel(h.how)} over the period. Opens its chart.`) : h.help;
+    return tip ? <HoverTip content={tip}>{chip}</HoverTip> : chip;
 }
 
 /** Nodes, customers and accounts, at a glance. From the overview, not the record. */
@@ -115,13 +107,15 @@ function FleetRow() {
     const { fleet } = useInfra();
     if (!fleet) return null;
     return (
-        <section aria-label="Fleet" className="card p-4">
-            <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-x-4 gap-y-3">
+        <section aria-label="Fleet" className="srv-surface p-5">
+            <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-x-4 gap-y-4">
                 {fleetTiles(fleet).map(t => (
-                    <div key={t.label} className="flex flex-col gap-0.5 min-w-0">
-                        <span className="mono-label truncate">{t.label}</span>
-                        <span className="text-lg font-semibold tabular-nums text-(--base-09) leading-tight">{t.value}</span>
-                        <span className="text-[11px] text-(--base-06) truncate" title={t.sub}>{t.sub}</span>
+                    <div key={t.label} className="flex flex-col gap-1 min-w-0">
+                        <span className="srv-label truncate">{t.label}</span>
+                        <span className="srv-num text-xl font-medium text-(--base-09) leading-tight">{t.value}</span>
+                        <HoverTip content={t.sub}>
+                            <span className="text-xs text-(--base-06) truncate">{t.sub}</span>
+                        </HoverTip>
                     </div>
                 ))}
             </div>
@@ -139,30 +133,30 @@ function LivePlayersTile() {
     // the label ages even while polls fail.
     const status = liveStatus(playersAt, Math.max(playersCheckedAt, playersAt ?? 0));
     return (
-        <div className="card p-5 flex items-start justify-between gap-4">
-            <div className="flex flex-col gap-1 min-w-0 flex-1 max-w-md">
-                <span className="mono-label">Players online now</span>
-                <span className="font-display text-4xl font-bold tabular-nums text-(--base-09) leading-none">
+        <div className="srv-surface p-5 flex items-start justify-between gap-4">
+            <div className="flex flex-col gap-1.5 min-w-0 flex-1 max-w-md">
+                <span className="srv-label">Players online now</span>
+                <span className="srv-num text-4xl font-medium text-(--base-09) leading-none">
                     {playersOnline ?? '-'}
                 </span>
-                <span className="text-[11px] text-(--base-06)">
+                <span className="text-xs text-(--base-06)">
                     Added up from each running server&apos;s own player count.
                 </span>
                 {playersServers.length > 0 && (
                     <details className="group mt-2">
-                        <summary className="inline-flex items-center gap-1 cursor-pointer select-none list-none rounded-sm text-xs text-(--accent-light) hover:text-(--base-09) focus-visible:outline-2 focus-visible:outline-(--accent) [&::-webkit-details-marker]:hidden">
-                            <ChevronDown size={12} className="transition-transform group-open:rotate-180 motion-reduce:transition-none" aria-hidden />
+                        <summary className="inline-flex items-center gap-1 cursor-pointer select-none list-none rounded-sm text-xs text-(--accent-light) hover:text-(--base-09) focus-visible:outline-none focus-visible:[box-shadow:var(--focus-ring)] [&::-webkit-details-marker]:hidden">
+                            <ChevronDown size={14} className="transition-transform group-open:rotate-180 motion-reduce:transition-none" aria-hidden />
                             {playersServers.length} {playersServers.length === 1 ? 'server' : 'servers'} with players
                         </summary>
-                        <ul className="mt-2 max-h-56 overflow-y-auto rounded-md border border-(--base-03) bg-(--base-02) divide-y divide-(--base-03)">
+                        <ul className="mt-2 max-h-56 overflow-y-auto rounded-lg bg-(--base-03) p-1">
                             {playersServers.map(s => (
                                 <li key={s.serverId}>
                                     <Link
                                         href={`/servers/${s.serverId}`}
-                                        className="flex items-center justify-between gap-4 px-3 py-1.5 text-sm hover:bg-(--base-03) focus-visible:bg-(--base-03) focus-visible:outline-none"
+                                        className="flex items-center justify-between gap-4 rounded-md px-3 py-1.5 text-sm hover:bg-(--base-04) focus-visible:outline-none focus-visible:[box-shadow:var(--focus-ring)]"
                                     >
                                         <span className="truncate text-(--base-08)">{s.name}</span>
-                                        <span className="font-mono tabular-nums text-(--base-09) shrink-0">{s.players}</span>
+                                        <span className="srv-num text-(--base-09) shrink-0">{s.players}</span>
                                     </Link>
                                 </li>
                             ))}
@@ -171,13 +165,13 @@ function LivePlayersTile() {
                 )}
             </div>
             <div className="flex flex-col items-end gap-2 shrink-0">
-                <div className="w-9 h-9 rounded-md bg-(--accent-ghost) text-(--accent-light) border border-(--accent-border) flex items-center justify-center">
-                    <Users size={18} />
-                </div>
-                <span className="flex items-center gap-1.5 text-[11px] text-(--base-07)">
+                <span className="flex size-9 items-center justify-center rounded-full bg-(--base-03) text-(--base-06)" aria-hidden="true">
+                    <Users size={16} />
+                </span>
+                <span className="flex items-center gap-1.5 text-xs text-(--base-07)">
                     <span
                         aria-hidden
-                        className={`status-dot ${status.live ? 'bg-(--success-light) shadow-[0_0_8px_var(--success-light)]' : 'bg-(--warning-light)'}`}
+                        className={`status-dot ${status.live ? 'bg-(--success-light)' : 'bg-(--warning-light)'}`}
                     />
                     {status.label}
                 </span>
@@ -209,32 +203,32 @@ function MetricChart({ info, series, range, headline }: ChartProps) {
     const peak = data.reduce((m, d) => Math.max(m, d.max), 0);
 
     return (
-        <div className="card p-4 flex flex-col gap-3">
+        <div className="srv-surface p-5 flex flex-col gap-4">
             <div className="flex items-start justify-between gap-3">
                 <div className="flex flex-col gap-0.5 min-w-0">
                     <span className="text-sm font-medium text-(--base-09)">{info.label}</span>
                     {info.help && (
-                        <span className="text-[11px] text-(--base-06) max-w-md leading-snug">{info.help}</span>
+                        <span className="text-xs text-(--base-06) max-w-md leading-snug">{info.help}</span>
                     )}
                     {headline?.help && (
-                        <span className="text-[11px] text-(--base-06) max-w-md leading-snug">{headline.help}</span>
+                        <span className="text-xs text-(--base-06) max-w-md leading-snug">{headline.help}</span>
                     )}
                 </div>
                 {/* The summary's figure where there is one: it is reduced over
                     the raw record, the chart's own over its buckets. */}
                 {headline ? (
                     <div className="text-right shrink-0">
-                        <div className="text-[11px] text-(--base-06)">{howLabel(headline.how)}</div>
-                        <div className="font-display text-2xl font-bold tabular-nums text-(--base-09) leading-tight">
+                        <div className="text-xs text-(--base-06)">{howLabel(headline.how)}</div>
+                        <div className="srv-num text-2xl font-medium text-(--base-09) leading-tight">
                             {formatMetric(headline.value, headline.unit)}
                         </div>
                     </div>
                 ) : (
                     <div className="text-right shrink-0">
-                        <div className="text-[11px] text-(--base-06)">
+                        <div className="text-xs text-(--base-06)">
                             {info.kind === 'counter' ? 'Total' : 'Peak'}
                         </div>
-                        <div className="text-sm font-mono tabular-nums text-(--base-08)">
+                        <div className="srv-num text-sm text-(--base-08)">
                             {formatMetric(
                                 info.kind === 'counter'
                                     ? data.reduce((s, d) => s + d.v, 0)
@@ -260,7 +254,7 @@ function MetricChart({ info, series, range, headline }: ChartProps) {
                                     <stop offset="100%" stopColor="var(--accent)" stopOpacity={0.02} />
                                 </linearGradient>
                             </defs>
-                            <CartesianGrid strokeDasharray="3 3" stroke="var(--base-03)" vertical={false} />
+                            <CartesianGrid stroke="var(--base-03)" vertical={false} />
                             <XAxis
                                 dataKey="t"
                                 tickFormatter={v => formatTick(v, range)}
@@ -455,25 +449,10 @@ export default function StatisticsPanel() {
             <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex flex-col gap-1">
                     <CoverageLine coverage={coverage} />
-                    {error && <span className="text-xs text-(--error-light)">{error}</span>}
+                    {error && <span role="alert" className="text-xs text-(--error-light)">{error}</span>}
                 </div>
                 <div className="flex items-center gap-2">
-                    <div className="flex items-center gap-0.5 bg-(--base-02) border border-(--base-03) rounded-lg p-1">
-                        {RANGES.map(r => (
-                            <button
-                                key={r.id}
-                                onClick={() => setRange(r.id)}
-                                aria-pressed={range === r.id}
-                                className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${
-                                    range === r.id
-                                        ? 'bg-(--accent) text-white shadow-sm'
-                                        : 'text-(--base-07) hover:text-(--base-09)'
-                                }`}
-                            >
-                                {r.label}
-                            </button>
-                        ))}
-                    </div>
+                    <Segmented options={RANGES.map(r => ({ id: r.id, label: r.label }))} value={range} onChange={setRange} ariaLabel="Period" />
                     <button onClick={() => onExport('csv')} disabled={exporting} className="btn btn-secondary btn-sm">
                         {exporting ? <RefreshCw size={14} className="animate-spin" /> : <Download size={14} />}
                         CSV
@@ -485,20 +464,7 @@ export default function StatisticsPanel() {
                 </div>
             </div>
 
-            <nav aria-label="Metric groups" className="flex flex-wrap items-center gap-0.5 bg-(--base-02) border border-(--base-03) rounded-lg p-1 w-fit">
-                {groups.map(g => (
-                    <button
-                        key={g}
-                        onClick={() => setGroup(g)}
-                        aria-pressed={group === g}
-                        className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
-                            group === g ? 'bg-(--accent) text-white shadow-sm' : 'text-(--base-07) hover:text-(--base-09)'
-                        }`}
-                    >
-                        {g}
-                    </button>
-                ))}
-            </nav>
+            <Segmented options={groups.map(g => ({ id: g, label: g }))} value={group} onChange={setGroup} ariaLabel="Metric groups" className="flex-wrap w-fit max-w-full" />
 
             {chartsLoading ? (
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
@@ -514,7 +480,7 @@ export default function StatisticsPanel() {
 
             {placed.rest.length > 0 && (
                 <div className="flex flex-col gap-2">
-                    <span className="mono-label">Other groups, this period</span>
+                    <span className="srv-label">Other groups, this period</span>
                     <div className="flex flex-wrap gap-2">
                         {placed.rest.map(h => {
                             const g = groupOf[h.metric];
@@ -524,8 +490,8 @@ export default function StatisticsPanel() {
                 </div>
             )}
 
-            <p className="flex items-start gap-2 text-[11px] text-(--base-06)">
-                <Info size={12} className="mt-0.5 shrink-0" />
+            <p className="flex items-start gap-2 text-xs text-(--base-06)">
+                <Info size={14} className="mt-0.5 shrink-0" aria-hidden="true" />
                 <span>
                     Totals are summed across the period and peaks are the highest single reading in it.
                     A gap in a line means nothing was recorded then, which is not the same as a zero.

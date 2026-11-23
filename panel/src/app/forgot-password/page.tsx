@@ -29,8 +29,8 @@ export default function ForgotPasswordPage() {
 
     if (sent) {
         return (
-            <div className="min-h-screen flex items-center justify-center p-4 bg-(--background)">
-                <div className="card w-full max-w-md p-8 text-center space-y-4">
+            <div className="app-auth">
+                <div className="app-auth-card text-center space-y-4">
                     <MailCheck size={32} className="mx-auto text-(--accent-light)" />
                     <h1 className="font-display text-xl">Check your inbox</h1>
                     <p className="text-sm text-(--base-07)">
@@ -49,8 +49,8 @@ export default function ForgotPasswordPage() {
     }
 
     return (
-        <div className="min-h-screen flex items-center justify-center p-4 bg-(--background)">
-            <div className="card w-full max-w-md p-8">
+        <div className="app-auth">
+            <div className="app-auth-card">
                 <h1 className="text-4xl text-center mb-2 font-logo tracking-widest select-none">
                     <span className="text-(--accent-light)">D</span>
                     <span className="text-(--base-09)">ylaris</span>
@@ -63,7 +63,7 @@ export default function ForgotPasswordPage() {
 
                 <form onSubmit={handleSubmit} className="space-y-4">
                     <div className="flex flex-col gap-[5px]">
-                        <label className="input-label">Email address</label>
+                        <label className="srv-label">Email address</label>
                         <input
                             required
                             type="email"

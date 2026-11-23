@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from 'react';
-import { Plus, Trash2, Pencil, X, Cloud, Save, Cable, Database, Loader2 } from 'lucide-react';
+import { Plus, Trash2, Pencil, X, Cloud, Save, Cable, Database, Loader2, MoreHorizontal, TriangleAlert } from 'lucide-react';
 import {
     StorageConnection,
     StorageConnectionConfig,
@@ -9,7 +9,6 @@ import {
     listStorageConnections, createStorageConnection, updateStorageConnection, deleteStorageConnection,
     testStorageConnection, testDraftStorageConnection,
 } from '@/lib/api';
-import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import { toast } from '@/components/ui/Toast';
 import Switch from '@/components/ui/Switch';
@@ -20,6 +19,11 @@ import {
 } from '@/lib/connectionTest';
 import { TestConnectionButton, ConnectionTestNote } from '@/components/ui/ConnectionTest';
 import ModalPanel from '@/components/ui/ModalPanel';
+import SettingsCard from '@/components/settings/SettingsCard';
+import Menu from '@/components/ui/Menu';
+import EmptyState from '@/components/ui/EmptyState';
+import { RowList, Row } from '@/components/ui/RowList';
+import '@/styles/settings-storage.css';
 
 // editing holds a StorageConnection plus a transient secret. The list never
 // carries the secret (secretSet only); a save sends secretAccessKey only when
@@ -143,6 +147,7 @@ const HELP: HelpEntry[] = [
 export default function StorageConnectionsTab() {
     const [connections, setConnections] = useState<StorageConnection[]>([]);
     const [loading, setLoading] = useState(true);
+    const [loadError, setLoadError] = useState('');
     const [editing, setEditing] = useState<EditingConnection | null>(null);
     const [saving, setSaving] = useState(false);
     const [testingId, setTestingId] = useState<number | null>(null);
@@ -159,7 +164,8 @@ export default function StorageConnectionsTab() {
     const reload = useCallback(async () => {
         setLoading(true);
         const res = await listStorageConnections();
-        if (res.success && res.connections) setConnections(res.connections);
+        if (res.success && res.connections) { setConnections(res.connections); setLoadError(''); }
+        else if (!res.success) setLoadError('Could not load the storage connections.');
         setLoading(false);
     }, []);
 
@@ -258,12 +264,7 @@ export default function StorageConnectionsTab() {
         }
     };
 
-    if (loading) return (
-        <div className="max-w-3xl space-y-6">
-            <SkeletonHeader />
-            <SkeletonCard height="h-64" />
-        </div>
-    );
+    if (loading) return <SettingsPage title="Storage connections" icon={Database} loading>{null}</SettingsPage>;
 
     return (
         <SettingsPage
@@ -272,60 +273,85 @@ export default function StorageConnectionsTab() {
             description="Define an S3 connection once, by name, and reuse it across core storage, modpacks and backups. The secret is encrypted at rest and never leaves the server."
         >
 
-            <div className="card card-pad">
-                <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-sm font-display font-semibold text-(--accent-light)">Connections</h3>
+            <SettingsCard
+                title="Connections"
+                bodySpacing="none"
+                actions={
                     <button onClick={() => { setEditing({ ...EMPTY }); draftTest.clear(); }} className="btn btn-primary btn-sm">
                         <Plus size={12} /> Add connection
                     </button>
-                </div>
-
-                {connections.length === 0 ? (
-                    <p className="alert alert-info text-xs">No storage connections yet. Add one to reuse the same S3 credentials in several places.</p>
+                }
+            >
+                {loadError ? (
+                    <EmptyState
+                        bare
+                        tone="error"
+                        icon={<TriangleAlert size={20} />}
+                        title="Storage connections could not be loaded"
+                        description={loadError}
+                        action={<button type="button" onClick={() => { reload(); }} className="btn btn-secondary btn-sm">Retry</button>}
+                    />
+                ) : connections.length === 0 ? (
+                    <EmptyState
+                        bare
+                        icon={<Cloud size={20} />}
+                        title="No storage connections yet"
+                        description="Add one to reuse the same S3 credentials in several places."
+                    />
                 ) : (
-                    <div className="space-y-2">
+                    <RowList label="Storage connections">
                         {connections.map(c => (
-                            <div key={c.id} className="flex items-center justify-between gap-3 bg-(--base-03) border border-(--base-04) rounded-md px-3 py-2.5">
-                                <div className="flex items-center gap-3 min-w-0">
-                                    <Cloud size={16} className="text-(--accent-light) shrink-0" />
-                                    <div className="min-w-0">
-                                        <div className="flex items-center gap-2">
-                                            <span className="text-sm font-medium text-(--base-09)">{c.name}</span>
-                                            {!c.secretSet && <span className="badge badge-warning">no secret</span>}
-                                        </div>
-                                        <div className="mono-label">{c.provider}{c.config.bucket ? ` · ${c.config.bucket}` : ''}</div>
-                                    </div>
-                                </div>
-                                <div className="flex items-center gap-1.5">
-                                    <button
-                                        onClick={() => handleTest(c.id)}
-                                        className="btn btn-secondary btn-sm disabled:opacity-40 disabled:cursor-not-allowed"
-                                        disabled={testingId !== null}
-                                        aria-busy={testingId === c.id}
-                                    >
-                                        {testingId === c.id
-                                            ? <Loader2 size={12} className="animate-spin" />
-                                            : <Cable size={12} />}
-                                        {testingId === c.id ? 'Testing…' : 'Test'}
-                                    </button>
-                                    <button onClick={() => { setEditing({ ...c }); draftTest.clear(); }} className="btn btn-secondary btn-sm">
-                                        <Pencil size={12} /> Edit
-                                    </button>
-                                    <button onClick={() => handleDelete(c.id)} className="btn btn-danger btn-sm" aria-label={`Delete ${c.name}`}>
-                                        <Trash2 size={12} />
-                                    </button>
-                                </div>
-                            </div>
+                            <Row
+                                key={c.id}
+                                leading={<Cloud size={16} className="text-(--accent-light)" />}
+                                title={
+                                    <>
+                                        {c.name}
+                                        {!c.secretSet && <span className="badge badge-warning ml-2 align-middle">no secret</span>}
+                                    </>
+                                }
+                                meta={`${c.provider}${c.config.bucket ? ` · ${c.config.bucket}` : ''}`}
+                                actions={
+                                    <>
+                                        <button
+                                            onClick={() => handleTest(c.id)}
+                                            className="btn btn-secondary btn-sm disabled:opacity-40 disabled:cursor-not-allowed"
+                                            disabled={testingId !== null}
+                                            aria-busy={testingId === c.id}
+                                        >
+                                            {testingId === c.id
+                                                ? <Loader2 size={12} className="animate-spin" />
+                                                : <Cable size={12} />}
+                                            {testingId === c.id ? 'Testing…' : 'Test'}
+                                        </button>
+                                        <Menu
+                                            trigger={
+                                                <button type="button" className="app-icon-btn" aria-label={`Actions for ${c.name}`}>
+                                                    <MoreHorizontal size={16} />
+                                                </button>
+                                            }
+                                            items={[
+                                                { label: 'Edit', icon: <Pencil size={14} />, onSelect: () => { setEditing({ ...c }); draftTest.clear(); } },
+                                                { type: 'separator' },
+                                                { label: 'Delete', icon: <Trash2 size={14} />, danger: true, onSelect: () => handleDelete(c.id) },
+                                            ]}
+                                        />
+                                    </>
+                                }
+                            />
                         ))}
-                    </div>
+                    </RowList>
                 )}
 
                 {rowResult && (
-                    <div className="mt-3">
-                        <ConnectionTestNote result={rowResult.result} />
+                    <div className="set-sto-notes">
+                        <div className="space-y-2">
+                            <div className="srv-label">{connections.find(c => c.id === rowResult.id)?.name ?? 'Connection'}</div>
+                            <ConnectionTestNote result={rowResult.result} />
+                        </div>
                     </div>
                 )}
-            </div>
+            </SettingsCard>
 
             {editing && (
                 <div className="modal-overlay animate-fade-in" onClick={() => setEditing(null)}>

@@ -1,3 +1,4 @@
+@layer ui-sdk;
 @import "tailwindcss";
 @source "../../../packages/ui-filebrowser/src";
 
@@ -554,6 +555,9 @@ input[type="number"] {
 .settings-card {
   display: flex;
   flex-direction: column;
+  /* Same surface as the server dashboard cards: a background step, no outline. */
+  border: none;
+  border-radius: var(--radius-lg);
 }
 .settings-card-header {
   display: flex;
@@ -561,15 +565,14 @@ input[type="number"] {
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 12px 16px;
-  padding: 16px 20px;
-  border-bottom: 1px solid var(--base-03);
+  padding: 20px 24px 0;
 }
 .settings-card-title {
   display: flex;
   align-items: center;
   gap: 8px;
   font-family: var(--font-display);
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 600;
   color: var(--base-09);
 }
@@ -590,15 +593,14 @@ input[type="number"] {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  padding: 20px;
+  padding: 20px 24px 24px;
 }
 /* For a body whose child brings its own layout (a table, a list, a grid). */
 .settings-card-body-plain {
   display: block;
 }
 .settings-card-footer {
-  padding: 13px 20px;
-  border-top: 1px solid var(--base-03);
+  padding: 0 24px 20px;
   font-size: 12px;
   line-height: 1.55;
   color: var(--base-06);
@@ -850,6 +852,63 @@ main:has(.modal-overlay, [aria-modal="true"]) {
   background: var(--base-03);
   color: var(--base-09);
 }
+/* A UI SDK popup (Select, Menu, Tooltip, Popover) sits in the top layer and is
+   positioned by the SDK, so it takes the dropdown look without .dropdown-menu's
+   position:absolute. */
+.ui-popup {
+  /* Popups render at the end of <body>, so they no longer inherit the size of
+     the form they open from; pin it to the inputs' size. */
+  font-size: 13px;
+  background: var(--base-02);
+  border: 1px solid var(--base-03);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-lg);
+  transform-origin: var(--transform-origin);
+  transition: opacity 0.1s ease, transform 0.1s ease;
+}
+.ui-popup[data-starting-style],
+.ui-popup[data-ending-style] {
+  opacity: 0;
+  transform: scale(0.97);
+}
+.ui-tooltip {
+  padding: 4px 8px;
+  border-radius: var(--radius-md);
+  border-color: var(--base-04);
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--base-09);
+  max-width: 280px;
+  pointer-events: none;
+}
+[data-slot="select-item-text"] mark {
+  background: transparent;
+  color: var(--accent-light);
+}
+.dropdown-item[hidden] {
+  display: none;
+}
+.dropdown-item[data-highlighted] {
+  background: var(--base-03);
+  color: var(--base-09);
+}
+.dropdown-item[data-disabled] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.dropdown-item-danger {
+  color: var(--error-light);
+}
+.dropdown-separator {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--base-03);
+}
+@media (prefers-reduced-motion: reduce) {
+  .ui-popup {
+    transition: none;
+  }
+}
 .dropdown-label {
   font-family: var(--font-mono);
   font-size: 9px;
@@ -899,13 +958,14 @@ main:has(.modal-overlay, [aria-modal="true"]) {
   outline: none;
   box-shadow: var(--focus-ring);
 }
-.toggle-track:not(:disabled):hover.toggle-track-off {
+.toggle-track:not(:disabled):not([data-disabled]):hover.toggle-track-off {
   background: var(--base-04);
 }
-.toggle-track:not(:disabled):hover.toggle-track-on {
+.toggle-track:not(:disabled):not([data-disabled]):hover.toggle-track-on {
   background: var(--success);
 }
-.toggle-track:disabled {
+.toggle-track:disabled,
+.toggle-track[data-disabled] {
   opacity: 0.45;
   cursor: not-allowed;
 }
@@ -919,7 +979,9 @@ main:has(.modal-overlay, [aria-modal="true"]) {
 .checkbox {
   appearance: none;
   -webkit-appearance: none;
+  display: inline-block;
   flex-shrink: 0;
+  padding: 0;
   width: 16px;
   height: 16px;
   margin: 0;
@@ -930,21 +992,23 @@ main:has(.modal-overlay, [aria-modal="true"]) {
   position: relative;
   transition: background 0.12s ease, border-color 0.12s ease;
 }
-.checkbox:not(:disabled):hover {
+.checkbox:not(:disabled):not([data-disabled]):hover {
   border-color: var(--base-06);
   background: var(--base-02);
 }
-.checkbox:checked {
+.checkbox:checked,
+.checkbox[data-checked] {
   background: var(--accent);
   border-color: var(--accent);
 }
-.checkbox:not(:disabled):checked:hover {
+.checkbox:not(:disabled):not([data-disabled]):is(:checked, [data-checked]):hover {
   background: var(--accent-light);
   border-color: var(--accent-light);
 }
 /* The tick is two borders of an empty box, rotated. Cheaper than an inline SVG
    and it inherits the label's color automatically. */
-.checkbox:checked::after {
+.checkbox:checked::after,
+.checkbox[data-checked]::after {
   content: '';
   position: absolute;
   /* Centred by measurement, not by arithmetic: rendered at 6x against a
@@ -962,7 +1026,8 @@ main:has(.modal-overlay, [aria-modal="true"]) {
   outline: none;
   box-shadow: var(--focus-ring);
 }
-.checkbox:disabled {
+.checkbox:disabled,
+.checkbox[data-disabled] {
   opacity: 0.45;
   cursor: not-allowed;
 }
@@ -1023,7 +1088,7 @@ main:has(.modal-overlay, [aria-modal="true"]) {
   cursor: pointer;
   border-radius: var(--radius-sm) var(--radius-sm) 0 0;
 }
-.tab:not(.tab-active):not(:disabled):hover {
+.tab:not(.tab-active):not(:disabled):not([data-disabled]):hover {
   color: var(--base-09);
   background: var(--base-02);
 }
@@ -1035,7 +1100,8 @@ main:has(.modal-overlay, [aria-modal="true"]) {
   color: var(--accent-light);
   border-bottom-color: var(--accent);
 }
-.tab:disabled {
+.tab:disabled,
+.tab[data-disabled] {
   opacity: 0.45;
   cursor: not-allowed;
 }
@@ -1057,7 +1123,8 @@ main:has(.modal-overlay, [aria-modal="true"]) {
   vertical-align: middle;
 }
 .help-trigger:hover,
-.help-trigger[aria-expanded='true'] {
+.help-trigger[aria-expanded='true'],
+.help-trigger[data-open] {
   color: var(--accent-light);
   background: var(--accent-ghost);
 }
@@ -1066,8 +1133,6 @@ main:has(.modal-overlay, [aria-modal="true"]) {
   box-shadow: var(--focus-ring);
 }
 .help-pop {
-  position: fixed;
-  z-index: 70;
   max-width: 320px;
   background: var(--base-02);
   border: 1px solid var(--base-04);
@@ -1233,6 +1298,269 @@ main:has(.modal-overlay, [aria-modal="true"]) {
 
 .toast-copyable { position:relative; max-width:min(640px,calc(100vw - 40px)); transition:opacity .18s linear; animation:none; }
 .toast-timer { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; overflow:visible; }
-.toast-timer rect { fill:none; stroke-width:2px; stroke-dasharray:1; stroke-dashoffset:0; transition:stroke-dashoffset 40ms linear; }
+.toast-timer rect { fill:none; stroke-width:2px; stroke-dasharray:1; stroke-dashoffset:0; animation:toast-timer linear forwards; }
+@keyframes toast-timer { to { stroke-dashoffset:1; } }
+/* The SDK pauses the lifetime while the pointer or focus is anywhere in the region. */
+[data-slot="toast-region"]:is(:hover,:focus-within) .toast-timer rect { animation-play-state:paused; }
+.toast-copyable[data-ending-style] { opacity:0; }
 
-@media(prefers-reduced-motion:reduce) { .toast-copyable,.toast-timer rect { transition:none; } .toast-copyable { opacity:1!important; } .toast-timer { display:none; } }
+@media(prefers-reduced-motion:reduce) { .toast-copyable { transition:none; } .toast-timer { display:none; } }
+
+/* ── Server dashboard (shell + overview) ──
+   Surfaces separate by background step instead of borders: page --base-01,
+   cards --base-02, raised/hover --base-03. */
+.srv-page {
+  /* Padding grows past 1400px of content so wide screens centre it while the
+     scrollbar stays at the window edge; a plain max-width wrapper would break
+     the h-full pages, which size against this box. */
+  padding: 16px max(16px, calc((100% - 1400px) / 2));
+}
+@media (min-width: 768px) {
+  .srv-page { padding: 32px max(32px, calc((100% - 1400px) / 2)); }
+}
+.srv-surface {
+  background: var(--base-02);
+  border-radius: var(--radius-lg);
+}
+.srv-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--base-06);
+}
+.srv-num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+.srv-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 9999px;
+  background: var(--base-02);
+  color: var(--base-07);
+  font-size: 12px;
+  white-space: nowrap;
+}
+a.srv-chip, button.srv-chip {
+  cursor: pointer;
+  transition: background 0.15s ease-out, color 0.15s ease-out;
+}
+a.srv-chip:hover, button.srv-chip:hover {
+  background: var(--base-03);
+  color: var(--base-09);
+}
+.srv-nav-link {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 44px;
+  padding: 0 14px;
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  color: var(--base-07);
+  border-radius: var(--radius-md);
+  transition: color 0.15s ease-out, background 0.15s ease-out;
+}
+.srv-nav-link::after {
+  content: "";
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: 0;
+  height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: transparent;
+  transition: background 0.15s ease-out;
+}
+.srv-nav-link:hover { color: var(--base-09); background: var(--base-02); }
+.srv-nav-link:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.srv-nav-link[aria-current="page"] { color: var(--accent-light); }
+.srv-nav-link[aria-current="page"]::after { background: var(--accent); }
+.srv-nav-link[aria-disabled="true"] { opacity: 0.4; cursor: not-allowed; }
+.srv-nav-link[aria-disabled="true"]:hover { background: transparent; color: var(--base-07); }
+.srv-callout {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: var(--radius-lg);
+  background: var(--base-02);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--base-08);
+}
+.srv-callout[data-tone="warning"] { background: var(--warning-ghost); }
+.srv-callout[data-tone="error"] { background: var(--error-ghost); }
+.srv-callout[data-tone="info"] { background: var(--accent-ghost); }
+.srv-meter-track {
+  display: flex;
+  height: 6px;
+  width: 100%;
+  overflow: hidden;
+  border-radius: 9999px;
+  background: var(--base-03);
+}
+.srv-meter-fill {
+  height: 100%;
+  border-radius: 9999px;
+  background: var(--primary-light);
+  transition: width 0.3s ease-out;
+}
+.srv-meter-fill[data-tone="warning"] { background: var(--warning); }
+.srv-meter-fill[data-tone="error"] { background: var(--error-light); }
+.srv-drawer {
+  background: var(--base-01);
+  border-left: 1px solid var(--base-03);
+  box-shadow: var(--shadow-xl);
+}
+.srv-drawer-backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.5); }
+@media (prefers-reduced-motion: reduce) {
+  .srv-nav-link, .srv-nav-link::after, .srv-meter-fill, a.srv-chip, button.srv-chip { transition: none; }
+}
+.srv-gutter {
+  padding-inline: max(16px, calc((100% - 1400px) / 2));
+}
+@media (min-width: 768px) {
+  .srv-gutter { padding-inline: max(32px, calc((100% - 1400px) / 2)); }
+}
+
+/* ── App shell and shared page frames (app-*) ──
+   Same language as the server dashboard (.srv-*): surfaces by background step,
+   violet only for the active item and the primary action. */
+.app-nav-link {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 56px;
+  padding: 0 12px;
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  color: var(--base-07);
+  transition: color 0.15s ease-out, background 0.15s ease-out;
+}
+.app-nav-link::after {
+  content: "";
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 0;
+  height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: transparent;
+  transition: background 0.15s ease-out;
+}
+.app-nav-link:hover { color: var(--base-09); background: var(--base-02); }
+.app-nav-link:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.app-nav-link[aria-current="page"] { color: var(--accent-light); }
+.app-nav-link[aria-current="page"]::after { background: var(--accent); }
+.app-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 32px;
+  min-width: 32px;
+  padding: 0 8px;
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--base-07);
+  background: transparent;
+  cursor: pointer;
+  transition: color 0.15s ease-out, background 0.15s ease-out;
+}
+.app-icon-btn:hover { color: var(--base-09); background: var(--base-03); }
+.app-icon-btn:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.app-icon-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.app-icon-btn[aria-current="page"], .app-icon-btn[data-popup-open], .app-icon-btn[aria-expanded="true"] {
+  color: var(--base-09);
+  background: var(--base-03);
+}
+.app-icon-btn[aria-current="page"] { color: var(--accent-light); }
+/* Vertical grouped navigation (settings): the side counterpart of .app-nav-link. */
+.app-side-group {
+  padding: 0 12px 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--base-06);
+}
+.app-side-link {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 6px 12px;
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--base-07);
+  transition: color 0.15s ease-out, background 0.15s ease-out;
+}
+.app-side-link:hover { color: var(--base-09); background: var(--base-02); }
+.app-side-link:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.app-side-link[aria-current="page"] { color: var(--accent-light); background: var(--base-02); }
+/* Full-width notice strip above the shell (maintenance, billing, storage, node). */
+.app-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 16px;
+  background: var(--base-02);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--base-08);
+}
+@media (min-width: 768px) {
+  .app-banner { padding-inline: 32px; }
+}
+.app-banner[data-tone="warning"] { background: var(--warning-ghost); color: var(--warning-light); }
+.app-banner[data-tone="error"] { background: var(--error-ghost); color: var(--error-light); }
+.app-banner[data-tone="info"] { background: var(--accent-ghost); color: var(--accent-light); }
+/* Quiet rows: no borders, hover fill. A row with data-interactive is a link or button. */
+.app-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  transition: background 0.15s ease-out;
+}
+.app-row:hover { background: var(--base-03); }
+.app-row[data-interactive] { cursor: pointer; }
+.app-row[data-interactive]:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.app-row[aria-current="page"] { background: var(--base-03); }
+/* Page-level scroll area for pages that are not the server dashboard. */
+.app-page {
+  padding: 16px max(16px, calc((100% - 1400px) / 2));
+}
+@media (min-width: 768px) {
+  .app-page { padding: 32px max(32px, calc((100% - 1400px) / 2)); }
+}
+/* Centred card for the pages before sign-in. */
+.app-auth {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+  background: var(--base-00);
+}
+.app-auth-card {
+  width: 100%;
+  max-width: 420px;
+  padding: 32px;
+  border-radius: var(--radius-lg);
+  background: var(--base-02);
+}
+@media (prefers-reduced-motion: reduce) {
+  .app-nav-link, .app-nav-link::after, .app-icon-btn, .app-side-link, .app-row { transition: none; }
+}
+/* Inside the compact cluster popup labels always show (there is no wide row to save). */
+.app-cluster-popup .app-label { display: inline; }
+.app-cluster-popup .app-icon-btn { justify-content: flex-start; }

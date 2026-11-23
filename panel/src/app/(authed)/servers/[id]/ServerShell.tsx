@@ -4,61 +4,38 @@ import { toast as notifyToast } from '@/components/ui/Toast';
 
 import React, { useState, useEffect, useRef } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import Link from 'next/link';
-import CopyText from '@/components/ui/CopyText';
+import { AlertTriangle, Upload, X } from 'lucide-react';
 import {
-    Pencil, SlidersHorizontal, AlertTriangle, Zap, Plus,
-    HardDrive, MoveHorizontal, RefreshCw, Globe, Link2, ChevronDown, Move, Clock, Undo2, X, ShieldCheck,
-} from 'lucide-react';
-import { DynamicIcon } from '@/lib/icons';
-import {
-    deleteServer, updateServerName, updateServerResources, serverPower,
-    getServerStoragePath, migrateServerStorage, getServerRoutes, setServerAutoMove,
-    getInstallCooldown, moveServer, transferServer, setServerDemo, getMigrationStatus, cancelMigration, type MigrationStatus, type Node,
-    GatewayRoute, StoragePathInfo, TabPermissions, getPlacementSettings,
+    deleteServer, serverPower, getServerRoutes, getInstallCooldown, getMigrationStatus, cancelMigration,
+    type MigrationStatus, GatewayRoute, TabPermissions,
 } from '@/lib/api';
-import { getNodes } from '@/lib/api/resources';
 import { useAppData } from '@/lib/AppDataContext';
 import RoutesModal from '@/components/RoutesModal';
-import ServerPortsCard from '@/components/ServerPortsCard';
-import CpuPinningControl from '@/components/CpuPinningControl';
 import { useServerUploadLock } from '@/lib/uploadManager';
-import { Upload } from 'lucide-react';
 import { listServerTabs, type ServerTab } from '@/lib/api/serverTabs';
 import { tabRunsOnActiveSubServer } from '@/lib/tabProxy';
 import { systemEvents, ROUTES_CHANGED_EVENT } from '@/lib/systemEvents';
-import { useBusy } from '@/lib/useBusy';
-import { nodeConnectivity, dotFor, connLabel } from '@/lib/connectivity';
 import { useNow } from '@/lib/useNow';
 import { useRouteId } from '@/lib/routeParams';
 import ModalPanel from '@/components/ui/ModalPanel';
-import ResourceSlider from '@/components/ResourceSlider';
-import { DISK_SCALE_GB, cpuScale, ramScale } from '@/lib/resourceSlider';
-import { formatMB } from '@/lib/format';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
-import { nodeLabelById, nodePickerLabel } from '@/lib/nodeLabel';
-import { planResourceChange, diskGBToMB, joinFields, type ResourceValues } from '@/lib/resourceChanges';
-import { advancedStartsOpen, portsEditable } from '@/lib/resourceDialog';
-import {
-    MAX_RAM_PADDING_MB, RAM_PADDING_HELP, inheritedRamPadding, parseRamPaddingInput, ramPaddingPatch, resetLabel,
-} from '@/lib/ramPadding';
-import { MEMORY_GUARD_HELP, MEMORY_GUARD_OPTIONS, memoryGuardPatch, oomDismissKey, showOomBanner } from '@/lib/memoryGuard';
-import type { MemoryGuardAction } from '@/lib/api/types';
+import { oomDismissKey, showOomBanner } from '@/lib/memoryGuard';
 import PowerControls from '@/components/server/PowerControls';
-import { advancePending, startPending, POWER_COOLDOWN_MS, type PendingPower, type PowerAction } from '@/lib/powerControls';
+import ServerHeader from '@/components/server/ServerHeader';
+import ServerNav, { type NavTab } from '@/components/server/ServerNav';
+import ServerSettingsDrawer, { TERMINAL_PHASES } from '@/components/server/ServerSettingsDrawer';
+import Callout from '@/components/server/Callout';
+import { ShownStatusContext } from '@/components/server/ShownStatus';
+import { advancePending, shownStatus, startPending, POWER_COOLDOWN_MS, type PendingPower, type PowerAction } from '@/lib/powerControls';
 import { fmtDateTime } from '@/lib/time';
-import { pinMismatch } from '@/lib/cpuset';
-import { loaderName } from '@/lib/modFit';
+import { nodeConnectivity, connLabel } from '@/lib/connectivity';
 import { domainAccess, primaryAddress } from '@/lib/serverDomainStatus';
 import { trustedDomains, useServerDomains } from '@/lib/serverDomainsStore';
 
-// The server detail chrome: the header, the power controls, the tab strip and
-// every dialog hanging off them. It WAS layout.tsx, and moved here so that
+// The server detail chrome: header, power controls, tab row, banners and the
+// "Server settings" drawer. It WAS layout.tsx, and moved here so that
 // layout.tsx can be a server component - generateStaticParams cannot be
 // exported from a client one, and the static export requires it.
-// Statuses that get a badge beside the name: the server is between states.
-const TRANSITIONAL_STATUSES = ['starting', 'stopping', 'restarting', 'installing', 'migrating'];
-
 export default function ServerShell({ children }: { children: React.ReactNode }) {
     const paramId = useRouteId('servers');
     const pathname = usePathname();
@@ -75,56 +52,21 @@ export default function ServerShell({ children }: { children: React.ReactNode })
     const directIpPort = selectedServer ? `${selectedServer.nodeAddress}:${selectedServer.hostPort}` : '';
     const directDomain = primaryAddress(trustedDomains(domainsState, now), directIpPort);
 
-    const [isEditingName, setIsEditingName] = useState(false);
-    const [savingResources, runSaveResources] = useBusy();
-    const [editedName, setEditedName] = useState('');
-
     const [showDeletePopup, setShowDeletePopup] = useState(false);
     const [deleteError, setDeleteError] = useState('');
     const [deleteWarning, setDeleteWarning] = useState('');
     const [deleteCountdown, setDeleteCountdown] = useState(5);
 
-    const [showEditResourcesPopup, setShowEditResourcesPopup] = useState(false);
-    const [editRam, setEditRam] = useState(0);
-    const [editCpuLimit, setEditCpuLimit] = useState(0);
-    const [editDiskLimit, setEditDiskLimit] = useState(0);
-    const [editCpusetCpus, setEditCpusetCpus] = useState('');
-    const [editCpuMode, setEditCpuMode] = useState<'shared' | 'auto' | 'manual'>('shared');
-    const [editResourcesAdvancedOpen, setEditResourcesAdvancedOpen] = useState(false);
-    const [editHostPort, setEditHostPort] = useState(0);
-    const [editContainerPort, setEditContainerPort] = useState(25565);
-    const [editAutoMove, setEditAutoMove] = useState(false);
-    // RAM headroom override as typed (empty = inherit) and what inheriting
-    // resolves to; null until the node and global defaults are loaded.
-    const [editPaddingText, setEditPaddingText] = useState('');
-    const [paddingInherited, setPaddingInherited] = useState<{ value: number; source: 'node' | 'global' } | null>(null);
-    const [editMemoryGuard, setEditMemoryGuard] = useState<MemoryGuardAction>('off');
+    // The "Server settings" drawer (admins) or its transfer-only cut (BYON owners).
+    const [settingsOpen, setSettingsOpen] = useState(false);
+    const [settingsAdvanced, setSettingsAdvanced] = useState(false);
     // The lastCrashAt of the OOM banner this viewer dismissed (per browser).
     const [oomDismissed, setOomDismissed] = useState<string | null>(null);
 
-    // Manual move-to-node (admin only). Node list is loaded lazily when the
-    // Edit Resources modal opens. migrationStatus is polled while a move is
-    // in flight (server status === 'migrating' or right after a manual move).
-    const [moveNodes, setMoveNodes] = useState<Node[]>([]);
-    // Every node the placement scope returned, the current one included, so the
-    // move source and a running migration's endpoints can be named.
-    const [placementNodes, setPlacementNodes] = useState<Node[]>([]);
-    const [moveTargetNodeId, setMoveTargetNodeId] = useState<number>(0);
-    const [moveBusy, setMoveBusy] = useState(false);
-    const [moveMsg, setMoveMsg] = useState('');
-    const [demoMsg, setDemoMsg] = useState('');
-    const [resourcesMsg, setResourcesMsg] = useState('');
-    const [nameMsg, setNameMsg] = useState('');
+    // Polled while a move is in flight (server status === 'migrating', or right
+    // after a manual move seeded it from the drawer).
     const [migrationStatus, setMigrationStatus] = useState<MigrationStatus | null>(null);
     const [cancellingMigration, setCancellingMigration] = useState(false);
-    // Dedicated transfer dialog for BYON owners (admins use the Resources popup).
-    const [showTransferPopup, setShowTransferPopup] = useState(false);
-
-    const [storageCurrentPath, setStorageCurrentPath] = useState('');
-    const [storagePaths, setStoragePaths] = useState<StoragePathInfo[]>([]);
-    const [storageMigrateTarget, setStorageMigrateTarget] = useState('');
-    const [storageMigrating, setStorageMigrating] = useState(false);
-    const [storageMigrateMsg, setStorageMigrateMsg] = useState('');
 
     // Power action this browser sent and is waiting on, per server id. It ends
     // only on an outcome or a refusal; see lib/powerControls.
@@ -134,24 +76,11 @@ export default function ServerShell({ children }: { children: React.ReactNode })
     // When start/stop/restart unlock again after a wait ended, per server id.
     const [powerCooldownUntil, setPowerCooldownUntil] = useState<Record<number, number>>({});
     const [killCooldown, setKillCooldown] = useState(false);
-    const [showKillConfirm, setShowKillConfirm] = useState(false);
-
-
-    // Brief "copied" feedback for the owner-id click-to-copy in the info bar.
-    const [ownerCopied, setOwnerCopied] = useState(false);
-
-    // Admins bypass the install cooldown on the backend, but we still warn
-    // them client-side so a Kill mid world-generation isn't a silent footgun.
-    // Holds the action the admin is trying to perform; null = no prompt.
-    const [pendingCooldownAction, setPendingCooldownAction] = useState<'start' | 'stop' | 'restart' | 'kill' | null>(null);
 
     useEffect(() => {
         if (!serverId) return;
         try { setOomDismissed(localStorage.getItem(oomDismissKey(serverId))); } catch { setOomDismissed(null); }
     }, [serverId]);
-
-    // Auto-clear power error after a few seconds so it doesn't stick on screen.
-
 
     const [serverRoutes, setServerRoutes] = useState<GatewayRoute[]>([]);
     const [showRoutesModal, setShowRoutesModal] = useState(false);
@@ -235,7 +164,6 @@ export default function ServerShell({ children }: { children: React.ReactNode })
     // even on page-reload mid-move. A manual Move kicks it off optimistically
     // by seeding migrationStatus with phase 'starting'. Polling stops on any
     // terminal phase so we don't spin forever on a finished/failed move.
-    const TERMINAL_PHASES = ['done', 'failed', 'failed_post_cutover', 'aborted_players', 'cancelled', 'none'];
     useEffect(() => {
         const active = selectedServer?.status === 'migrating' ||
             (migrationStatus !== null && !TERMINAL_PHASES.includes(migrationStatus.phase));
@@ -314,8 +242,6 @@ export default function ServerShell({ children }: { children: React.ReactNode })
     }
 
     const isPendingSetup = selectedServer.status === 'pending_setup';
-    const isDiskFull = selectedServer.status === 'disk_full';
-    const isServerOffline = ['stopped', 'offline', 'pending_setup', 'disk_full'].includes(selectedServer.status);
     // While the server is migrating to another node, ALL power actions are locked
     // (including for admins) so a user can't fight the move. Admins additionally
     // get a cancel/rollback button (see the header) that aborts a pre-cutover move.
@@ -329,27 +255,6 @@ export default function ServerShell({ children }: { children: React.ReactNode })
     // FileBrowser stays navigable on purpose so the user can watch progress.
     const uploadLocked = useServerUploadLock(selectedServer.uuid);
 
-    const handleStartEditName = () => {
-        setEditedName(selectedServer.name || '');
-        setIsEditingName(true);
-    };
-    const handleSaveName = async () => {
-        const trimmed = editedName.replace(/\s{2,}/g, ' ').trim();
-        if (!trimmed || !/^[a-zA-Z0-9\-+ ]{1,50}$/.test(trimmed)) { setIsEditingName(false); return; }
-        setNameMsg('');
-        // A refused rename (name already taken, no permission) used to close the
-        // editor and let refreshServers put the old name back, which reads as the
-        // panel losing the edit rather than the server declining it.
-        const res = await updateServerName(selectedServer.id, trimmed);
-        if (res?.success === false) {
-            setNameMsg(res.message || res.error || 'The name could not be changed.');
-            setIsEditingName(false);
-            return;
-        }
-        setIsEditingName(false);
-        refreshServers();
-    };
-
     const handleOpenDeletePopup = () => {
         setDeleteCountdown(5);
         setShowDeletePopup(true);
@@ -360,17 +265,15 @@ export default function ServerShell({ children }: { children: React.ReactNode })
             });
         }, 1000);
     };
-    // The result was discarded, and this is the button where that costs the most:
-    // on a refusal the popup closed and the router navigated to /servers anyway,
-    // so a delete that never happened looked exactly like one that did - the
-    // server is simply still in the list. Core refuses here for a real reason
-    // (deleting servers needs elevated permissions, 403), not only on faults.
+    // Core refuses a delete for a real reason (deleting servers needs elevated
+    // permissions, 403), so a refusal must not close the popup and navigate as
+    // if it had worked.
     //
     // Core also answers with a `warning` when the row went but the node was never
-    // told to remove the container. That is not a failure, so it must not read as
-    // one - but it says data is left behind on a machine, so the modal stays open
-    // until the operator has acknowledged it rather than navigating away with a
-    // toast the route change would take with it.
+    // told to remove the container. That is not a failure, but it says data is
+    // left behind on a machine, so the modal stays open until the operator has
+    // acknowledged it rather than navigating away with a toast the route change
+    // would take with it.
     const handleDelete = async () => {
         setDeleteError('');
         const res: any = await deleteServer(selectedServer.id);
@@ -393,170 +296,17 @@ export default function ServerShell({ children }: { children: React.ReactNode })
         router.push('/servers');
     };
 
-    const handleOpenEditResources = async () => {
-        setEditRam(selectedServer.memory || 1024);
-        setEditCpuLimit(selectedServer.cpuLimit || 0);
-        setEditDiskLimit((selectedServer.diskLimit || 0) / 1024);
-        setEditHostPort(selectedServer.hostPort || 0);
-        setEditContainerPort(selectedServer.containerPort || 25565);
-        setEditCpuMode(selectedServer.cpuPinningMode || 'shared');
-        // Manual cpuset comes from the dedicated cpuset field; fall back to the
-        // legacy cpusetCpus so older servers still show their pinning.
-        setEditCpusetCpus(selectedServer.cpuset || (selectedServer as any).cpusetCpus || '');
-        setEditAutoMove(!!(selectedServer as any).autoMove);
-        setEditPaddingText(selectedServer.ramPaddingMb != null ? String(selectedServer.ramPaddingMb) : '');
-        setPaddingInherited(null);
-        setEditMemoryGuard(selectedServer.memoryGuardAction ?? 'off');
-        setEditResourcesAdvancedOpen(advancedStartsOpen({
-            paddingText: selectedServer.ramPaddingMb != null ? String(selectedServer.ramPaddingMb) : '',
-            memoryGuardAction: selectedServer.memoryGuardAction,
-            canEditPorts,
-            hostPort: selectedServer.hostPort || 0,
-            containerPort: selectedServer.containerPort || 25565,
-        }));
-        setStorageCurrentPath('');
-        setStoragePaths([]);
-        setStorageMigrateTarget('');
-        setStorageMigrateMsg('');
-        setMoveMsg('');
-        setMoveTargetNodeId(0);
-        setShowEditResourcesPopup(true);
+    const isOwner = selectedServer.role !== 'invited' && selectedServer.role !== 'inherited' && selectedServer.role !== 'demo';
+    // 'demo' is a read-only viewer role (showcase server the user does not own),
+    // so it is NOT an owner: keep it out of every owner-gated control.
+    const isDemoView = selectedServer.role === 'demo';
+    const perms = selectedServer.permissions;
+    const shown = shownStatus(selectedServer.status, pendingPower[selectedServer.id] ?? null, now);
 
-        if (user?.isAdmin && selectedServer.effectiveRamPaddingMb !== undefined) {
-            Promise.all([getPlacementSettings(), getNodes()]).then(([ps, ns]) => {
-                const node: Node | undefined = ns?.success && Array.isArray(ns.nodes)
-                    ? ns.nodes.find((n: Node) => n.id === selectedServer.nodeId) : undefined;
-                if (!ps?.success || !node) return;
-                setPaddingInherited(inheritedRamPadding(node.ramPaddingMb, ps.settings?.ramPaddingMb));
-            }).catch(() => { /* non-fatal: the source just reads "inherited" */ });
-        }
-        if (user?.isAdmin) {
-            try {
-                const res = await getServerStoragePath(selectedServer.id);
-                if (res.success) {
-                    setStorageCurrentPath(res.currentPath || '');
-                    const paths: StoragePathInfo[] = Array.isArray(res.storagePaths) ? res.storagePaths : [];
-                    setStoragePaths(paths);
-                    const others = paths.filter(p => p.path !== res.currentPath);
-                    if (others.length > 0) setStorageMigrateTarget(others[0].path);
-                }
-            } catch { /* ignore */ }
-        }
-        // Node list for the move/transfer picker — only ONLINE nodes other than
-        // the one this server currently lives on, and only ones this caller may
-        // actually place on: another tenant's machine is not a transfer target,
-        // for an operator either.
-        if (canTransfer) {
-            try {
-                const res = await getNodes('placement');
-                if (res.success && Array.isArray(res.nodes)) {
-                    const targets: Node[] = res.nodes.filter(
-                        (n: Node) => n.status === 'online' && n.id !== selectedServer.nodeId,
-                    );
-                    setPlacementNodes(res.nodes);
-                    setMoveNodes(targets);
-                    if (targets.length > 0) setMoveTargetNodeId(targets[0].id);
-                }
-            } catch { /* ignore */ }
-        }
-    };
+    // Who may move this server to another node. Admins in either routing mode;
+    // a BYON server owner when tenancy is on, which runs on the gateway.
+    const canTransfer = !!user?.isAdmin || (featureFlags.byon && isOwner && routingMode !== 'ip_port');
 
-    // Node-to-node move. Admins use the admin endpoint; BYON owners use the
-    // tenant transfer endpoint (owner + placement authz). Async on the backend;
-    // we seed the migration status optimistically so the poll picks up and the
-    // status line shows progress without waiting a full tick.
-    const handleMoveServer = async () => {
-        if (!moveTargetNodeId || moveBusy) return;
-        if (!(await confirmDialog({
-            title: 'Move server',
-            message: `Move ${selectedServer.name} from ${nodeLabelById(placementNodes, selectedServer.nodeId)} to ${nodeLabelById(placementNodes, moveTargetNodeId)}? It is stopped, its files are copied, and it starts on the target. Players on it are disconnected.`,
-            confirmLabel: 'Move',
-            destructive: false,
-        }))) return;
-        setMoveBusy(true);
-        setMoveMsg('');
-        try {
-            const res: any = user?.isAdmin
-                ? await moveServer(selectedServer.id, moveTargetNodeId)
-                : await transferServer(selectedServer.id, moveTargetNodeId);
-            if (res && (res.success === false || res.error)) {
-                setMoveMsg(res.error || res.message || 'Move failed.');
-            } else {
-                setMoveMsg(res?.message || 'Migration queued.');
-                setMigrationStatus({ phase: 'starting' });
-            }
-        } catch {
-            setMoveMsg('Move request failed.');
-        }
-        setMoveBusy(false);
-    };
-    const migrationLine = (m: MigrationStatus) => {
-        const phase = m.phase.replace(/_/g, ' ');
-        if (!m.sourceNodeID || !m.targetNodeID) return `Migration: ${phase}`;
-        return `Migration ${nodeLabelById(placementNodes, m.sourceNodeID)} -> ${nodeLabelById(placementNodes, m.targetNodeID)}: ${phase}`;
-    };
-    // Admin: flag this server as a public read-only demo (or unflag it).
-    //
-    // The result is checked for the same reason handleMoveServer directly above
-    // checks its own: fetchAPI does not throw on an HTTP error, it returns
-    // {success:false}. Discarding it here mattered more than elsewhere - the
-    // toggle renders from selectedServer.isDemo, so a refused UNFLAG snapped the
-    // switch back to "on" with no explanation, and an admin who read that as a UI
-    // glitch would believe the server was no longer publicly viewable while it
-    // still was.
-    const handleToggleDemo = async () => {
-        setDemoMsg('');
-        try {
-            const res: any = await setServerDemo(selectedServer.id, !selectedServer.isDemo);
-            if (res && (res.success === false || res.error)) {
-                setDemoMsg(res.error || res.message || 'Could not change the demo flag.');
-            } else {
-                refreshServers();
-            }
-        } catch {
-            setDemoMsg('Could not change the demo flag.');
-        }
-    };
-
-    // The same defaults handleOpenEditResources seeds the form with, so an
-    // untouched field never reads as a change.
-    const canEditPorts = portsEditable(!!user?.isAdmin, routingMode);
-    const currentResources: ResourceValues = {
-        ram: selectedServer.memory || 1024,
-        cpuLimit: selectedServer.cpuLimit || 0,
-        diskMB: selectedServer.diskLimit || 0,
-        hostPort: selectedServer.hostPort || 0,
-        containerPort: selectedServer.containerPort || 25565,
-        cpuMode: selectedServer.cpuPinningMode || 'shared',
-        cpuset: selectedServer.cpuset || (selectedServer as any).cpusetCpus || '',
-        autoMove: !!(selectedServer as any).autoMove,
-        ramPaddingMb: selectedServer.effectiveRamPaddingMb,
-    };
-    // An older Core sends no effectiveRamPaddingMb: the field is then hidden and
-    // never part of the plan.
-    const paddingSupported = selectedServer.effectiveRamPaddingMb !== undefined;
-    const currentPaddingOverride = selectedServer.ramPaddingMb ?? null;
-    const editPadding = parseRamPaddingInput(editPaddingText);
-    const editPaddingInvalid = Number.isNaN(editPadding);
-    // While the server inherits, its effective value IS the inherited one, so
-    // the reset label needs no extra fetch in that case.
-    const inheritedPaddingValue = paddingInherited?.value
-        ?? (currentPaddingOverride === null ? selectedServer.effectiveRamPaddingMb : undefined);
-    const editPaddingEffective = editPaddingInvalid
-        ? selectedServer.effectiveRamPaddingMb
-        : editPadding ?? inheritedPaddingValue ?? null;
-    const resourcePlan = planResourceChange(currentResources, {
-        ram: editRam,
-        cpuLimit: editCpuLimit,
-        diskMB: diskGBToMB(editDiskLimit),
-        hostPort: editHostPort,
-        containerPort: editContainerPort,
-        cpuMode: editCpuMode,
-        cpuset: editCpusetCpus,
-        autoMove: editAutoMove,
-        ramPaddingMb: paddingSupported ? editPaddingEffective : selectedServer.effectiveRamPaddingMb,
-    }, !isServerOffline, canEditPorts);
-    const memoryGuardSupported = selectedServer.memoryGuardAction !== undefined;
     const oomTab = pathname.endsWith('/overview') || pathname.endsWith('/console');
     const oomBanner = oomTab && showOomBanner(selectedServer, now, oomDismissed);
     const dismissOomBanner = () => {
@@ -564,94 +314,18 @@ export default function ServerShell({ children }: { children: React.ReactNode })
         setOomDismissed(at);
         try { if (at) localStorage.setItem(oomDismissKey(selectedServer.id), at); } catch { /* per-viewer convenience only */ }
     };
-    // An invalid headroom lives in Advanced, so it must not hide there.
-    const resourcesAdvancedOpen = editResourcesAdvancedOpen || (paddingSupported && editPaddingInvalid);
-
-    const handleSaveResources = async () => {
-        const ports = canEditPorts ? { hostPort: editHostPort, containerPort: editContainerPort } : undefined;
-        setResourcesMsg('');
-        if (paddingSupported && editPaddingInvalid) {
-            setEditResourcesAdvancedOpen(true);
-            setResourcesMsg(`RAM headroom must be a whole number of MB from 0 to ${MAX_RAM_PADDING_MB}, or empty for the default.`);
-            return;
-        }
-        if (resourcePlan.needsRestart && !(await confirmDialog({
-            title: 'Restart the server?',
-            message: `Changing ${joinFields(resourcePlan.restartFields)} restarts ${selectedServer.name}. Players on it are disconnected.`,
-            confirmLabel: 'Save and restart',
-        }))) {
-            return;
-        }
-        // Both answers used to be discarded and the dialog closed regardless, so
-        // a refusal (host port already taken, a cpuset the node cannot honour,
-        // over the plan's limits) looked exactly like a save: the popup shut and
-        // the old numbers quietly came back with refreshServers.
-        const res = await updateServerResources(
-            selectedServer.id, editRam, editCpuLimit, diskGBToMB(editDiskLimit),
-            ports, undefined, { mode: editCpuMode, cpuset: editCpusetCpus },
-            paddingSupported ? ramPaddingPatch(currentPaddingOverride, editPadding) : undefined,
-            memoryGuardPatch(selectedServer.memoryGuardAction, editMemoryGuard),
-        );
-        if (res?.success === false) {
-            setResourcesMsg(res.message || res.error || 'The resource change was refused.');
-            return;
-        }
-        // Auto-move is a separate field — flip only when it actually changed.
-        if (editAutoMove !== !!(selectedServer as any).autoMove) {
-            const moveRes = await setServerAutoMove(selectedServer.id, editAutoMove);
-            if (moveRes?.success === false) {
-                // The resources DID save, so say precisely that rather than
-                // implying the whole dialog failed.
-                setResourcesMsg(moveRes.message || moveRes.error || 'Resources saved, but auto-move could not be changed.');
-                refreshServers();
-                return;
-            }
-        }
-        setShowEditResourcesPopup(false);
-        refreshServers();
-    };
-
-    // Open the dedicated BYON transfer dialog: load the (tenant-scoped) online
-    // node list, then show the picker. Mirrors the node-fetch the admin Resources
-    // popup does, but stands alone so owners never see the admin resource editor.
-    const handleOpenTransfer = async () => {
-        setMoveMsg('');
-        setMoveTargetNodeId(0);
-        setMoveNodes([]);
-        setShowTransferPopup(true);
-        try {
-            const res = await getNodes('placement');
-            if (res.success && Array.isArray(res.nodes)) {
-                const targets: Node[] = res.nodes.filter(
-                    (n: Node) => n.status === 'online' && n.id !== selectedServer.nodeId,
-                );
-                setPlacementNodes(res.nodes);
-                setMoveNodes(targets);
-                if (targets.length > 0) setMoveTargetNodeId(targets[0].id);
-            }
-        } catch { /* ignore */ }
-    };
-
-    const handleMigrateStorage = async () => {
-        if (!storageMigrateTarget) return;
-        setStorageMigrating(true);
-        setStorageMigrateMsg('');
-        try {
-            const res = await migrateServerStorage(selectedServer.id, storageMigrateTarget);
-            setStorageMigrateMsg(res.success ? res.message : (res.error || 'Migration failed'));
-        } catch {
-            setStorageMigrateMsg('Migration request failed');
-        }
-        setStorageMigrating(false);
-    };
 
     const handlePower = async (action: PowerAction, opts?: { skipCooldownPrompt?: boolean }) => {
         // Admins get an explicit "still settling" prompt before we send the
         // command. Non-admins are already disabled by powerCooldownActive
         // upstream, so this branch only ever fires for admins.
         if (cooldownSecondsLeft > 0 && user?.isAdmin && !opts?.skipCooldownPrompt) {
-            setPendingCooldownAction(action);
-            return;
+            if (!(await confirmDialog({
+                title: 'Server is still installing',
+                message: `The post-install settling window has ${cooldownSecondsLeft}s left. Power actions during this window can leave the freshly-installed world in a half-written state or kill the JVM mid chunk-generation.\n\nAs an admin you can override the cooldown. Only do this if you understand the consequences.`,
+                confirmLabel: 'Override & continue',
+                cancelLabel: 'Wait for settle',
+            }))) return;
         }
         const sid = selectedServer.id;
         const clearPending = () => setPendingPower(prev => {
@@ -684,11 +358,23 @@ export default function ServerShell({ children }: { children: React.ReactNode })
         } catch { /* network error: the command may have gone out, so keep waiting; the timeout says so */ }
     };
 
-    const copyOwnerId = () => {
-        navigator.clipboard.writeText(selectedServer.ownerId).then(() => {
-            setOwnerCopied(true);
-            setTimeout(() => setOwnerCopied(false), 1200);
-        }).catch(() => { /* clipboard blocked — nothing to surface */ });
+    // Force kill: the settling question for admins and its own confirm are
+    // independent warnings, so both are asked, in that order.
+    const handleKill = async () => {
+        if (cooldownSecondsLeft > 0 && user?.isAdmin && !(await confirmDialog({
+            title: 'Server is still installing',
+            message: `The post-install settling window has ${cooldownSecondsLeft}s left. Power actions during this window can leave the freshly-installed world in a half-written state or kill the JVM mid chunk-generation.\n\nAs an admin you can override the cooldown. Only do this if you understand the consequences.`,
+            confirmLabel: 'Override & continue',
+            cancelLabel: 'Wait for settle',
+        }))) return;
+        if (!(await confirmDialog({
+            title: 'Force kill server?',
+            message: 'Stops the server immediately without saving. Anything not yet saved to the world is lost.',
+            confirmLabel: 'Force kill',
+        }))) return;
+        // The settling prompt was answered above; asking again would chain a
+        // second prompt for the same decision.
+        handlePower('kill', { skipCooldownPrompt: true });
     };
 
     // Admin-only: abort an in-flight migration. The backend rolls the server back
@@ -705,30 +391,6 @@ export default function ServerShell({ children }: { children: React.ReactNode })
         setCancellingMigration(false);
     };
 
-    const getStatusColor = (status: string) => {
-        switch (status) {
-            case 'online': return 'bg-(--success-light)';
-            case 'stopped':
-            case 'offline':
-            case 'disk_full': return 'bg-(--error)';
-            default: return 'bg-(--warning) animate-pulse';
-        }
-    };
-
-    // 'demo' is a read-only viewer role (showcase server the user does not own),
-    // so it is NOT an owner — keep it out of every owner-gated control.
-    const isOwner = selectedServer.role !== 'invited' && selectedServer.role !== 'inherited' && selectedServer.role !== 'demo';
-    const isDemoView = selectedServer.role === 'demo';
-    const perms = selectedServer.permissions;
-
-    // Who may move this server to another node. Admins in either routing mode;
-    // a BYON server owner when tenancy is on, which runs on the gateway.
-    const canTransfer = !!user?.isAdmin || (featureFlags.byon && isOwner && routingMode !== 'ip_port');
-
-    // Auto-move opt-in gating: the backend gates the PATCH on the platform
-    // feature flag (503 otherwise), in either routing mode.
-    const autoMoveDisabled = !featureFlags.autoMove;
-    const autoMoveReason = 'Auto-Move is disabled platform-wide. An admin can enable it in Settings → Features.';
     const tabDisabled = (perm: keyof TabPermissions) => isPendingSetup || (!isOwner && !!perms && !perms[perm]);
     // `perms.power` is power.start alone; each other action has its own bit.
     const powerAllow = isOwner ? undefined : {
@@ -737,10 +399,10 @@ export default function ServerShell({ children }: { children: React.ReactNode })
     const canPower = !powerAllow || Object.values(powerAllow).some(Boolean);
 
     // Tabs (path segments). When an upload is active for this server the
-    // Configuration tab is locked — editing properties / JVM flags while
+    // Configuration tab is locked: editing properties / JVM flags while
     // bytes are still being written into the same directory is exactly
     // the kind of foot-gun the safety lock prevents.
-    const tabs: { slug: string; icon: string; label: string; disabled: boolean }[] = [
+    const tabs: NavTab[] = [
         { slug: 'setup',   icon: 'wrench',          label: 'Setup',         disabled: !isOwner && !!perms && !perms.setup },
         { slug: 'overview',icon: 'house',           label: 'Overview',      disabled: isPendingSetup },
         { slug: 'console', icon: 'square-terminal', label: 'Console',       disabled: tabDisabled('console') },
@@ -753,158 +415,60 @@ export default function ServerShell({ children }: { children: React.ReactNode })
         // Power-class permission since every action mutates server state.
         { slug: 'players', icon: 'users-round',     label: 'Players',       disabled: isPendingSetup || (!isOwner && (!perms || !perms.players)) },
         { slug: 'backups', icon: 'hard-drive',      label: 'Backups',       disabled: tabDisabled('backups') },
-        // Audit tab. Owner + admin only; non-owners (even with
-        // permission bundles) can't see who changed what on someone else's
-        // server. The view itself self-hides empty audit gracefully.
-        //
-        // This used to be the ONLY place that rule existed: the API gated the
-        // audit log on overview.read, the cap every invite carries, so graying
-        // the tab out was all that stood between a member and the log of what
-        // the other members did. Core now enforces it with its own
-        // server.audit.read cap. The one case this line is still stricter than
-        // the backend is a member the owner explicitly delegated that cap to in
-        // Admin-roles mode: they may call the API but see a gray tab, because
-        // the server list carries the legacy TabPermissions blob, not caps.
+        // Audit tab. Owner + admin only. The API gates the audit log on
+        // overview.read, the cap every invite carries, so graying the tab out
+        // was long the only thing between a member and the log of what the
+        // other members did; Core now enforces it with its own
+        // server.audit.read cap. The one case this is still stricter than the
+        // backend is a member delegated that cap in Admin-roles mode: they may
+        // call the API but see a gray tab, because the server list carries the
+        // legacy TabPermissions blob, not caps.
         { slug: 'audit',   icon: 'file-text',       label: 'Audit',         disabled: !isOwner && !user?.isAdmin },
+        // User-defined custom tabs follow the built-ins. Disabled rows are
+        // filtered out so the nav matches the user's intent without greying logic.
+        ...customTabs
+            // A tab pinned to another sub-server addresses a port that only
+            // exists while that one runs; Core refuses it, so it does not belong here.
+            .filter(t => t.enabled && tabRunsOnActiveSubServer(t.subServerName, selectedServer.activeSubServer))
+            .map(t => ({ slug: `t/${t.id}`, icon: t.icon || 'layout-grid', label: t.name, disabled: false })),
     ];
+
+    const { tier } = nodeConnectivity(selectedServer.nodeStatus, selectedServer.nodeLastSeenAt, now);
+    const settingsKind = user?.isAdmin ? 'resources' : canTransfer ? 'transfer' : null;
 
     return (
         <main className="flex-1 flex flex-col overflow-hidden relative z-10">
-            {/* Server Header */}
-            <div className="bg-(--base-02) border-b border-(--base-03) px-6 pt-3 shrink-0 z-10">
-                {/* Node-connectivity notice: full-width line above the name so the long
-                    unreachable/down label never crowds the server-name row (M2). */}
-                {(() => {
-                    const { tier } = nodeConnectivity(selectedServer.nodeStatus, selectedServer.nodeLastSeenAt, now);
-                    return tier === 'ok' ? null : (
-                        <div className="text-xs text-(--warning) mb-1.5">{connLabel(tier, selectedServer.nodeLastSeenAt)}</div>
-                    );
-                })()}
-                {/* Row 1: Server Name + Actions */}
-                {/* Wraps: name, badges and the power buttons together are wider
-                    than the column at the app's minimum width. */}
-                <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 mb-2">
-                    <div className="flex items-center space-x-2">
-                        {(() => {
-                            const { tier } = nodeConnectivity(selectedServer.nodeStatus, selectedServer.nodeLastSeenAt, now);
-                            const title = tier === 'ok' ? selectedServer.status : connLabel(tier, selectedServer.nodeLastSeenAt);
-                            return <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${dotFor(tier, getStatusColor(selectedServer.status))}`} title={title} />;
-                        })()}
-                        {isEditingName ? (
-                            <input
-                                className="text-xl font-bold font-display bg-(--base-03) text-(--base-09) rounded-md px-2 py-0.5 outline-none border border-(--accent) focus:shadow-[0_0_0_3px_rgba(112,72,200,0.15)]"
-                                value={editedName}
-                                onChange={e => setEditedName(e.target.value)}
-                                onKeyDown={e => { if (e.key === 'Enter') handleSaveName(); if (e.key === 'Escape') setIsEditingName(false); }}
-                                onBlur={handleSaveName}
-                                maxLength={50}
-                                autoFocus
-                            />
-                        ) : (
-                            <div className="flex items-center gap-2 bg-(--base-03)/40 border border-(--base-04) rounded-md px-3 py-1">
-                                <h1 className="text-xl font-bold font-display text-(--base-09) tracking-wide">{selectedServer.name}</h1>
-                                {!isDemoView && (
-                                    <button onClick={() => { setNameMsg(''); handleStartEditName(); }} className="text-(--base-06) hover:text-(--base-09) transition-colors">
-                                        <Pencil size={16} />
-                                    </button>
-                                )}
-                            </div>
-                        )}
-                        {nameMsg && (
-                            <span className="text-xs text-(--error-light)" role="alert">{nameMsg}</span>
-                        )}
-                        {TRANSITIONAL_STATUSES.includes(selectedServer.status) && (
-                            <span
-                                className="mono-label font-medium px-2.5 py-1 rounded-sm border bg-(--warning-ghost) flex items-center gap-2 border-(--warning)/20 text-(--warning)"
-                                title={isMigrating ? 'Server is migrating to another node. Power actions are locked until it finishes.' : undefined}
-                            >
-                                <span className="w-[5px] h-[5px] rounded-full bg-(--warning) animate-pulse motion-reduce:animate-none" aria-hidden="true" />
-                                {selectedServer.status}
-                            </span>
-                        )}
-                        {isDemoView && (
-                            <span className="mono-label bg-(--accent-ghost) border border-(--accent-border) px-2 py-0.5 rounded-sm text-(--accent-light) flex items-center gap-1">
-                                Demo · read-only
-                            </span>
-                        )}
-                        {selectedServer.role === 'admin' && !selectedServer.invitedHere && (
-                            <span
-                                className="mono-label bg-(--warning-ghost) border border-(--warning)/30 px-2 py-0.5 rounded-sm text-(--warning-light) flex items-center gap-1"
-                                title="You are here as an admin, not as the owner or an invitee."
-                            >
-                                <ShieldCheck size={11} aria-hidden="true" />
-                                Admin access
-                            </span>
-                        )}
-                        {selectedServer.activeSubServer && (
-                            <span className="mono-label bg-(--base-03) px-2 py-0.5 rounded-sm text-(--base-07) flex items-center gap-1.5">
-                                <span className="text-(--base-05)">Active Server</span>
-                                <span className="text-(--base-08)">{selectedServer.activeSubServer}</span>
-                            </span>
-                        )}
-                        {selectedServer.serverType === 'proxy' && (
-                            <span className="mono-label bg-(--accent-ghost) px-2 py-0.5 rounded-sm text-(--accent-light) flex items-center gap-1">
-                                Proxy
-                            </span>
-                        )}
-                        {selectedServer.proxyId && (() => {
-                            const proxy = servers.find(s => s.id === selectedServer.proxyId);
-                            return proxy ? (
-                                <Link
-                                    href={`/servers/${proxy.id}`}
-                                    className="mono-label bg-(--accent-ghost) px-2 py-0.5 rounded-sm text-(--accent-light) flex items-center gap-1 hover:bg-(--accent)/20 transition-colors"
-                                >
-                                    {proxy.name}
-                                </Link>
-                            ) : null;
-                        })()}
-                        <span className="text-xs text-(--base-07)">
-                            Owner:{' '}
-                            <button
-                                type="button"
-                                onClick={copyOwnerId}
-                                title={`Owner ID: ${selectedServer.ownerId} — click to copy`}
-                                className="font-medium text-(--base-09) hover:text-(--accent-light) transition-colors cursor-pointer"
-                            >
-                                {selectedServer.owner === user?.username ? 'You' : (selectedServer.owner || selectedServer.ownerId)}
-                            </button>
-                            {ownerCopied && <span className="ml-1 text-(--success-light)">copied</span>}
-                        </span>
-                        {/* What the server runs, at a glance: loader and Minecraft version,
-                            the build in the tooltip. */}
-                        {selectedServer.installerType && (
-                            <span
-                                className="mono-label bg-(--base-03) border border-(--base-04) px-2 py-0.5 rounded-sm text-(--base-08)"
-                                title={selectedServer.buildNumber ? `Build ${selectedServer.buildNumber}` : undefined}
-                            >
-                                {loaderName(selectedServer.installerType)}
-                                {selectedServer.minecraftVersion ? ` ${selectedServer.minecraftVersion}` : ''}
-                            </span>
-                        )}
-                    </div>
-                    <div className="flex items-center gap-2">
-                        <div className="flex items-center gap-1.5">
-                            {isPendingSetup && (
-                                <span className="mono-label font-medium px-2.5 py-1 rounded-sm border bg-(--warning-ghost) flex items-center gap-2 border-(--warning)/20 text-(--warning)">
-                                    <div className="w-[5px] h-[5px] rounded-full bg-(--warning) animate-pulse"></div>
-                                    pending_setup
-                                </span>
-                            )}
-                            {isDiskFull && (
-                                <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-(--error-ghost) border border-(--error-border) text-(--error-light) text-xs font-semibold">
-                                    <HardDrive size={14} />
-                                    Storage full
-                                </span>
-                            )}
-                            {cooldownSecondsLeft > 0 && (
-                                <span
-                                    className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-(--accent-ghost) border border-(--accent)/20 text-(--accent-light) text-xs font-mono"
-                                    title="Server is finishing install — power actions will unlock when this counter reaches 0."
-                                >
-                                    <Clock size={12} />
-                                    Settling {cooldownSecondsLeft}s
-                                </span>
-                            )}
+            <div className="shrink-0 border-b border-(--base-03)">
+                <div className="srv-gutter pt-5 md:pt-7">
+                    {/* Full-width line above the name so the long unreachable/down
+                        label never crowds the name row. */}
+                    {tier !== 'ok' && (
+                        <div className="mb-3">
+                            <Callout tone="warning" icon={<AlertTriangle size={16} />} role="status">
+                                {connLabel(tier, selectedServer.nodeLastSeenAt)}
+                            </Callout>
+                        </div>
+                    )}
+                    <ServerHeader
+                        server={shown === selectedServer.status ? selectedServer : { ...selectedServer, status: shown }}
+                        servers={servers}
+                        now={now}
+                        isDemoView={isDemoView}
+                        isPendingSetup={isPendingSetup}
+                        uploadLocked={uploadLocked}
+                        cooldownSecondsLeft={cooldownSecondsLeft}
+                        settings={settingsKind ? { kind: settingsKind, onOpen: () => { setSettingsAdvanced(false); setSettingsOpen(true); } } : null}
+                        migration={isMigrating && user?.isAdmin ? {
+                            active: true,
+                            cancelling: cancellingMigration,
+                            cancellable: migrationStatus?.cancellable !== false,
+                            onCancel: handleCancelMigration,
+                        } : null}
+                        directDomain={directDomain}
+                        directIpPort={directIpPort}
+                        serverRoutes={serverRoutes}
+                        onOpenRoutes={() => setShowRoutesModal(true)}
+                        power={
                             <PowerControls
                                 status={selectedServer.status}
                                 pending={pendingPower[selectedServer.id] ?? null}
@@ -916,237 +480,61 @@ export default function ServerShell({ children }: { children: React.ReactNode })
                                     killCooldown,
                                     cooldownUntil: powerCooldownUntil[selectedServer.id],
                                 }}
-                                onAction={action => {
-                                    if (action !== 'kill') handlePower(action);
-                                    else if (cooldownSecondsLeft > 0 && user?.isAdmin) setPendingCooldownAction('kill');
-                                    else setShowKillConfirm(true);
-                                }}
+                                onAction={action => { if (action !== 'kill') handlePower(action); else handleKill(); }}
                                 onDelete={user?.isAdmin ? handleOpenDeletePopup : undefined}
                             />
-                            {isMigrating && user?.isAdmin && (
-                                <button
-                                    onClick={handleCancelMigration}
-                                    disabled={cancellingMigration || migrationStatus?.cancellable === false}
-                                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-(--error-ghost) hover:bg-(--error)/15 transition-colors disabled:opacity-30 disabled:cursor-not-allowed border border-(--error)/15"
-                                    title="Cancel this migration and roll the server back to its current node. Only possible before cutover; the old node is kept until the move is verified."
-                                >
-                                    <Undo2 size={16} className="text-(--error-light)" />
-                                    <span className="text-xs font-semibold text-(--error-light)">{cancellingMigration ? 'Cancelling...' : 'Cancel Migration'}</span>
-                                </button>
-                            )}
-                        </div>
-                        {user?.isAdmin && <div className="w-px h-6 bg-(--base-04)" />}
-                        {user?.isAdmin && (
-                            <div className="flex items-center gap-1.5">
-                                <button
-                                    onClick={handleOpenEditResources}
-                                    disabled={uploadLocked}
-                                    className="btn btn-secondary btn-sm disabled:opacity-30 disabled:cursor-not-allowed"
-                                    title={uploadLocked ? 'Upload in progress — wait or cancel it first' : undefined}
-                                >
-                                    <SlidersHorizontal size={14} />
-                                    Resources
-                                </button>
-                            </div>
-                        )}
-                        {/* BYON owners get a dedicated transfer entry (admins use the
-                            Resources popup's transfer section instead). */}
-                        {canTransfer && !user?.isAdmin && (
-                            <>
-                                <div className="w-px h-6 bg-(--base-04)" />
-                                <button
-                                    onClick={handleOpenTransfer}
-                                    disabled={uploadLocked}
-                                    className="btn btn-secondary btn-sm disabled:opacity-30 disabled:cursor-not-allowed"
-                                    title={uploadLocked ? 'Upload in progress — wait or cancel it first' : 'Transfer this server to another of your nodes'}
-                                >
-                                    <Move size={14} />
-                                    Transfer
-                                </button>
-                            </>
-                        )}
-                    </div>
-                </div>
-
-                {/* Connection Info */}
-                {!isPendingSetup && (
-                    (routingMode !== 'gateway' && selectedServer.nodeAddress && (selectedServer.hostPort ?? 0) > 0) ||
-                    gatewayEnabled
-                ) && (
-                    <div className={`flex items-center gap-4 py-2 border-t flex-wrap ${
-                        routingMode === 'gateway' && gatewayEnabled && serverRoutes.length === 0
-                            ? 'border-(--warning)/40'
-                            : 'border-(--base-03)/60'
-                    }`}>
-                        {/* First in the row, where the eye starts: routes are the
-                            one thing here a user acts on rather than copies. */}
-                        {gatewayEnabled && (serverRoutes.length > 0 ? (
-                            <button
-                                type="button"
-                                onClick={() => setShowRoutesModal(true)}
-                                aria-label="Manage routes"
-                                title="Manage routes"
-                                className="focus-ring relative inline-flex items-center justify-center w-7 h-7 shrink-0 rounded-md bg-(--accent-ghost) border border-(--accent-border) text-(--accent-light) hover:bg-(--accent)/15 active:bg-(--accent)/25 transition-colors"
-                            >
-                                <Globe size={14} />
-                            </button>
-                        ) : (
-                            <button
-                                type="button"
-                                onClick={() => setShowRoutesModal(true)}
-                                title="Add a gateway route so players can join"
-                                className="btn btn-primary btn-sm focus-ring shrink-0"
-                            >
-                                <Plus size={14} />
-                                Add route
-                            </button>
-                        ))}
-                        {routingMode !== 'gateway' && selectedServer.nodeAddress && (selectedServer.hostPort ?? 0) > 0 && (
-                            <div className="flex items-center gap-2">
-                                <span className="mono-label text-(--base-05)">Direct</span>
-                                {/* A green domain is what players should type; the IP:port stays as a secondary chip. */}
-                                {directDomain !== directIpPort && (
-                                    <CopyText
-                                        value={directDomain}
-                                        bubble
-                                        label={<span className="inline-flex items-center gap-1.5"><Globe size={11} className="text-(--accent-light) shrink-0" aria-hidden="true" />{directDomain}</span>}
-                                        className="bg-(--accent-ghost) border border-(--accent-border) hover:border-(--accent) rounded-md px-2.5 py-1 text-xs font-mono text-(--base-09) cursor-copy"
-                                    />
-                                )}
-                                <CopyText
-                                    value={directIpPort}
-                                    bubble
-                                    label={<span className="inline-flex items-center gap-1.5"><Link2 size={11} className="text-(--base-06) shrink-0" aria-hidden="true" />{directIpPort}</span>}
-                                    className={`bg-(--base-03)/50 border border-(--base-04) hover:border-(--base-05) rounded-md px-2.5 py-1 text-xs font-mono cursor-copy ${directDomain !== directIpPort ? 'text-(--base-06)' : 'text-(--base-07)'}`}
-                                />
-                                {/* Extra ports exist only beside a direct address. Who may add,
-                                    rename and remove comes from Core (network.write on this
-                                    server), the same check the write routes make. The card
-                                    hides itself when there is nothing to show. */}
-                                {!isDemoView && (
-                                    <ServerPortsCard
-                                        key={selectedServer.id}
-                                        serverId={selectedServer.id}
-                                    />
-                                )}
-                            </div>
-                        )}
-                        {gatewayEnabled && serverRoutes.length > 0 && (
-                            <div className="flex items-center gap-2 flex-wrap">
-                                <span className="mono-label text-(--base-05)">Gateway</span>
-                                {serverRoutes.map(route => (
-                                    <CopyText
-                                        key={route.domain}
-                                        value={route.domain}
-                                        bubble
-                                        label={<span className="inline-flex items-center gap-1.5"><Globe size={11} className="shrink-0" aria-hidden="true" />{route.domain}</span>}
-                                        className="bg-(--accent-ghost) border border-(--accent-border) hover:bg-(--accent)/15 rounded-md px-2.5 py-1 text-xs font-mono text-(--accent-light) cursor-copy"
-                                    />
-                                ))}
-                            </div>
-                        )}
-                        {routingMode === 'gateway' && gatewayEnabled && serverRoutes.length === 0 && (
-                            <div className="flex items-center gap-2">
-                                <AlertTriangle size={12} className="text-(--warning)" />
-                                <span className="text-xs text-(--warning) font-medium">No gateway route configured</span>
-                            </div>
-                        )}
-                    </div>
-                )}
-
-                {/* Tab Bar — wraps onto a second row instead of scrolling so
-                    no tab ever ends up hidden under the right edge in
-                    narrow windows (esp. the Beam Desktop App). */}
-                <div className="flex flex-wrap gap-x-1 gap-y-0">
-                    {[
-                        ...tabs,
-                        // Append any user-defined custom tabs after the
-                        // built-ins. Disabled rows are filtered out so the nav
-                        // matches the user's intent without extra greying logic.
-                        ...customTabs
-                            // A tab pinned to another sub-server addresses a
-                            // port that only exists while that one runs; Core
-                            // refuses it, so it does not belong in the bar.
-                            .filter(t => t.enabled && tabRunsOnActiveSubServer(t.subServerName, selectedServer.activeSubServer))
-                            .map(t => ({
-                                slug: `t/${t.id}`,
-                                icon: t.icon || 'layout-grid',
-                                label: t.name,
-                                disabled: false,
-                            })),
-                    ].map(tab => {
-                        const href = `/servers/${selectedServer.id}/${tab.slug}`;
-                        // Configuration is a sub-tab parent (config/properties,
-                        // config/display, …); match the whole prefix so the top-level tab stays
-                        // highlighted while you click between sub-tabs.
-                        const isActive = tab.slug === 'config'
-                            ? pathname.startsWith(href)
-                            : pathname === href;
-                        if (tab.disabled) {
-                            return (
-                                <span
-                                    key={tab.slug}
-                                    className="flex items-center space-x-2 px-4 py-3 border-b-2 border-transparent text-(--base-06) opacity-30 cursor-not-allowed whitespace-nowrap"
-                                >
-                                    <DynamicIcon name={tab.icon} size={20} />
-                                    <span>{tab.label}</span>
-                                </span>
-                            );
                         }
-                        return (
-                            <Link
-                                key={tab.slug}
-                                href={href}
-                                replace
-                                className={`flex items-center space-x-2 px-4 py-3 border-b-2 transition-all whitespace-nowrap ${
-                                    isActive
-                                        ? 'border-(--accent) text-(--accent-light) font-semibold'
-                                        : 'border-transparent text-(--base-07) hover:text-(--base-09) hover:border-(--base-04)'
-                                }`}
-                            >
-                                <DynamicIcon name={tab.icon} size={20} />
-                                <span>{tab.label}</span>
-                            </Link>
-                        );
-                    })}
+                    />
+                    <div className="mt-4 -mx-1">
+                        <ServerNav serverId={selectedServer.id} tabs={tabs} pathname={pathname} />
+                    </div>
                 </div>
             </div>
 
-            {uploadLocked && (
-                <div className="px-6 pt-3 shrink-0">
-                    <div className="flex items-center gap-2.5 px-3 py-2 rounded-md bg-(--accent-ghost) border border-(--accent-border) text-(--accent-light) text-xs">
-                        <Upload size={13} className="shrink-0" />
-                        <span>
-                            <strong className="font-semibold">Upload in progress</strong> — destructive actions
-                            (power, resources, delete, config) are locked until the transfer finishes or is cancelled.
-                            The file browser stays available.
-                        </span>
-                    </div>
+            {(uploadLocked || oomBanner) && (
+                <div className="srv-gutter flex shrink-0 flex-col gap-2 pt-4">
+                    {uploadLocked && (
+                        <Callout tone="info" icon={<Upload size={16} />} title="Upload in progress">
+                            Destructive actions (power, resources, delete, config) are locked until the transfer finishes or is cancelled. The file browser stays available.
+                        </Callout>
+                    )}
+                    {oomBanner && (
+                        <Callout
+                            tone="error"
+                            icon={<AlertTriangle size={16} />}
+                            role="alert"
+                            title={`Killed: out of memory${selectedServer.lastCrashAt ? ` at ${fmtDateTime(selectedServer.lastCrashAt)}` : ''}`}
+                            actions={<>
+                                {user?.isAdmin && (
+                                    <button type="button" onClick={() => { setSettingsAdvanced(true); setSettingsOpen(true); }} disabled={uploadLocked} className="btn btn-secondary btn-sm">
+                                        Open resources
+                                    </button>
+                                )}
+                                <button type="button" onClick={dismissOomBanner} aria-label="Dismiss" className="btn btn-secondary btn-sm btn-icon">
+                                    <X size={14} />
+                                </button>
+                            </>}
+                        >
+                            The server reached its memory limit and was killed; anything not yet saved was lost. It needs more RAM or RAM headroom.
+                        </Callout>
+                    )}
                 </div>
             )}
 
-            {oomBanner && (
-                <div className="px-6 pt-3 shrink-0">
-                    <div role="alert" className="flex items-start gap-2.5 px-3 py-2 rounded-md bg-(--error-ghost) border border-(--error)/15 text-(--error-light) text-xs">
-                        <AlertTriangle size={13} className="shrink-0 mt-0.5" />
-                        <span className="flex-1">
-                            <strong className="font-semibold">Killed: out of memory</strong>
-                            {selectedServer.lastCrashAt ? ` at ${fmtDateTime(selectedServer.lastCrashAt)}` : ''}.
-                            {' '}The server reached its memory limit and was killed; anything not yet saved was lost. It needs more RAM or RAM headroom.
-                        </span>
-                        {user?.isAdmin && (
-                            <button type="button" onClick={handleOpenEditResources} disabled={uploadLocked} className="btn btn-secondary btn-sm shrink-0">
-                                Open resources
-                            </button>
-                        )}
-                        <button type="button" onClick={dismissOomBanner} aria-label="Dismiss" className="btn btn-ghost btn-sm shrink-0">
-                            <X size={13} />
-                        </button>
-                    </div>
-                </div>
-            )}
+            <div className="srv-page flex-1 min-h-0 overflow-y-auto"><ShownStatusContext.Provider value={shown}>{children}</ShownStatusContext.Provider></div>
 
-            <div className="flex-1 overflow-y-auto p-6">{children}</div>
+            {settingsKind && (
+                <ServerSettingsDrawer
+                    open={settingsOpen}
+                    focusAdvanced={settingsAdvanced}
+                    onOpenChange={setSettingsOpen}
+                    mode={settingsKind === 'resources' ? 'full' : 'transfer'}
+                    server={selectedServer}
+                    canTransfer={canTransfer}
+                    migrationStatus={migrationStatus}
+                    setMigrationStatus={setMigrationStatus}
+                />
+            )}
 
             {/* Delete Confirmation Popup */}
             {showDeletePopup && (
@@ -1191,438 +579,6 @@ export default function ServerShell({ children }: { children: React.ReactNode })
                 </div>
             )}
 
-            {/* Cooldown override (admin only). Lets the admin push through
-                the post-install settling window after explicit confirmation
-                instead of bypassing it silently. For Kill we hand off to the
-                existing destructive-confirm modal so the admin sees both
-                warnings -- they're independent risks. */}
-            {pendingCooldownAction && (
-                <div className="modal-overlay animate-fade-in" onClick={() => setPendingCooldownAction(null)}>
-                    <ModalPanel onClose={() => setPendingCooldownAction(null)} className="modal-panel max-w-md" onClick={e => e.stopPropagation()}>
-                        <div className="modal-header">
-                            <h3 className="modal-title flex items-center gap-2 text-(--warning-light)">
-                                <AlertTriangle size={20} />
-                                Server is still installing
-                            </h3>
-                        </div>
-                        <div className="modal-body space-y-3">
-                            <p className="text-sm text-(--base-07)">
-                                The post-install settling window has{' '}
-                                <span className="font-mono text-(--accent-light)">{cooldownSecondsLeft}s</span>{' '}
-                                left. Power actions during this window can leave the freshly-installed world in a half-written state or kill the JVM mid chunk-generation.
-                            </p>
-                            <p className="text-sm text-(--base-07)">
-                                As an admin you can override the cooldown — only do this if you understand the consequences.
-                            </p>
-                        </div>
-                        <div className="modal-footer">
-                            <button onClick={() => setPendingCooldownAction(null)} className="btn btn-secondary flex-1">
-                                Wait for settle
-                            </button>
-                            <button
-                                onClick={() => {
-                                    const action = pendingCooldownAction;
-                                    setPendingCooldownAction(null);
-                                    if (action === 'kill') {
-                                        // Kill has its own dedicated confirm; chain to it.
-                                        setShowKillConfirm(true);
-                                    } else if (action) {
-                                        handlePower(action, { skipCooldownPrompt: true });
-                                    }
-                                }}
-                                className="btn btn-danger flex-1"
-                            >
-                                Override &amp; continue
-                            </button>
-                        </div>
-                    </ModalPanel>
-                </div>
-            )}
-
-            {/* Kill Confirmation */}
-            {showKillConfirm && (
-                <div className="modal-overlay animate-fade-in" onClick={() => setShowKillConfirm(false)}>
-                    <ModalPanel onClose={() => setShowKillConfirm(false)} className="modal-panel max-w-sm" onClick={e => e.stopPropagation()}>
-                        <div className="modal-header">
-                            <h3 className="modal-title flex items-center gap-2">
-                                <Zap size={20} className="text-(--error-light)" />
-                                Force kill server?
-                            </h3>
-                        </div>
-                        <div className="modal-body">
-                            <p className="text-sm text-(--base-07)">
-                                Stops the server immediately without saving. Anything not yet saved to the world is lost.
-                            </p>
-                        </div>
-                        <div className="modal-footer">
-                            <button onClick={() => setShowKillConfirm(false)} className="btn btn-secondary">Cancel</button>
-                            <button
-                                onClick={() => {
-                                    // skipCooldownPrompt because if cooldown was active we
-                                    // routed through the override modal first; re-firing
-                                    // it here would chain a second prompt for the same
-                                    // decision.
-                                    handlePower('kill', { skipCooldownPrompt: true });
-                                    setShowKillConfirm(false);
-                                }}
-                                className="btn btn-danger"
-                            >
-                                Force kill
-                            </button>
-                        </div>
-                    </ModalPanel>
-                </div>
-            )}
-
-            {/* Transfer Popup (BYON owners). Admins use the Resources popup. */}
-            {showTransferPopup && (
-                <div className="modal-overlay animate-fade-in">
-                    <ModalPanel className="modal-panel w-full max-w-md">
-                        <div className="modal-header">
-                            <h3 className="modal-title flex items-center gap-2">
-                                <Move size={18} />
-                                Transfer Server
-                            </h3>
-                        </div>
-                        <div className="modal-body space-y-4">
-                            <p className="text-sm text-(--base-07)">Currently on <span className="text-(--base-09)">{nodeLabelById(placementNodes, selectedServer.nodeId)}</span></p>
-                            {moveNodes.length === 0 ? (
-                                <p className="text-sm text-(--base-06)">No other online nodes of yours are available to transfer to.</p>
-                            ) : (
-                                <>
-                                    <div className="flex flex-col gap-[5px]">
-                                        <label className="mono-label">Target Node</label>
-                                        <select value={moveTargetNodeId} onChange={e => setMoveTargetNodeId(Number(e.target.value))} className="input-field text-sm" disabled={moveBusy}>
-                                            {moveNodes.map(n => (
-                                                <option key={n.id} value={n.id}>{nodePickerLabel(n)}</option>
-                                            ))}
-                                        </select>
-                                    </div>
-                                    <p className="text-xs text-(--base-06)">
-                                        The server is stopped, moved to the target node, and restarted there. The gateway keeps the player address stable. Same-LAN moves transfer directly; otherwise the data goes via your backup storage.
-                                    </p>
-                                </>
-                            )}
-                            {moveMsg && (
-                                <p className={`text-xs ${/queued|migration/i.test(moveMsg) ? 'text-(--success-light)' : 'text-(--error-light)'}`}>{moveMsg}</p>
-                            )}
-                            {migrationStatus && migrationStatus.phase !== 'none' && (
-                                <div className="flex items-start gap-2 text-xs">
-                                    {!TERMINAL_PHASES.includes(migrationStatus.phase)
-                                        ? <RefreshCw size={13} className="animate-spin text-(--accent-light) mt-0.5 shrink-0" />
-                                        : migrationStatus.phase === 'done'
-                                            ? <Move size={13} className="text-(--success-light) mt-0.5 shrink-0" />
-                                            : <AlertTriangle size={13} className="text-(--error-light) mt-0.5 shrink-0" />}
-                                    <span className={migrationStatus.phase === 'done' ? 'text-(--success-light)' : (TERMINAL_PHASES.includes(migrationStatus.phase) ? 'text-(--error-light)' : 'text-(--base-07)')}>
-                                        {migrationLine(migrationStatus)}
-                                        {migrationStatus.error ? ` — ${migrationStatus.error}` : ''}
-                                    </span>
-                                </div>
-                            )}
-                        </div>
-                        <div className="modal-footer">
-                            <button type="button" onClick={() => setShowTransferPopup(false)} className="btn btn-ghost btn-sm">Close</button>
-                            <button type="button" onClick={handleMoveServer} disabled={moveBusy || !moveTargetNodeId} className="btn btn-primary btn-sm">
-                                {moveBusy ? <><RefreshCw size={14} className="animate-spin" /> Queuing...</> : <><Move size={14} /> Transfer</>}
-                            </button>
-                        </div>
-                    </ModalPanel>
-                </div>
-            )}
-
-            {/* Edit Resources Popup */}
-            {showEditResourcesPopup && (
-                <div className="modal-overlay animate-fade-in">
-                    <ModalPanel className="modal-panel w-full max-w-lg md:max-w-4xl max-h-[90vh] flex flex-col">
-                        <div className="modal-header shrink-0">
-                            <h3 className="modal-title flex items-center gap-2">
-                                <SlidersHorizontal size={18} />
-                                Edit Resources
-                            </h3>
-                        </div>
-                        <div className="modal-body flex-1 min-h-0 overflow-y-auto">
-                            <div className="grid gap-x-8 gap-y-4 md:grid-cols-2">
-                                <div className="space-y-4 min-w-0">
-                                    <div className="flex flex-col gap-[5px]">
-                                        <label className="input-label">RAM (MB)</label>
-                                        <input type="number" min={256} step={256} value={editRam} onChange={e => setEditRam(Number(e.target.value))} className="input-field w-full" />
-                                        <ResourceSlider label="RAM" value={editRam} onChange={setEditRam} scale={ramScale()} format={formatMB} />
-                                    </div>
-                                    <div className="flex flex-col gap-[5px]">
-                                        <label className="input-label">CPU Limit (Cores)</label>
-                                        <input type="number" min={0} step={0.5} value={editCpuLimit} onChange={e => setEditCpuLimit(Number(e.target.value))} placeholder="0 = unlimited" className="input-field w-full" />
-                                        <ResourceSlider label="CPU limit" value={editCpuLimit} onChange={setEditCpuLimit} scale={cpuScale()} format={v => `${v} cores`} />
-                                        <p className="text-xs text-(--base-06)">0 = no limit. Example: 2.0 = 2 cores</p>
-                                    </div>
-                                    <div className="flex flex-col gap-[5px]">
-                                        <label className="input-label">Storage Limit (GB)</label>
-                                        <input type="number" min={0} step={1} value={editDiskLimit} onChange={e => setEditDiskLimit(Number(e.target.value))} placeholder="0 = unlimited" className="input-field w-full" />
-                                        <ResourceSlider label="Storage limit" value={editDiskLimit} onChange={setEditDiskLimit} scale={DISK_SCALE_GB} format={v => `${v} GB`} />
-                                        <p className="text-xs text-(--base-06)">0 = unlimited</p>
-                                    </div>
-
-                                    {(paddingSupported || memoryGuardSupported || user?.isAdmin) && (
-                                        <div className="border-t border-(--base-03) pt-4">
-                                            <button type="button" aria-expanded={resourcesAdvancedOpen} aria-controls="edit-resources-advanced" onClick={() => setEditResourcesAdvancedOpen(o => !o)} className="flex items-center gap-2 text-xs text-(--base-06) hover:text-(--base-08) transition-colors w-full">
-                                                <ChevronDown size={13} className={`transition-transform ${resourcesAdvancedOpen ? 'rotate-180' : ''}`} />
-                                                Advanced
-                                            </button>
-                                            {resourcesAdvancedOpen && (
-                                                <div id="edit-resources-advanced" className="mt-3 space-y-4">
-                                                    {paddingSupported && (
-                                                        <div className="flex flex-col gap-[5px]">
-                                                            <label htmlFor="edit-ram-padding" className="input-label">RAM headroom (MB)</label>
-                                                            <input
-                                                                id="edit-ram-padding"
-                                                                type="number"
-                                                                min={0}
-                                                                max={MAX_RAM_PADDING_MB}
-                                                                step={64}
-                                                                value={editPaddingText}
-                                                                placeholder={inheritedPaddingValue !== undefined ? String(inheritedPaddingValue) : 'Default'}
-                                                                onChange={e => setEditPaddingText(e.target.value)}
-                                                                aria-invalid={editPaddingInvalid}
-                                                                className="input-field w-full"
-                                                            />
-                                                            <p className="text-xs text-(--base-06)">
-                                                                {/* Core sends the headroom to the node only with a RAM or
-                                                                    headroom change, so an inherited default is not
-                                                                    necessarily what the container runs with. */}
-                                                                {currentPaddingOverride !== null
-                                                                    ? `Set on this server: ${currentPaddingOverride} MB. Empty uses the default.`
-                                                                    : `Inherited: ${inheritedPaddingValue} MB from the ${paddingInherited?.source ?? 'node or global'} setting. A changed default applies on the next RAM or headroom change.`}
-                                                                {' '}{RAM_PADDING_HELP}
-                                                            </p>
-                                                            {editPaddingText.trim() !== '' && (
-                                                                <button type="button" onClick={() => setEditPaddingText('')} className="btn btn-ghost btn-sm self-start">
-                                                                    {paddingInherited ? resetLabel(paddingInherited.source, paddingInherited.value) : 'Reset to default'}
-                                                                </button>
-                                                            )}
-                                                        </div>
-                                                    )}
-                                                    {memoryGuardSupported && (
-                                                        <div className="flex flex-col gap-[5px]">
-                                                            <label htmlFor="edit-memory-guard" className="input-label">When memory runs out</label>
-                                                            <select
-                                                                id="edit-memory-guard"
-                                                                value={editMemoryGuard}
-                                                                onChange={e => setEditMemoryGuard(e.target.value as MemoryGuardAction)}
-                                                                className="input-field w-full"
-                                                            >
-                                                                {MEMORY_GUARD_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                                                            </select>
-                                                            <p className="text-xs text-(--base-06)">{MEMORY_GUARD_HELP}</p>
-                                                        </div>
-                                                    )}
-                                                    {user?.isAdmin && (
-                                                        <div className="grid grid-cols-2 gap-3">
-                                                            <div className="flex flex-col gap-[5px]">
-                                                                <label className="input-label">Host Port</label>
-                                                                <input type="number" min={0} max={65535} value={editHostPort} onChange={e => setEditHostPort(Number(e.target.value))} placeholder="0 = auto" disabled={!canEditPorts} className="input-field w-full" />
-                                                                <p className="text-xs text-(--base-06)">0 = auto from range</p>
-                                                            </div>
-                                                            <div className="flex flex-col gap-[5px]">
-                                                                <label className="input-label">Container Port</label>
-                                                                <input type="number" min={1} max={65535} value={editContainerPort} onChange={e => setEditContainerPort(Number(e.target.value))} disabled={!canEditPorts} className="input-field w-full" />
-                                                            </div>
-                                                            {!canEditPorts && (
-                                                                <p className="col-span-2 text-xs text-(--base-06)">Not used: this server is reached through the gateway.</p>
-                                                            )}
-                                                        </div>
-                                                    )}
-                                                </div>
-                                            )}
-                                        </div>
-                                    )}
-                                </div>
-                                <div className="space-y-4 min-w-0 md:[&>*:first-child]:border-t-0 md:[&>*:first-child]:pt-0">
-                                    {user?.isAdmin && (
-                                        <div className="border-t border-(--base-03) pt-4 flex flex-col gap-2">
-                                            <span className="input-label mb-0">CPU Pinning</span>
-                                            <CpuPinningControl
-                                                nodeId={selectedServer.nodeId}
-                                                serverId={selectedServer.id}
-                                                mode={editCpuMode}
-                                                cpuset={editCpusetCpus}
-                                                cpuLimit={editCpuLimit}
-                                                onChange={({ mode, cpuset }) => { setEditCpuMode(mode); setEditCpusetCpus(cpuset); }}
-                                            />
-                                            <p className="text-xs text-(--base-06)">Pin this container to specific CPU cores (useful for AMD 3D V-Cache). Resets if the server is migrated to a different node.</p>
-                                        </div>
-                                    )}
-                                    {/* Auto-move opt-in. Disabled when the platform feature
-                                        is off - the backend would 503. */}
-                                    <div className={`border-t border-(--base-03) pt-4 ${autoMoveDisabled ? 'opacity-60' : ''}`}>
-                                        <div className="flex items-center justify-between gap-4">
-                                            <div className="flex items-start gap-2.5 min-w-0">
-                                                <Move size={14} className={`shrink-0 mt-0.5 ${editAutoMove && !autoMoveDisabled ? 'text-(--accent-light)' : 'text-(--base-06)'}`} />
-                                                <div className="min-w-0">
-                                                    <div className="text-sm font-medium text-(--base-09)">Auto-Move</div>
-                                                    <p className="text-xs text-(--base-06)">
-                                                        Let the rebalance worker migrate this server to a less-loaded node when the current node is overloaded. Migration only runs while the server is stopped/idle.
-                                                    </p>
-                                                </div>
-                                            </div>
-                                            <button
-                                                type="button"
-                                                role="switch"
-                                                aria-checked={editAutoMove}
-                                                disabled={autoMoveDisabled}
-                                                onClick={() => setEditAutoMove(v => !v)}
-                                                className={`shrink-0 toggle-track ${editAutoMove ? 'toggle-track-on' : 'toggle-track-off'} disabled:cursor-not-allowed`}
-                                            >
-                                                <span className={`toggle-knob ${editAutoMove ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
-                                            </button>
-                                        </div>
-                                        {autoMoveDisabled && (
-                                            <p className="flex items-start gap-1.5 text-xs text-(--base-06) mt-2">
-                                                <AlertTriangle size={12} className="mt-0.5 shrink-0 text-(--warning-light)" />
-                                                <span>{autoMoveReason}</span>
-                                            </p>
-                                        )}
-                                    </div>
-
-                                    {/* Demo flag (admin). A flagged server shows up read-only
-                                        in the sidebar for any user who has no server of their
-                                        own — a public showcase. Writes stay blocked server-side.
-                                        Only on the hosted (store-enabled) build. */}
-                                    {featureFlags.store && (
-                                    <div className="border-t border-(--base-03) pt-4">
-                                        <div className="flex items-center justify-between gap-4">
-                                            <div className="flex items-start gap-2.5 min-w-0">
-                                                <Globe size={14} className={`shrink-0 mt-0.5 ${selectedServer.isDemo ? 'text-(--accent-light)' : 'text-(--base-06)'}`} />
-                                                <div className="min-w-0">
-                                                    <div className="text-sm font-medium text-(--base-09)">Public Demo Server</div>
-                                                    <p className="text-xs text-(--base-06)">
-                                                        Show this server read-only to users who have none of their own. They can view overview, console, stats and browse files, but cannot edit, power, download or upload.
-                                                    </p>
-                                                </div>
-                                            </div>
-                                            <button
-                                                type="button"
-                                                role="switch"
-                                                aria-checked={!!selectedServer.isDemo}
-                                                onClick={handleToggleDemo}
-                                                className={`shrink-0 toggle-track ${selectedServer.isDemo ? 'toggle-track-on' : 'toggle-track-off'}`}
-                                            >
-                                                <span className={`toggle-knob ${selectedServer.isDemo ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
-                                            </button>
-                                        </div>
-                                        {demoMsg && (
-                                            <p className="mt-2 text-xs text-(--error-light)">{demoMsg}</p>
-                                        )}
-                                    </div>
-                                    )}
-
-                                    {/* Node-to-node transfer. Admins move between any nodes, in
-                                        either routing mode; a BYON owner transfers between their
-                                        own nodes. */}
-                                    {canTransfer && (
-                                        <div className="border-t border-(--base-03) pt-4 flex flex-col gap-3">
-                                            <div className="flex items-center gap-2">
-                                                <Move size={14} className="text-(--accent-light)" />
-                                                <span className="input-label mb-0">Transfer to Node</span>
-                                            </div>
-                                            <p className="text-xs text-(--base-07)">Currently on <span className="text-(--base-09)">{nodeLabelById(placementNodes, selectedServer.nodeId)}</span></p>
-                                            {moveNodes.length === 0 ? (
-                                                <p className="text-xs text-(--base-05) italic">No other online nodes available to transfer to.</p>
-                                            ) : (
-                                                <>
-                                                    <div className="flex gap-2 items-end">
-                                                        <div className="flex flex-col gap-[5px] flex-1 min-w-0">
-                                                            <label className="mono-label">Target Node</label>
-                                                            <select value={moveTargetNodeId} onChange={e => setMoveTargetNodeId(Number(e.target.value))} className="input-field text-sm" disabled={moveBusy}>
-                                                                {moveNodes.map(n => (
-                                                                    <option key={n.id} value={n.id}>{nodePickerLabel(n)}</option>
-                                                                ))}
-                                                            </select>
-                                                        </div>
-                                                        <button type="button" onClick={handleMoveServer} disabled={moveBusy || !moveTargetNodeId} className="btn btn-secondary btn-sm shrink-0">
-                                                            {moveBusy ? <><RefreshCw size={14} className="animate-spin" /> Queuing...</> : <><Move size={14} /> Move</>}
-                                                        </button>
-                                                    </div>
-                                                    <p className="text-xs text-(--base-06)">
-                                                        {routingMode === 'ip_port'
-                                                            ? "Moves the server and its files to another node; it is stopped for the move. Players then connect to the new node's address, with the same port if that node's port range has it free. A server domain follows on its own; anyone using IP:port needs the new address."
-                                                            : 'Live migration to another node. The gateway keeps the player address stable; the server is moved while idle.'}
-                                                    </p>
-                                                </>
-                                            )}
-                                            {moveMsg && (
-                                                <p className={`text-xs ${/queued|migration/i.test(moveMsg) ? 'text-(--success-light)' : 'text-(--error-light)'}`}>{moveMsg}</p>
-                                            )}
-                                            {migrationStatus && migrationStatus.phase !== 'none' && (
-                                                <div className="flex items-start gap-2 text-xs">
-                                                    {!TERMINAL_PHASES.includes(migrationStatus.phase)
-                                                        ? <RefreshCw size={13} className="animate-spin text-(--accent-light) mt-0.5 shrink-0" />
-                                                        : migrationStatus.phase === 'done'
-                                                            ? <Move size={13} className="text-(--success-light) mt-0.5 shrink-0" />
-                                                            : <AlertTriangle size={13} className="text-(--error-light) mt-0.5 shrink-0" />}
-                                                    <span className={migrationStatus.phase === 'done' ? 'text-(--success-light)' : (TERMINAL_PHASES.includes(migrationStatus.phase) ? 'text-(--error-light)' : 'text-(--base-07)')}>
-                                                        {migrationLine(migrationStatus)}
-                                                        {migrationStatus.error ? ` — ${migrationStatus.error}` : ''}
-                                                    </span>
-                                                </div>
-                                            )}
-                                        </div>
-                                    )}
-
-                                    {user?.isAdmin && storagePaths.length >= 1 && (
-                                        <div className="border-t border-(--base-03) pt-4 flex flex-col gap-3">
-                                            <div className="flex items-center gap-2">
-                                                <MoveHorizontal size={14} className="text-(--accent-light)" />
-                                                <span className="input-label mb-0">{storagePaths.length > 1 ? 'Storage Path Migration' : 'Storage Path'}</span>
-                                            </div>
-                                            <div className="flex flex-col gap-[5px]">
-                                                <label className="mono-label">Current Path</label>
-                                                <p className="text-xs font-mono text-(--base-07) bg-(--base-02) border border-(--base-03) rounded-md px-3 py-2 truncate">
-                                                    {storageCurrentPath || <span className="text-(--base-05) italic">unknown</span>}
-                                                </p>
-                                            </div>
-                                            {storagePaths.length > 1 && (
-                                                <>
-                                                    <div className="flex gap-2 items-end">
-                                                        <div className="flex flex-col gap-[5px] flex-1 min-w-0">
-                                                            <label className="mono-label">Migrate To</label>
-                                                            <select value={storageMigrateTarget} onChange={e => setStorageMigrateTarget(e.target.value)} className="input-field text-sm" disabled={storageMigrating}>
-                                                                {storagePaths.filter(p => p.path !== storageCurrentPath).map(p => (
-                                                                    <option key={p.path} value={p.path}>{p.path} — {(p.free_bytes / 1073741824).toFixed(1)} GB free</option>
-                                                                ))}
-                                                            </select>
-                                                        </div>
-                                                        <button type="button" onClick={handleMigrateStorage} disabled={storageMigrating || !storageMigrateTarget} className="btn btn-secondary btn-sm shrink-0">
-                                                            {storageMigrating ? <><RefreshCw size={14} className="animate-spin" /> Moving...</> : <><MoveHorizontal size={14} /> Migrate</>}
-                                                        </button>
-                                                    </div>
-                                                    {storageMigrateMsg && (
-                                                        <p className={`text-xs ${storageMigrateMsg.includes('queued') || storageMigrateMsg.includes('Migration') ? 'text-(--success-light)' : 'text-(--error-light)'}`}>
-                                                            {storageMigrateMsg}
-                                                        </p>
-                                                    )}
-                                                    <p className="text-xs text-(--base-06)">Server will be stopped during migration. Restart it manually after.</p>
-                                                </>
-                                            )}
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
-                        </div>
-                        <div className="shrink-0">
-                            <p className="px-5 pb-2 text-xs text-(--base-06)" aria-live="polite">{resourcePlan.note}</p>
-                            {resourcesMsg && (
-                                <div className="px-5 pb-1">
-                                    <div className="alert alert-error text-xs" role="alert">{resourcesMsg}</div>
-                                </div>
-                            )}
-                            <div className="modal-footer">
-                                <button onClick={() => { setShowEditResourcesPopup(false); setResourcesMsg(''); }} className="btn btn-secondary">Cancel</button>
-                                <button onClick={() => runSaveResources(handleSaveResources)} disabled={savingResources || !!pinMismatch(editCpuLimit, editCpuMode, editCpusetCpus)} title={pinMismatch(editCpuLimit, editCpuMode, editCpusetCpus) ? 'Pin exactly as many cores as the CPU limit' : undefined} className="btn btn-primary disabled:opacity-40">{resourcePlan.buttonLabel}</button>
-                            </div>
-                        </div>
-                    </ModalPanel>
-                </div>
-            )}
-
             {showRoutesModal && (
                 <RoutesModal
                     serverId={selectedServer.id}
@@ -1632,10 +588,6 @@ export default function ServerShell({ children }: { children: React.ReactNode })
                     onRoutesChanged={setServerRoutes}
                 />
             )}
-
-            {/* Floating toast for power-action rejections (cooldown 429s,
-                permission errors, etc.). Auto-dismisses after a few seconds. */}
-
         </main>
     );
 }

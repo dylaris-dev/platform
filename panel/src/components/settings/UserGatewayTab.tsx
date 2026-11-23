@@ -21,7 +21,7 @@ function Section({ title, empty, truncated, shown, children }: {
     const note = truncatedNote(!!truncated, shown ?? 0);
     return (
         <section>
-            <h4 className="mono-label mb-2">{title}</h4>
+            <h4 className="srv-label mb-2">{title}</h4>
             {empty !== null ? (
                 <p className="text-xs text-(--base-06) rounded-md bg-(--base-02) border border-(--base-03) p-3">{empty}</p>
             ) : (
@@ -36,7 +36,7 @@ function Section({ title, empty, truncated, shown, children }: {
 function Muted({ title, text }: { title: string; text: string }) {
     return (
         <section>
-            <h4 className="mono-label mb-2">{title}</h4>
+            <h4 className="srv-label mb-2">{title}</h4>
             <p className="text-xs text-(--base-06)">{text}</p>
         </section>
     );
@@ -83,7 +83,7 @@ function PlayerPeaks({ peaks }: { peaks: NonNullable<UserGateway['peaks']> }) {
     const series = peakSeries(peaks.days, peaks.day);
     return (
         <section>
-            <h4 className="mono-label mb-2">Player peaks</h4>
+            <h4 className="srv-label mb-2">Player peaks</h4>
             <div className="rounded-md bg-(--base-02) border border-(--base-03) p-3 space-y-2 mb-2">
                 <p className="text-xs text-(--base-09)">{peakLine('Peak today', peaks.today, true)}</p>
                 <p className="text-xs text-(--base-09)">{peakLine('Peak in the last 30 days', peaks.last30Days, false)}</p>
@@ -205,7 +205,7 @@ export default function UserGatewayTab({ userId }: { userId: string }) {
                 <Muted title="Plan and limits" text={hiddenNote(data.hidden, 'billing') ?? NOT_FOR_ROLE} />
             ) : (
                 <section>
-                    <h4 className="mono-label mb-2">Plan and limits</h4>
+                    <h4 className="srv-label mb-2">Plan and limits</h4>
                     <dl className="grid grid-cols-3 gap-3 rounded-md bg-(--base-02) border border-(--base-03) p-3">
                         {([
                             ['Links', `${data.kitsUsed} of ${limitText(limits.maxLinks)}`],
@@ -214,7 +214,7 @@ export default function UserGatewayTab({ userId }: { userId: string }) {
                             ['Own-domain limit', limitText(limits.maxCustomDomains)],
                         ] as const).map(([k, v]) => (
                             <div key={k} className="min-w-0">
-                                <dt className="mono-label">{k}</dt>
+                                <dt className="srv-label">{k}</dt>
                                 <dd className="text-sm text-(--base-09) mt-1">{v}</dd>
                             </div>
                         ))}
@@ -271,7 +271,7 @@ export default function UserGatewayTab({ userId }: { userId: string }) {
                 <Muted title="Traffic" text={hiddenNote(data.hidden, 'usage') ?? NOT_FOR_ROLE} />
             ) : (
                 <section>
-                    <h4 className="mono-label mb-2">Traffic {usage.period}</h4>
+                    <h4 className="srv-label mb-2">Traffic {usage.period}</h4>
                     {pool && poolLine && (
                         <div className="space-y-1.5 mb-2">
                             <div

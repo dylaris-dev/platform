@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-    advancePending, powerModel, startPending, PENDING_TIMEOUT_MS, POWER_COOLDOWN_MS, COOLDOWN_TITLE,
+    advancePending, powerModel, shownStatus, startPending, PENDING_TIMEOUT_MS, POWER_COOLDOWN_MS, COOLDOWN_TITLE,
     type PendingPower, type PowerAction, type PowerGates,
 } from './powerControls';
 
@@ -213,5 +213,15 @@ describe('powerModel per-action permissions', () => {
     it('admin Delete keeps the menu even without power.kill', () => {
         const m = powerModel('online', null, T0, { ...member, canDelete: true });
         expect(m).toMatchObject({ showMenu: true, menuDisabled: false, showKill: false });
+    });
+});
+
+describe('shownStatus', () => {
+    it('shows the pending action until it goes stale', () => {
+        const p = startPending('start', 'stopped', 1_000);
+        expect(shownStatus('stopped', p, 2_000)).toBe('starting');
+        expect(shownStatus('stopped', p, 1_000 + PENDING_TIMEOUT_MS)).toBe('stopped');
+        expect(shownStatus('online', null, 2_000)).toBe('online');
+        expect(shownStatus('online', startPending('kill', 'online', 0), 1)).toBe('stopping');
     });
 });

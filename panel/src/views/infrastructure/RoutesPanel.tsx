@@ -1,6 +1,7 @@
 "use client";
 
 import { toast as notifyToast } from '@/components/ui/Toast';
+import Tooltip from '@/components/ui/Tooltip';
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
@@ -9,8 +10,13 @@ import {
     GatewayRoute, GatewayEdge,
 } from '@/lib/api';
 import {
-    Trash2, RefreshCw, Ban, Undo2, AlertTriangle, X, Search, Copy, Check, Layers,
+    Trash2, RefreshCw, Ban, Undo2, AlertTriangle, X, Search, Copy, Check, Layers, Globe, MoreHorizontal,
 } from 'lucide-react';
+import Menu from '@/components/ui/Menu';
+import Section from '@/components/ui/Section';
+import EmptyState from '@/components/ui/EmptyState';
+import { RowList, RowHead } from '@/components/ui/RowList';
+import Callout from '@/components/server/Callout';
 import { SkeletonTable, SkeletonText } from '@/components/Skeleton';
 import ModalPanel from '@/components/ui/ModalPanel';
 
@@ -39,6 +45,9 @@ export default function RoutesPanel({ onlineEdges }: RoutesPanelProps) {
     const [unsuspending, setUnsuspending] = useState<string | null>(null);
 
     const [copied, setCopied] = useState<string | null>(null);
+    // The list polls every 5s and keeps its last answer, so a failure only
+    // matters while there is nothing to show.
+    const [loadFailed, setLoadFailed] = useState(false);
 
 
     const [bulkOpen, setBulkOpen] = useState(false);
@@ -56,7 +65,9 @@ export default function RoutesPanel({ onlineEdges }: RoutesPanelProps) {
             const res = await getGatewayRoutes();
             if (Array.isArray(res)) setRoutes(res);
             else if (res?.routes) setRoutes(res.routes);
-        } catch { /* silent */ }
+            else { setLoadFailed(true); return; }
+            setLoadFailed(false);
+        } catch { setLoadFailed(true); }
         finally { setLoading(false); }
     }, []);
 
@@ -92,7 +103,7 @@ export default function RoutesPanel({ onlineEdges }: RoutesPanelProps) {
         const res = await bulkDeleteRoutesBySuffix(bulkSelected);
         setBulkBusy(false);
         if (res.success) {
-            showToast(`Deleted ${res.deleted} route(s) under .${bulkSelected}${res.failed ? ` — ${res.failed} failed` : ''}`, res.failed ? 'error' : 'success');
+            showToast(`Deleted ${res.deleted} route(s) under .${bulkSelected}${res.failed ? `, ${res.failed} failed` : ''}`, res.failed ? 'error' : 'success');
             setBulkOpen(false);
             fetchRoutes();
         } else {
@@ -181,8 +192,8 @@ export default function RoutesPanel({ onlineEdges }: RoutesPanelProps) {
 
     if (loading) {
         return (
-            <div className="flex flex-col gap-4">
-                <div className="card p-4 flex flex-col gap-3">
+            <div className="flex flex-col gap-4" aria-busy="true">
+                <div className="srv-surface p-5 flex flex-col gap-3">
                     <SkeletonText width="w-32" className="h-4" />
                     <SkeletonTable rows={6} cols={5} />
                 </div>
@@ -191,201 +202,180 @@ export default function RoutesPanel({ onlineEdges }: RoutesPanelProps) {
     }
 
     return (
-        <div className="flex flex-col gap-4">
-            {/* DNS Targets */}
-            {onlineEdges.length > 0 && (
-                <div className="card p-4 flex flex-col gap-2.5">
-                    <div className="flex items-center gap-2">
-                        <span className="mono-label">DNS Targets</span>
-                        <span className="text-[11px] text-(--base-05)">— point your domains to one or more of these edge IPs</span>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                        {onlineEdges.map(edge => (
-                            <button
-                                key={edge.edge_id}
-                                onClick={() => copyToClipboard(edge.ip)}
-                                className="group flex items-center gap-2 px-3 py-1.5 rounded-md bg-(--base-02) border border-(--base-03) hover:border-(--accent-border) transition-colors"
-                                title={`${edge.name} — click to copy`}
-                            >
-                                <div className="w-1.5 h-1.5 rounded-full bg-(--success-light) shadow-[0_0_5px_var(--success-light)]" />
-                                <span className="font-mono text-xs text-(--base-09)">{edge.ip}</span>
-                                <span className="text-[10px] text-(--base-06) font-mono">{edge.name}</span>
-                                {copied === edge.ip
-                                    ? <Check size={12} className="text-(--success-light)" />
-                                    : <Copy size={12} className="text-(--base-05) group-hover:text-(--base-08) transition-colors" />
-                                }
-                            </button>
-                        ))}
-                    </div>
-                </div>
+        <div className="flex flex-col gap-6">
+            {loadFailed && routes.length === 0 && (
+                <EmptyState
+                    tone="error"
+                    icon={<AlertTriangle size={20} />}
+                    title="Could not load routes"
+                    description="The gateway route list did not load. Check that the gateway is reachable, then try again."
+                    action={<button type="button" onClick={fetchRoutes} className="btn btn-secondary btn-sm"><RefreshCw size={14} /> Retry</button>}
+                />
             )}
 
-            {/* Routes table */}
-            <div className="card p-4 flex flex-col gap-3 min-h-0">
-                <div className="flex items-center justify-between gap-3 flex-wrap">
-                    <div className="flex items-center gap-2">
-                        <h2 className="font-display text-base font-bold text-(--base-09)">Routes</h2>
-                        <span className="text-xs text-(--base-06)">
-                            ({filteredRoutes.length}{search ? ` of ${routes.length}` : ''})
-                        </span>
-                        {routes.length > 0 && (
-                            <button
-                                onClick={openBulkDelete}
-                                className="btn btn-secondary btn-sm ml-2 inline-flex items-center gap-1.5"
-                                title="Delete all routes that share a domain suffix"
-                            >
-                                <Layers size={12} />
-                                Bulk delete
-                            </button>
-                        )}
-                        <button
-                            onClick={handleSync}
-                            className="btn btn-secondary btn-sm ml-1 inline-flex items-center gap-1.5"
-                            title="Re-sync routes with the gateway"
-                        >
-                            <RefreshCw size={12} />
-                            Sync
-                        </button>
+            {/* DNS Targets */}
+            {onlineEdges.length > 0 && (
+                <Section title="DNS targets" description="Point your domains to one or more of these edge IPs.">
+                    <div className="flex flex-wrap gap-2">
+                        {onlineEdges.map(edge => (
+                            <Tooltip key={edge.edge_id} content={`${edge.name}: click to copy`}>
+                                <button
+                                    type="button"
+                                    onClick={() => copyToClipboard(edge.ip)}
+                                    className="srv-chip h-8 gap-2 cursor-pointer"
+                                >
+                                    <span className="size-1.5 rounded-full bg-(--success-light)" aria-hidden="true" />
+                                    <span className="srv-num text-(--base-09)">{edge.ip}</span>
+                                    <span className="text-(--base-06)">{edge.name}</span>
+                                    {copied === edge.ip
+                                        ? <Check size={14} className="text-(--success-light)" />
+                                        : <Copy size={14} className="text-(--base-06)" />
+                                    }
+                                </button>
+                            </Tooltip>
+                        ))}
                     </div>
-                    <div className="relative max-w-sm flex-1 min-w-[180px]">
-                        <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-(--base-05)" />
-                        <input
-                            type="text"
-                            placeholder="Search domain, target, link, server, owner..."
-                            value={search}
-                            onChange={e => setSearch(e.target.value)}
-                            className="input-field input-icon-left w-full"
-                        />
-                        {search && (
-                            <button
-                                onClick={() => setSearch('')}
-                                className="absolute right-2 top-1/2 -translate-y-1/2 text-(--base-05) hover:text-(--base-07) p-0.5"
-                            >
-                                <X size={13} />
-                            </button>
-                        )}
-                    </div>
-                </div>
+                </Section>
+            )}
 
-                <div className="overflow-auto">
-                    {routes.length === 0 ? (
-                        <p className="text-(--base-06) text-sm italic py-8 text-center">No routes configured. Add a route from a Server&apos;s setup tab.</p>
-                    ) : filteredRoutes.length === 0 ? (
-                        <p className="text-(--base-06) text-sm italic py-8 text-center">No routes match &ldquo;{search}&rdquo;</p>
-                    ) : (
-                        <table className="w-full text-sm">
-                            <thead className="sticky top-0 bg-(--base-02) z-10">
-                                <tr className="border-b border-(--base-03)">
-                                    <th className="mono-label text-left pb-2 pr-4">Domain</th>
-                                    <th className="mono-label text-left pb-2 pr-4">Target</th>
-                                    <th className="mono-label text-left pb-2 pr-4 hidden md:table-cell">Link</th>
-                                    <th className="mono-label text-left pb-2 pr-4 hidden lg:table-cell">Server</th>
-                                    <th className="mono-label text-left pb-2 pr-4 hidden lg:table-cell">Owner</th>
-                                    <th className="pb-2 w-16"></th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {filteredRoutes.map(route => (
-                                    <tr key={route.domain} className="border-b border-(--base-03)/50 hover:bg-(--base-03)/30 transition-colors group">
-                                        <td className="py-2.5 pr-4">
-                                            <div className="flex items-center gap-2">
-                                                <span className="text-(--base-09) font-medium">{route.domain}</span>
-                                                {route.suspended && (
-                                                    <span className="font-mono text-[9px] uppercase tracking-[0.08em] text-(--error-light) bg-(--error-ghost) border border-(--error-border) px-1.5 py-0.5 rounded" title={route.suspendedReason}>
-                                                        Suspended
-                                                    </span>
-                                                )}
-                                                <button
-                                                    onClick={() => copyToClipboard(route.domain)}
-                                                    className="text-(--base-05) hover:text-(--base-08) opacity-0 group-hover:opacity-100 transition-opacity p-0.5"
-                                                    title="Copy domain"
-                                                >
-                                                    {copied === route.domain
-                                                        ? <Check size={11} className="text-(--success-light)" />
-                                                        : <Copy size={11} />
-                                                    }
-                                                </button>
-                                            </div>
-                                        </td>
-                                        <td className="py-2.5 pr-4 text-(--base-07) font-mono text-xs">
-                                            {route.target_ip}:{route.target_port}
-                                            {route.suspended && route.suspendedReason && (
-                                                <div className="font-sans text-[11px] text-(--base-06) mt-0.5 max-w-xs truncate" title={route.suspendedReason}>{route.suspendedReason}</div>
-                                            )}
-                                        </td>
-                                        <td className="py-2.5 pr-4 text-(--base-07) hidden md:table-cell">{route.link_name || '—'}</td>
-                                        <td className="py-2.5 pr-4 text-(--base-07) hidden lg:table-cell">{route.server_name || '—'}</td>
-                                        <td className="py-2.5 pr-4 text-(--base-07) hidden lg:table-cell">{route.owner_name || '—'}</td>
-                                        <td className="py-2.5 whitespace-nowrap">
-                                            {route.core_owned && (route.suspended ? (
-                                                <button
-                                                    onClick={() => handleUnsuspend(route)}
-                                                    disabled={unsuspending !== null}
-                                                    className="text-(--base-05) hover:text-(--success-light) transition-colors p-1"
-                                                    title="Unsuspend route"
-                                                    aria-label={`Unsuspend ${route.domain}`}
-                                                >
-                                                    <Undo2 size={14} />
-                                                </button>
-                                            ) : (
-                                                <button
-                                                    onClick={() => { setSuspendReason(''); setSuspendModal(route); }}
-                                                    className="text-(--base-05) hover:text-(--error-light) transition-colors p-1"
-                                                    title="Suspend route"
-                                                    aria-label={`Suspend ${route.domain}`}
-                                                >
-                                                    <Ban size={14} />
-                                                </button>
-                                            ))}
-                                            <button
-                                                onClick={() => setDeleteModal(route)}
-                                                className="text-(--base-05) hover:text-(--error-light) transition-colors p-1"
-                                                title="Delete route"
-                                            >
-                                                <Trash2 size={14} />
-                                            </button>
-                                        </td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
+            {/* Routes */}
+            {!(loadFailed && routes.length === 0) && (
+            <Section
+                title="Routes"
+                description={`${filteredRoutes.length}${search ? ` of ${routes.length}` : ''} ${routes.length === 1 ? 'route' : 'routes'} served by the gateway.`}
+                actions={
+                    <>
+                        {routes.length > 0 && (
+                            <Tooltip content="Delete all routes that share a domain suffix">
+                                <button onClick={openBulkDelete} className="btn btn-secondary btn-sm">
+                                    <Layers size={14} />
+                                    Bulk delete
+                                </button>
+                            </Tooltip>
+                        )}
+                        <Tooltip content="Re-sync routes with the gateway">
+                            <button onClick={handleSync} className="btn btn-secondary btn-sm">
+                                <RefreshCw size={14} />
+                                Sync
+                            </button>
+                        </Tooltip>
+                    </>
+                }
+            >
+                <div className="relative max-w-sm">
+                    <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-(--base-06)" aria-hidden="true" />
+                    <input
+                        type="text"
+                        placeholder="Search domain, target, link, server, owner..."
+                        aria-label="Search routes"
+                        value={search}
+                        onChange={e => setSearch(e.target.value)}
+                        className="input-field input-icon-left w-full"
+                    />
+                    {search && (
+                        <button
+                            onClick={() => setSearch('')}
+                            aria-label="Clear search"
+                            className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-(--base-06) hover:text-(--base-09) focus-visible:outline-none focus-visible:[box-shadow:var(--focus-ring)]"
+                        >
+                            <X size={14} />
+                        </button>
                     )}
                 </div>
-            </div>
+
+                {routes.length === 0 ? (
+                    <EmptyState icon={<Globe size={20} />} title="No routes configured" description="Add a route from a server's setup tab." />
+                ) : filteredRoutes.length === 0 ? (
+                    <EmptyState icon={<Search size={20} />} title={`No routes match "${search}"`} />
+                ) : (
+                    <div className="srv-surface overflow-x-auto">
+                        <div className="min-w-[40rem]">
+                            <RowList label="Routes">
+                                <RowHead>
+                                    <span className="flex-1">Domain and target</span>
+                                    <span className="hidden w-32 md:block">Link</span>
+                                    <span className="hidden w-32 lg:block">Server</span>
+                                    <span className="hidden w-28 lg:block">Owner</span>
+                                    <span className="w-8" />
+                                </RowHead>
+                                {filteredRoutes.map(route => (
+                                    <div key={route.domain} role="listitem" className="app-row">
+                                        <div className="min-w-0 flex-1">
+                                            <div className="flex items-center gap-2">
+                                                <span className="truncate text-sm font-medium text-(--base-09)">{route.domain}</span>
+                                                {route.suspended && (
+                                                    <Tooltip content={route.suspendedReason || 'Suspended'}>
+                                                        <span className="srv-chip bg-(--error-ghost)! text-(--error-light)!">Suspended</span>
+                                                    </Tooltip>
+                                                )}
+                                                {copied === route.domain && <Check size={14} className="text-(--success-light)" aria-label="Copied" />}
+                                            </div>
+                                            <div className="srv-num mt-0.5 truncate text-xs text-(--base-06)">
+                                                {route.target_ip}:{route.target_port}
+                                                {route.suspended && route.suspendedReason && (
+                                                    <span className="ml-2 font-body text-(--base-06)">{route.suspendedReason}</span>
+                                                )}
+                                            </div>
+                                        </div>
+                                        <span className="hidden w-32 truncate text-sm text-(--base-07) md:block">{route.link_name || '-'}</span>
+                                        <span className="hidden w-32 truncate text-sm text-(--base-07) lg:block">{route.server_name || '-'}</span>
+                                        <span className="hidden w-28 truncate text-sm text-(--base-07) lg:block">{route.owner_name || '-'}</span>
+                                        <Menu
+                                            trigger={
+                                                <button type="button" aria-label={`Actions for ${route.domain}`} className="app-icon-btn size-8!">
+                                                    <MoreHorizontal size={16} />
+                                                </button>
+                                            }
+                                            items={[
+                                                { label: 'Copy domain', icon: <Copy size={14} />, onSelect: () => copyToClipboard(route.domain) },
+                                                ...(route.core_owned ? [route.suspended
+                                                    ? { label: 'Unsuspend route', icon: <Undo2 size={14} />, onSelect: () => handleUnsuspend(route), disabled: unsuspending !== null }
+                                                    : { label: 'Suspend route', icon: <Ban size={14} />, onSelect: () => { setSuspendReason(''); setSuspendModal(route); } }] : []),
+                                                { type: 'separator' as const },
+                                                { label: 'Delete route', icon: <Trash2 size={14} />, danger: true, onSelect: () => setDeleteModal(route) },
+                                            ]}
+                                        />
+                                    </div>
+                                ))}
+                            </RowList>
+                        </div>
+                    </div>
+                )}
+            </Section>
+            )}
 
             {/* Suspend modal */}
             {suspendModal && (
                 <div className="modal-overlay">
-                    <ModalPanel className="card w-full max-w-sm p-6 flex flex-col gap-4">
-                        <div className="flex items-center justify-between">
-                            <h2 className="font-display text-base font-bold text-(--base-09)">Suspend Route</h2>
-                            <button onClick={() => setSuspendModal(null)} className="p-1 text-(--base-06) hover:text-(--base-09)" aria-label="Close">
-                                <X size={15} />
+                    <ModalPanel className="modal-panel w-full max-w-sm">
+                        <div className="modal-header flex items-center justify-between">
+                            <h2 className="modal-title">Suspend route</h2>
+                            <button onClick={() => setSuspendModal(null)} className="app-icon-btn size-8!" aria-label="Close">
+                                <X size={16} />
                             </button>
                         </div>
-                        <p className="text-sm text-(--base-07)">
-                            <span className="text-(--base-09) font-medium">{suspendModal.domain}</span> goes offline at once and its owner cannot re-create it. The reason is stored with the route.
-                        </p>
-                        <textarea
-                            value={suspendReason}
-                            onChange={e => setSuspendReason(e.target.value)}
-                            maxLength={500}
-                            rows={3}
-                            placeholder="Reason (required)"
-                            aria-label="Reason"
-                            className="input-field w-full"
-                        />
-                        <div className="flex justify-end gap-2">
-                            <button
-                                onClick={() => setSuspendModal(null)}
-                                className="px-4 py-2 rounded-md text-sm text-(--base-07) hover:text-(--base-09) transition-colors"
-                            >
+                        <div className="modal-body space-y-3">
+                            <p className="text-sm text-(--base-07)">
+                                <span className="text-(--base-09) font-medium">{suspendModal.domain}</span> goes offline at once and its owner cannot re-create it. The reason is stored with the route.
+                            </p>
+                            <textarea
+                                value={suspendReason}
+                                onChange={e => setSuspendReason(e.target.value)}
+                                maxLength={500}
+                                rows={3}
+                                placeholder="Reason (required)"
+                                aria-label="Reason"
+                                className="input-field w-full"
+                            />
+                        </div>
+                        <div className="modal-footer">
+                            <button onClick={() => setSuspendModal(null)} className="btn btn-secondary">
                                 Cancel
                             </button>
                             <button
                                 onClick={handleSuspend}
                                 disabled={suspending || !suspendReason.trim()}
-                                className="px-4 py-2 rounded-md text-sm font-semibold bg-(--error) text-white hover:opacity-90 transition-opacity disabled:opacity-40"
+                                className="btn btn-danger"
                             >
                                 {suspending ? 'Suspending...' : 'Suspend'}
                             </button>
@@ -397,32 +387,27 @@ export default function RoutesPanel({ onlineEdges }: RoutesPanelProps) {
             {/* Delete confirm modal */}
             {deleteModal && (
                 <div className="modal-overlay">
-                    <ModalPanel className="card w-full max-w-sm p-6 flex flex-col gap-4">
-                        <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-2">
+                    <ModalPanel className="modal-panel w-full max-w-sm">
+                        <div className="modal-header flex items-center justify-between">
+                            <h2 className="modal-title flex items-center gap-2">
                                 <AlertTriangle size={16} className="text-(--error-light)" />
-                                <h2 className="font-display text-base font-bold text-(--base-09)">Delete Route</h2>
-                            </div>
-                            <button onClick={() => setDeleteModal(null)} className="p-1 text-(--base-06) hover:text-(--base-09)">
-                                <X size={15} />
+                                Delete route
+                            </h2>
+                            <button onClick={() => setDeleteModal(null)} className="app-icon-btn size-8!" aria-label="Close">
+                                <X size={16} />
                             </button>
                         </div>
-                        <p className="text-sm text-(--base-07)">
-                            Delete route <span className="text-(--base-09) font-medium">{deleteModal.domain}</span>?
-                            This will immediately stop routing traffic through this entry.
-                        </p>
-                        <div className="flex justify-end gap-2">
-                            <button
-                                onClick={() => setDeleteModal(null)}
-                                className="px-4 py-2 rounded-md text-sm text-(--base-07) hover:text-(--base-09) transition-colors"
-                            >
+                        <div className="modal-body">
+                            <p className="text-sm text-(--base-07)">
+                                Delete route <span className="text-(--base-09) font-medium">{deleteModal.domain}</span>?
+                                This will immediately stop routing traffic through this entry.
+                            </p>
+                        </div>
+                        <div className="modal-footer">
+                            <button onClick={() => setDeleteModal(null)} className="btn btn-secondary">
                                 Cancel
                             </button>
-                            <button
-                                onClick={handleDeleteRoute}
-                                disabled={deleting}
-                                className="px-4 py-2 rounded-md text-sm font-semibold bg-(--error) text-white hover:opacity-90 transition-opacity disabled:opacity-40"
-                            >
+                            <button onClick={handleDeleteRoute} disabled={deleting} className="btn btn-danger">
                                 {deleting ? 'Deleting...' : 'Delete'}
                             </button>
                         </div>
@@ -437,22 +422,22 @@ export default function RoutesPanel({ onlineEdges }: RoutesPanelProps) {
                         <div className="modal-header flex items-center justify-between">
                             <h3 className="modal-title flex items-center gap-2 text-(--error-light)">
                                 <Layers size={18} />
-                                Bulk Delete Routes
+                                Bulk delete routes
                             </h3>
-                            <button onClick={() => setBulkOpen(false)} className="text-(--base-06) hover:text-(--error-light)">
-                                <X size={18} />
+                            <button onClick={() => setBulkOpen(false)} className="app-icon-btn size-8!" aria-label="Close">
+                                <X size={16} />
                             </button>
                         </div>
                         <div className="modal-body space-y-3">
                             <p className="text-sm text-(--base-07)">
                                 Pick a domain suffix. Every route whose domain equals or ends with{' '}
-                                <code className="font-mono text-(--base-09) bg-(--base-02) px-1 py-0.5 rounded">.{`<suffix>`}</code>{' '}
+                                <code className="srv-num text-(--base-09) bg-(--base-03) px-1 py-0.5 rounded">.{`<suffix>`}</code>{' '}
                                 will be deleted. Independent of configured hoster domains.
                             </p>
                             {bulkSuffixes.length === 0 ? (
-                                <p className="text-xs text-(--base-06) italic py-6 text-center">No suffixes found.</p>
+                                <p className="py-6 text-center text-[13px] text-(--base-06)">No suffixes found.</p>
                             ) : (
-                                <div className="flex flex-col gap-1 max-h-72 overflow-y-auto rounded-md border border-(--base-03) bg-(--base-02) p-1.5">
+                                <div className="flex flex-col gap-0.5 max-h-72 overflow-y-auto rounded-lg bg-(--base-02) p-1.5">
                                     {bulkSuffixes.map(s => {
                                         const selected = bulkSelected === s.suffix;
                                         return (
@@ -460,32 +445,28 @@ export default function RoutesPanel({ onlineEdges }: RoutesPanelProps) {
                                                 key={`${s.depth}-${s.suffix}`}
                                                 type="button"
                                                 onClick={() => setBulkSelected(s.suffix)}
-                                                className={`flex items-center gap-2 px-2 py-1.5 rounded-md text-left transition-colors ${
-                                                    selected
-                                                        ? 'bg-(--error-ghost) border border-(--error-border)'
-                                                        : 'border border-transparent hover:bg-(--base-03)'
+                                                aria-pressed={selected}
+                                                className={`flex items-center gap-2 px-2 py-1.5 rounded-md text-left transition-colors focus-visible:outline-none focus-visible:[box-shadow:var(--focus-ring)] ${
+                                                    selected ? 'bg-(--error-ghost)' : 'hover:bg-(--base-03)'
                                                 }`}
                                             >
-                                                <span className="font-mono text-[9px] uppercase tracking-[0.08em] text-(--base-06) bg-(--base-03) px-1.5 py-0.5 rounded">
+                                                <span className="srv-chip h-5 px-2 text-[11px]">
                                                     {s.depth === 1 ? 'apex' : 'sub'}
                                                 </span>
-                                                <span className="flex-1 font-mono text-sm text-(--base-09) truncate">
+                                                <span className="srv-num flex-1 text-sm text-(--base-09) truncate">
                                                     *.{s.suffix}
                                                 </span>
-                                                <span className="font-mono text-xs text-(--base-06)">{s.count} route{s.count !== 1 ? 's' : ''}</span>
+                                                <span className="srv-num text-xs text-(--base-06)">{s.count} route{s.count !== 1 ? 's' : ''}</span>
                                             </button>
                                         );
                                     })}
                                 </div>
                             )}
                             {bulkSelected && (
-                                <div className="alert alert-error text-xs">
-                                    <AlertTriangle size={14} className="shrink-0 mt-0.5" />
-                                    <span>
-                                        This will permanently delete every route ending in{' '}
-                                        <code className="font-mono">.{bulkSelected}</code>. Action cannot be undone.
-                                    </span>
-                                </div>
+                                <Callout tone="error" icon={<AlertTriangle size={16} />} role="alert">
+                                    This will permanently delete every route ending in{' '}
+                                    <code className="srv-num">.{bulkSelected}</code>. Action cannot be undone.
+                                </Callout>
                             )}
                         </div>
                         <div className="modal-footer">
@@ -501,21 +482,18 @@ export default function RoutesPanel({ onlineEdges }: RoutesPanelProps) {
                                 type="button"
                                 onClick={handleBulkDelete}
                                 disabled={!bulkSelected || bulkBusy || bulkConfirmCountdown > 0}
-                                className="btn btn-danger disabled:opacity-40 inline-flex items-center gap-1.5"
+                                className="btn btn-danger"
                             >
                                 {bulkBusy
-                                    ? <><RefreshCw size={13} className="animate-spin" /> Deleting…</>
+                                    ? <><RefreshCw size={14} className="animate-spin" /> Deleting...</>
                                     : bulkConfirmCountdown > 0
                                         ? `Delete (${bulkConfirmCountdown}s)`
-                                        : <><Trash2 size={13} /> Delete all matching</>}
+                                        : <><Trash2 size={14} /> Delete all matching</>}
                             </button>
                         </div>
                     </ModalPanel>
                 </div>
             )}
-
-            {/* Toasts */}
-
         </div>
     );
 }

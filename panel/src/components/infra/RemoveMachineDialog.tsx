@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { AlertTriangle, Loader2, Trash2 } from 'lucide-react';
+import Checkbox from '@/components/ui/Checkbox';
 import { getMyNodeContents, deleteMyNode, type MyNodeServer } from '@/lib/api/myNodes';
 
 /**
@@ -71,7 +72,7 @@ export default function RemoveMachineDialog({
             aria-labelledby="remove-machine-title"
             onClick={e => { if (e.target === e.currentTarget && !busy) onClose(); }}
         >
-            <div className="w-full max-w-lg rounded-lg border border-(--base-03) bg-(--base-01) shadow-xl">
+            <div className="w-full max-w-lg rounded-xl bg-(--base-02) shadow-xl">
                 <div className="flex items-start gap-3 p-5 pb-3">
                     <AlertTriangle size={18} className="mt-0.5 shrink-0 text-(--error-light)" aria-hidden="true" />
                     <div className="min-w-0">
@@ -98,23 +99,14 @@ export default function RemoveMachineDialog({
                             {count === 0 ? (
                                 <p className="py-1 text-xs text-(--base-06)">Nothing is running on it.</p>
                             ) : (
-                                <label className="flex cursor-pointer items-start gap-2.5 rounded-md border border-(--base-03) bg-(--base-02) p-3">
-                                    <input
-                                        type="checkbox"
+                                <div className="rounded-lg bg-(--base-03) p-3">
+                                    <Checkbox
                                         checked={withServers}
-                                        onChange={e => setWithServers(e.target.checked)}
-                                        className="mt-0.5 accent-(--error)"
+                                        onChange={setWithServers}
+                                        label={`Delete the ${count} server${count === 1 ? '' : 's'} on it as well`}
+                                        hint="Worlds, configuration and uploads included. Leave this unticked and move them to another machine first if you want to keep them."
                                     />
-                                    <span className="min-w-0 text-xs">
-                                        <span className="text-(--base-09)">
-                                            Delete the {count} server{count === 1 ? '' : 's'} on it as well
-                                        </span>
-                                        <span className="mt-1 block text-(--base-06)">
-                                            Worlds, configuration and uploads included. Leave this unticked
-                                            and move them to another machine first if you want to keep them.
-                                        </span>
-                                    </span>
-                                </label>
+                                </div>
                             )}
                             {blocked && (
                                 <p className="mt-2 text-xs text-(--warning-light)">
@@ -135,9 +127,9 @@ export default function RemoveMachineDialog({
                     {step === 2 && (
                         <ul className="space-y-2 py-1">
                             {(servers ?? []).map(s => (
-                                <li key={s.id} className="rounded-md border border-(--error)/30 bg-(--error-ghost) p-3">
+                                <li key={s.id} className="rounded-lg bg-(--error-ghost) p-3">
                                     <div className="text-xs font-medium text-(--base-09)">{s.name}</div>
-                                    <div className="mono-label mt-0.5 text-(--base-06)">{s.uuid}</div>
+                                    <div className="srv-label mt-0.5 text-(--base-06)">{s.uuid}</div>
                                     {s.subServers.length > 0 && (
                                         <ul className="mt-1.5 space-y-0.5">
                                             {s.subServers.map(sub => (

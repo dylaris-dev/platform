@@ -15,6 +15,10 @@ import { Badge } from '@/components/ui/Badge';
 import { useBusy } from '@/lib/useBusy';
 import { toast } from '@/components/ui/Toast';
 import ModalPanel from '@/components/ui/ModalPanel';
+import PageHeader from '@/components/ui/PageHeader';
+import Section from '@/components/ui/Section';
+import EmptyState from '@/components/ui/EmptyState';
+import Callout from '@/components/server/Callout';
 
 // top-level packs list. Per-user authored packs on the unified pack API.
 // The builder UI lives at /modpacks/<id>; this page covers create + list +
@@ -102,14 +106,31 @@ export default function PacksListPage() {
         }
     };
 
+    const packCard = (p: Pack | SharedPack, trailing: React.ReactNode, menu?: React.ReactNode) => (
+        <div key={p.id} className="mp-card">
+            <Link href={`/modpacks/${p.id}`} className="mp-card-link">
+                <span className="mp-card-icon">
+                    <ProjectIcon name={p.internalName} url={metadata.projects[p.modrinthProjectId]?.icon_url} className="size-10" />
+                </span>
+                <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-medium text-(--base-09)">{p.internalName}</span>
+                    <span className="srv-num block truncate text-xs text-(--base-06)">/{p.internalSlug}</span>
+                </span>
+            </Link>
+            {p.summary && <p className="line-clamp-2 px-4 text-[13px] text-(--base-07)">{p.summary}</p>}
+            <div className="mt-auto flex items-center gap-2 px-4 pb-4 pt-3">{trailing}</div>
+            {menu && <div className="mp-card-menu">{menu}</div>}
+        </div>
+    );
+
     return (
-        <main className="flex-1 min-h-0 overflow-y-auto p-5">
-            <header className="flex items-center gap-3 mb-4">
-                <Package size={20} className="text-(--accent-light)" />
-                <h1 className="text-base font-display font-semibold text-(--base-09)">My Modpacks</h1>
-                <div className="ml-auto flex items-center gap-2">
-                    <button onClick={refresh} className="btn btn-secondary btn-sm" disabled={loading}>
-                        <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
+        <main className="flex-1 min-h-0 overflow-y-auto app-page space-y-6">
+            <PageHeader
+                title="My modpacks"
+                description="Every pack is a Modrinth project. Build here, publish to Modrinth, export an .mrpack or install it on a server."
+                actions={<>
+                    <button onClick={refresh} className="btn btn-secondary btn-sm" disabled={loading} aria-label="Refresh">
+                        <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
                     </button>
                     <button
                         onClick={() => setCreating({ internalName: '', slug: '', summary: '' })}
@@ -120,148 +141,101 @@ export default function PacksListPage() {
                         <Plus size={13} />
                         New Pack
                     </button>
-                </div>
-            </header>
+                </>}
+            />
 
-            {noStorage && (
-                <div className="card p-3 border border-(--warning) bg-(--warning)/10 mb-4 flex items-start gap-2">
-                    <CircleAlert size={16} className="text-(--warning) mt-0.5 shrink-0" />
-                    <div className="text-xs text-(--base-09)">
-                        Modpack storage is not configured, so archives have nowhere to go and nothing
-                        can be created yet.
-                        {user?.isAdmin ? (
-                            <>
-                                {' '}Pick local paths or a storage connection under{' '}
-                                <Link href="/settings/modpacks" className="text-(--accent-light)">Settings, Modpacks</Link>.
-                            </>
-                        ) : (
-                            ' Ask an administrator to configure it.'
-                        )}
-                    </div>
+            {(noStorage || modrinth.tokenInvalid || (!modrinth.connected && !modrinth.tokenInvalid && !cannotAuthor) || modpacksDisabled) && (
+                <div className="space-y-2">
+                    {noStorage && (
+                        <Callout tone="warning" icon={<CircleAlert size={16} />} title="Modpack storage is not configured">
+                            Archives have nowhere to go, so nothing can be created yet.
+                            {user?.isAdmin ? (
+                                <>
+                                    {' '}Pick local paths or a storage connection under{' '}
+                                    <Link href="/settings/modpacks" className="text-(--accent-light)">Settings, Modpacks</Link>.
+                                </>
+                            ) : (
+                                ' Ask an administrator to configure it.'
+                            )}
+                        </Callout>
+                    )}
+                    {modrinth.tokenInvalid && (
+                        <Callout
+                            tone="warning"
+                            icon={<CircleAlert size={16} />}
+                            title="Modrinth no longer accepts your token"
+                            actions={<>
+                                <Link href="/account/modrinth" className="btn btn-primary btn-sm">Renew token</Link>
+                                <button onClick={() => runClear(handleClear)} disabled={clearing} className="btn btn-secondary btn-sm disabled:opacity-40">Clear</button>
+                            </>}
+                        >
+                            Packs you reach through a Modrinth team are read only for a day, then locked. Renew the token to work on them
+                            again, or clear the ones you no longer have access to from your list.
+                        </Callout>
+                    )}
+                    {!modrinth.connected && !modrinth.tokenInvalid && !cannotAuthor && (
+                        <Callout tone="info" icon={<CircleAlert size={16} />}>
+                            Every pack is a Modrinth project, so a new pack needs your Modrinth token.{' '}
+                            <Link href="/account/modrinth" className="text-(--accent-light)">Connect it under Account, Modrinth</Link>.
+                        </Callout>
+                    )}
+                    {modpacksDisabled && (
+                        <Callout tone="warning" icon={<CircleAlert size={16} />}>
+                            Modpack authoring is disabled by the platform admin. Existing packs remain readable and downloadable.
+                        </Callout>
+                    )}
                 </div>
             )}
 
-            {modrinth.tokenInvalid && (
-                <div className="card p-3 border border-(--warning) bg-(--warning)/10 mb-4 flex items-start gap-2">
-                    <CircleAlert size={16} className="text-(--warning) mt-0.5 shrink-0" />
-                    <div className="text-xs text-(--base-09) flex-1">
-                        Modrinth no longer accepts your token, so packs you reach through a Modrinth
-                        team are read only for a day, then locked. Renew the token to work on them
-                        again, or clear the ones you no longer have access to from your list.
+            <Section
+                title="Your packs"
+                description={<>Who may work on a pack is its Modrinth team, managed on modrinth.com. <Link href="/account/modrinth" className="inline-flex items-center gap-1 text-(--accent-light)">Connect your token <ExternalLink size={10} /></Link></>}
+            >
+                {loading ? (
+                    <div className="mp-grid" aria-busy="true">
+                        {Array.from({ length: 6 }).map((_, i) => (
+                            <SkeletonCard key={i} height="h-28" />
+                        ))}
                     </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                        <Link href="/account/modrinth" className="btn btn-primary btn-sm">Renew token</Link>
-                        <button onClick={() => runClear(handleClear)} disabled={clearing} className="btn btn-secondary btn-sm disabled:opacity-40">Clear</button>
+                ) : packs.length === 0 ? (
+                    <EmptyState icon={<Package size={20} />} title="No packs yet" description="Create your first one to get started." />
+                ) : (
+                    <div className="mp-grid">
+                        {packs.map(p => packCard(
+                            p,
+                            p.modrinthProjectId
+                                ? <Badge variant="success">on modrinth</Badge>
+                                : <Badge variant="neutral">local only</Badge>,
+                            <button
+                                onClick={() => setDeletePrompt(p)}
+                                className="app-icon-btn"
+                                aria-label={`Delete ${p.internalName}`}
+                                title={modpacksDisabled ? 'Modpack authoring is disabled' : 'Delete'}
+                                disabled={modpacksDisabled}
+                            >
+                                <Trash2 size={14} />
+                            </button>,
+                        ))}
                     </div>
-                </div>
-            )}
-
-            {!modrinth.connected && !modrinth.tokenInvalid && !cannotAuthor && (
-                <div className="card p-3 mb-4 flex items-start gap-2 text-xs text-(--base-07)">
-                    <CircleAlert size={14} className="text-(--accent-light) mt-0.5 shrink-0" />
-                    <div>
-                        Every pack is a Modrinth project, so a new pack needs your Modrinth token.{' '}
-                        <Link href="/account/modrinth" className="text-(--accent-light)">Connect it under Account, Modrinth</Link>.
-                    </div>
-                </div>
-            )}
-
-            {modpacksDisabled && (
-                <div className="card p-3 border border-(--warning) bg-(--warning)/10 mb-4 flex items-start gap-2">
-                    <CircleAlert size={16} className="text-(--warning) mt-0.5 shrink-0" />
-                    <div className="text-xs text-(--base-09)">
-                        Modpack authoring is disabled by the platform admin.
-                        Existing packs remain readable and downloadable.
-                    </div>
-                </div>
-            )}
-
-            <div className="card p-4 mb-4 text-xs text-(--base-07) flex items-start gap-2">
-                <Package size={14} className="text-(--accent-light) shrink-0 mt-0.5" />
-                <div>
-                    Every pack is a Modrinth project (
-                    <Link href="/account/modrinth" className="text-(--accent-light) inline-flex items-center gap-1">
-                        connect your token <ExternalLink size={9} />
-                    </Link>
-                    ). Who may work on it is its Modrinth team, managed on modrinth.com. Build
-                    here, publish to Modrinth, export an .mrpack or install it on a server.
-                </div>
-            </div>
-
-            {loading ? (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                    {Array.from({ length: 6 }).map((_, i) => (
-                        <SkeletonCard key={i} height="h-28" />
-                    ))}
-                </div>
-            ) : packs.length === 0 ? (
-                <div className="card p-8 flex flex-col items-center text-center gap-2">
-                    <Package size={28} className="text-(--base-05)" />
-                    <p className="text-sm text-(--base-07)">No packs yet.</p>
-                    <p className="text-xs text-(--base-06)">Create your first one to get started.</p>
-                </div>
-            ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                    {packs.map(p => (
-                        <Link key={p.id} href={`/modpacks/${p.id}`} className="card p-4 hover:border-(--accent-border) transition-colors group">
-                            <div className="flex items-start gap-3">
-                                <div className="w-10 h-10 rounded-md bg-(--base-03) flex items-center justify-center shrink-0">
-                                    <ProjectIcon name={p.internalName} url={metadata.projects[p.modrinthProjectId]?.icon_url} className="w-10 h-10" />
-                                </div>
-                                <div className="min-w-0 flex-1">
-                                    <div className="text-sm font-medium text-(--base-09) truncate group-hover:text-(--accent-light)">{p.internalName}</div>
-                                    <div className="text-[10px] font-mono text-(--base-06) truncate">/{p.internalSlug}</div>
-                                </div>
-                                <button
-                                    onClick={(e) => { e.preventDefault(); setDeletePrompt(p); }}
-                                    className="text-(--base-06) hover:text-(--error-light) shrink-0 disabled:opacity-30 disabled:hover:text-(--base-06) disabled:cursor-not-allowed"
-                                    title={modpacksDisabled ? 'Modpack authoring is disabled' : 'Delete'}
-                                    disabled={modpacksDisabled}
-                                >
-                                    <Trash2 size={12} />
-                                </button>
-                            </div>
-                            {p.summary && <p className="text-xs text-(--base-07) line-clamp-2 mt-2">{p.summary}</p>}
-                            <div className="mt-3 flex items-center gap-2 flex-wrap">
-                                {p.modrinthProjectId
-                                    ? <Badge variant="success">on modrinth</Badge>
-                                    : <Badge variant="neutral">local only</Badge>
-                                }
-                            </div>
-                        </Link>
-                    ))}
-                </div>
-            )}
+                )}
+            </Section>
 
             {/* Packs the reader reaches through a Modrinth team. */}
             {!loading && shared.length > 0 && (
-                <section className="mt-6">
-                    <h2 className="mono-label text-(--base-06) mb-2">Modrinth team</h2>
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                        {shared.map(p => (
-                            <Link key={p.id} href={`/modpacks/${p.id}`} className="card p-4 hover:border-(--accent-border) transition-colors group">
-                                <div className="flex items-start gap-3">
-                                    <div className="w-10 h-10 rounded-md bg-(--base-03) flex items-center justify-center shrink-0">
-                                        <ProjectIcon name={p.internalName} url={metadata.projects[p.modrinthProjectId]?.icon_url} className="w-10 h-10" />
-                                    </div>
-                                    <div className="min-w-0 flex-1">
-                                        <div className="text-sm font-medium text-(--base-09) truncate group-hover:text-(--accent-light)">{p.internalName}</div>
-                                        <div className="text-[10px] font-mono text-(--base-06) truncate">/{p.internalSlug}</div>
-                                    </div>
-                                </div>
-                                <div className="mt-3 flex items-center gap-2 flex-wrap">
-                                    {p.tokenInvalid
-                                        ? <Badge variant="warning">renew token</Badge>
-                                        : <Badge variant="neutral">{p.canEdit ? (p.canDelete ? 'edit & delete' : 'edit') : p.canDelete ? 'delete' : 'view'}</Badge>}
-                                </div>
-                            </Link>
+                <Section title="Modrinth team" description="Packs of Modrinth teams you are in.">
+                    <div className="mp-grid">
+                        {shared.map(p => packCard(
+                            p,
+                            p.tokenInvalid
+                                ? <Badge variant="warning">renew token</Badge>
+                                : <Badge variant="neutral">{p.canEdit ? (p.canDelete ? 'edit & delete' : 'edit') : p.canDelete ? 'delete' : 'view'}</Badge>,
                         ))}
                     </div>
-                </section>
+                </Section>
             )}
 
             {!loading && packs.length > 0 && (
-                <div className="mt-6"><PackActivity showPack /></div>
+                <PackActivity showPack />
             )}
 
             {/* Create */}

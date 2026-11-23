@@ -2,10 +2,18 @@
 
 import React, { useState, useEffect, useMemo, useRef, useCallback, lazy, Suspense } from 'react';
 
-import { AlertTriangle, RotateCcw, Code2, ListChecks, Search, FileQuestion, Power } from 'lucide-react';
+import { AlertTriangle, RotateCcw, Search, FileQuestion, Power } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import { SkeletonFormRow } from '@/components/Skeleton';
 import { toast } from '@/components/ui/Toast';
+import Select from '@/components/ui/Select';
+import Switch from '@/components/ui/Switch';
+import Segmented from '@/components/ui/Segmented';
+import Callout from '@/components/server/Callout';
+import { Input, InputGroup } from '@ui-sdk/react/input';
+import { Textarea } from '@ui-sdk/react/textarea';
+import { NumberInput, NumberInputControl, NumberInputGroup } from '@ui-sdk/react/number-input';
+import { Slider, SliderControl, SliderIndicator, SliderThumb, SliderTrack } from '@ui-sdk/react/slider';
 import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
 import { SettingsCardSave } from '@/components/settings/SettingsCard';
 import { getFileContent, saveFile } from '@/lib/api';
@@ -53,94 +61,80 @@ function PropertyRow({ def, raw, onChange, edited }: PropertyRowProps) {
     const commit = (next: string | boolean | number) => onChange(def.key, stringifyValue(def, next));
 
     return (
-        <div className={`grid grid-cols-[20rem_auto] gap-6 items-start py-3 border-b border-(--base-03) last:border-b-0 ${edited ? 'border-l-2 border-l-(--accent) -ml-3 pl-3' : ''}`}>
+        <div className="srv-config-row" data-edited={edited ? 'true' : undefined}>
             <div className="min-w-0">
-                <div className="flex items-center gap-2 flex-wrap">
+                <div className="flex flex-wrap items-center gap-2">
                     <label htmlFor={`prop-${def.key}`} className="text-sm font-medium text-(--base-09)">{def.label}</label>
-                    <code className="font-mono text-[10px] text-(--base-05)">{def.key}</code>
-                    {edited && <span className="mono-label text-(--accent-light)">edited</span>}
-                    {def.requiresRestart && (
-                        <span className="mono-label text-(--warning-light) bg-(--warning-ghost) border border-(--warning-border) rounded-sm px-1.5">restart</span>
-                    )}
+                    <code className="srv-config-key">{def.key}</code>
+                    {edited && <span className="srv-config-pill">Edited</span>}
+                    {def.requiresRestart && <span className="srv-config-pill" data-tone="warning">Restart</span>}
                 </div>
                 {def.description && (
-                    <p className="text-xs text-(--base-06) mt-0.5">{def.description}</p>
+                    <p className="mt-1 text-xs leading-relaxed text-(--base-06)">{def.description}</p>
                 )}
             </div>
-            <div className="flex items-center">
+            <div className="srv-config-control">
                 {def.type === 'toggle' && (
-                    <div className="w-72 flex items-center justify-end gap-2">
-                        <span className="mono-label">{value ? 'On' : 'Off'}</span>
-                        <button
-                            id={`prop-${def.key}`}
-                            type="button"
-                            onClick={() => commit(!(value as boolean))}
-                            className={`toggle-track ${value ? 'toggle-track-on' : 'toggle-track-off'}`}
-                            role="switch"
-                            aria-checked={value as boolean}
-                        >
-                            <span className={`toggle-knob ${value ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
-                        </button>
-                    </div>
+                    <Switch checked={value as boolean} onChange={commit} ariaLabel={def.label} />
                 )}
                 {def.type === 'text' && (
-                    <input
+                    <Input
                         id={`prop-${def.key}`}
                         type="text"
                         value={value as string}
                         onChange={e => commit(e.target.value)}
                         placeholder={def.placeholder}
-                        className="input-field w-72"
+                        className="input-field w-full"
                     />
                 )}
                 {def.type === 'textarea' && (
-                    <textarea
+                    <Textarea
                         id={`prop-${def.key}`}
                         value={value as string}
                         maxLength={def.maxLength}
                         onChange={e => commit(e.target.value)}
-                        className="input-field w-72 min-h-20 font-mono text-xs leading-relaxed"
+                        className="input-field min-h-20 w-full font-mono text-xs leading-relaxed"
                     />
                 )}
                 {def.type === 'number' && (
-                    <div className="w-72 flex justify-end">
-                        <input
-                            id={`prop-${def.key}`}
-                            type="number"
-                            value={value as number}
-                            min={def.min}
-                            max={def.max}
-                            onChange={e => commit(Number(e.target.value))}
-                            className="input-field w-32 text-right tabular-nums"
-                        />
-                    </div>
+                    <NumberInput value={value as number} onValueChange={v => commit(v ?? 0)} min={def.min} max={def.max} format={{ useGrouping: false }}>
+                        <NumberInputGroup>
+                            <NumberInputControl id={`prop-${def.key}`} aria-label={def.label} className="input-field srv-num w-32 text-right" />
+                        </NumberInputGroup>
+                    </NumberInput>
                 )}
                 {def.type === 'slider' && (
-                    <div className="flex items-center gap-3 w-72">
-                        <input
-                            id={`prop-${def.key}`}
-                            type="range"
+                    <>
+                        <Slider
+                            className="flex-1"
                             value={value as number}
                             min={def.min}
                             max={def.max}
                             step={def.step ?? 1}
-                            onChange={e => commit(Number(e.target.value))}
-                            className="flex-1 accent-(--accent)"
-                        />
-                        <span className="font-mono text-xs text-(--base-08) w-10 text-right tabular-nums">{value as number}</span>
-                    </div>
+                            onValueChange={v => commit(v as number)}
+                        >
+                            <SliderControl className="flex h-5 cursor-pointer items-center touch-none">
+                                <SliderTrack className="relative h-1.5 w-full rounded-full bg-(--base-04)">
+                                    <SliderIndicator className="rounded-full bg-(--accent)" />
+                                    <SliderThumb
+                                        id={`prop-${def.key}`}
+                                        aria-label={def.label}
+                                        className="size-4 rounded-full border-2 border-(--base-00) bg-(--accent-light) has-focus-visible:[box-shadow:var(--focus-ring)] data-dragging:scale-110"
+                                    />
+                                </SliderTrack>
+                            </SliderControl>
+                        </Slider>
+                        <span className="srv-num w-10 text-right text-xs text-(--base-08)">{value as number}</span>
+                    </>
                 )}
                 {def.type === 'select' && (
-                    <select
+                    <Select
                         id={`prop-${def.key}`}
+                        className="w-full"
                         value={value as string}
-                        onChange={e => commit(e.target.value)}
-                        className="input-field w-72"
-                    >
-                        {def.options.map(opt => (
-                            <option key={opt.value} value={opt.value}>{opt.label}</option>
-                        ))}
-                    </select>
+                        onChange={commit}
+                        options={def.options}
+                    />
                 )}
             </div>
         </div>
@@ -450,233 +444,212 @@ export default function ServerPropertiesView() {
 
     if (!server) return null;
 
-    return (
-        <div className="flex flex-col gap-4 h-full">
-            <div className="flex items-center gap-3 flex-wrap">
-                <h1 className="h-page">Configuration</h1>
-                <span className="mono-label">{server.activeSubServer || 'no sub-server selected'}</span>
+    const dirty = mode === 'advanced' ? advancedDirty : simpleDirty;
+    const form = {
+        dirty,
+        saving: mode === 'advanced' ? savingAdvanced : savingSimple,
+        save: mode === 'advanced' ? saveAdvanced : saveSimple,
+        discard: mode === 'advanced' ? discardAdvanced : discardSimple,
+    };
+    const visibleGroups = Object.keys(filteredGroups) as PropertyGroup[];
+    const pendingCount = Object.keys(pending).length;
 
-                <div className="ml-auto flex items-center gap-2">
-                    {/* External-change banner. Shown when the
-                        background poll noticed the file on disk
-                        drifted from what we loaded -- usually because
-                        the server itself rewrote it (a /restart, an
-                        SFTP/Beam edit, another panel tab). Reload =
-                        take theirs (discard local view); Keep mine =
-                        re-baseline so the banner stops nagging, the
-                        next save will overwrite. */}
-                    {externalChange !== null && (
-                        <span className="flex items-center gap-2 text-xs py-1.5 px-3 rounded-md bg-(--accent-ghost) border border-(--accent-border) text-(--accent-light)">
-                            <AlertTriangle size={13} className="shrink-0" />
-                            File changed externally
-                            <button
-                                onClick={acceptExternalChange}
-                                className="ml-1 px-2 py-0.5 rounded bg-(--accent) text-white text-[11px] font-medium hover:bg-(--accent-light)"
-                            >
-                                Reload
-                            </button>
-                            <button
-                                onClick={dismissExternalChange}
-                                className="px-2 py-0.5 rounded border border-(--base-04) text-[11px] font-medium text-(--base-07) hover:bg-(--base-04)"
-                            >
-                                Keep mine
-                            </button>
-                        </span>
-                    )}
-                    {restartPending && (
-                        <span className="alert alert-warning text-xs py-1.5 px-3">
-                            <AlertTriangle size={13} className="text-(--warning-light) shrink-0 mt-0.5" />
-                            Restart pending for changes to take effect
-                        </span>
-                    )}
-                    <div className="flex items-center bg-(--base-02) border border-(--base-03) rounded-md p-0.5">
-                        <button
-                            onClick={() => switchMode('simple')}
-                            className={`px-3 py-1 rounded text-xs font-medium inline-flex items-center gap-1.5 transition-colors ${mode === 'simple' ? 'bg-(--base-04) text-(--base-09)' : 'text-(--base-06) hover:text-(--base-08)'}`}
-                        >
-                            <ListChecks size={12} /> Simple
-                        </button>
-                        <button
-                            onClick={() => switchMode('advanced')}
-                            className={`px-3 py-1 rounded text-xs font-medium inline-flex items-center gap-1.5 transition-colors ${mode === 'advanced' ? 'bg-(--base-04) text-(--base-09)' : 'text-(--base-06) hover:text-(--base-08)'}`}
-                        >
-                            <Code2 size={12} /> Advanced
-                        </button>
-                    </div>
-                    {/* This editor is a page, not a card, so its save lives in
-                        its own header - beside the mode switch that decides
-                        which of the two forms is being written. */}
-                    <SettingsCardSave
-                        form={{
-                            dirty: mode === 'advanced' ? advancedDirty : simpleDirty,
-                            saving: mode === 'advanced' ? savingAdvanced : savingSimple,
-                            save: mode === 'advanced' ? saveAdvanced : saveSimple,
-                            discard: mode === 'advanced' ? discardAdvanced : discardSimple,
-                        }}
-                    />
+    return (
+        <div className="flex min-h-full flex-col gap-6">
+            <div className="srv-config-head">
+                <div className="min-w-0">
+                    <h1 className="srv-config-title">Server properties</h1>
+                    <p className="srv-config-desc">
+                        Edits <code className="srv-num text-(--base-08)">{server.activeSubServer ? `${server.activeSubServer}/server.properties` : 'server.properties'}</code>
+                    </p>
                 </div>
+                <Segmented<Mode>
+                    ariaLabel="Editor mode"
+                    value={mode}
+                    onChange={switchMode}
+                    options={[{ id: 'simple', label: 'Simple' }, { id: 'advanced', label: 'Advanced' }]}
+                />
             </div>
 
+            {/* The poll found the file on disk different from what we loaded:
+                the server rewrote it, an SFTP edit, another panel tab.
+                Reload takes theirs; Keep mine re-baselines so the banner stops
+                nagging and the next save overwrites. */}
+            {externalChange !== null && (
+                <Callout
+                    tone="info"
+                    role="status"
+                    icon={<AlertTriangle size={16} />}
+                    title="File changed externally"
+                    actions={
+                        <>
+                            <button type="button" onClick={acceptExternalChange} className="btn btn-primary btn-sm">Reload</button>
+                            <button type="button" onClick={dismissExternalChange} className="btn btn-secondary btn-sm">Keep mine</button>
+                        </>
+                    }
+                >
+                    server.properties was modified on disk since you opened it.
+                </Callout>
+            )}
+            {restartPending && (
+                <Callout tone="warning" role="status" icon={<Power size={16} />} title="Restart pending">
+                    Restart the server for these changes to take effect.
+                </Callout>
+            )}
+
             {loading && (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4" aria-busy="true" aria-label="Loading server.properties">
-                    {Array.from({ length: 8 }, (_, i) => <SkeletonFormRow key={i} />)}
+                <div className="srv-surface divide-y divide-(--base-03)" aria-busy="true" aria-label="Loading server.properties">
+                    {Array.from({ length: 6 }, (_, i) => <SkeletonFormRow key={i} className="px-5 py-4" />)}
                 </div>
             )}
 
             {error && (
-                <div className="alert alert-error">
-                    <AlertTriangle size={14} className="shrink-0 mt-0.5" />
-                    <div className="flex-1">
-                        <p>{error}</p>
-                        <button onClick={reload} className="btn btn-secondary btn-sm mt-2">
-                            <RotateCcw size={12} /> Retry
-                        </button>
-                    </div>
-                </div>
+                <Callout
+                    tone="error"
+                    role="alert"
+                    icon={<AlertTriangle size={16} />}
+                    title="Could not load server.properties"
+                    actions={<button type="button" onClick={reload} className="btn btn-secondary btn-sm"><RotateCcw size={14} /> Retry</button>}
+                >
+                    {error}
+                </Callout>
             )}
 
-            {/* Empty state: the file doesn't exist yet. Minecraft
-                generates server.properties on first boot, so for a
-                freshly-installed sub-server this is the normal state.
-                We don't auto-create it -- that would let stale defaults
-                stomp the JAR's. The user starts the server once, MC
-                writes the file, then the tab works. */}
+            {/* The file does not exist yet: Minecraft writes it on first boot,
+                so for a fresh sub-server this is the normal state. We do not
+                create it ourselves, stale defaults would stomp the JAR's. */}
             {!loading && notFound && !filePath && (
-                <div className="flex-1 flex flex-col items-center justify-center text-center text-(--base-07) gap-3 py-12">
-                    <FileQuestion size={40} className="opacity-40" />
+                <div className="srv-surface flex flex-col items-center gap-3 px-6 py-14 text-center">
+                    <FileQuestion size={32} className="text-(--base-05)" />
                     <div>
                         <p className="text-sm font-medium text-(--base-09)">No active sub-server selected</p>
-                        <p className="text-xs text-(--base-06) mt-1">Install or switch to a sub-server in the Setup tab to edit its server.properties.</p>
+                        <p className="mt-1 text-xs text-(--base-06)">Install or switch to a sub-server in the Setup tab to edit its server.properties.</p>
                     </div>
                 </div>
             )}
             {!loading && notFound && !!filePath && (
-                <div className="flex-1 flex flex-col items-center justify-center text-center text-(--base-07) gap-3 py-12">
-                    <FileQuestion size={40} className="opacity-40" />
+                <div className="srv-surface flex flex-col items-center gap-3 px-6 py-14 text-center">
+                    <FileQuestion size={32} className="text-(--base-05)" />
                     <div>
                         <p className="text-sm font-medium text-(--base-09)">
-                            <code className="font-mono text-(--base-08)">server.properties</code> doesn&apos;t exist yet
+                            <code className="srv-num text-(--base-08)">server.properties</code> doesn&apos;t exist yet
                         </p>
-                        <p className="text-xs text-(--base-06) mt-1 max-w-md">
+                        <p className="mx-auto mt-1 max-w-md text-xs text-(--base-06)">
                             Minecraft generates this file the first time the server boots.
                             Start the server once from the power buttons; the tab will pick it up automatically.
                         </p>
                     </div>
-                    <div className="flex items-center gap-2 mt-2">
-                        <span className="inline-flex items-center gap-1.5 text-xs text-(--base-06) font-mono">
-                            <Power size={12} /> Start the server from the header
+                    <div className="mt-1 flex items-center gap-3">
+                        <span className="inline-flex items-center gap-1.5 text-xs text-(--base-06)">
+                            <Power size={14} /> Start the server from the header
                         </span>
-                        <button onClick={reload} className="btn btn-secondary btn-sm">
-                            <RotateCcw size={12} /> Check again
+                        <button type="button" onClick={reload} className="btn btn-secondary btn-sm">
+                            <RotateCcw size={14} /> Check again
                         </button>
                     </div>
                 </div>
             )}
 
             {!loading && !error && doc && mode === 'simple' && (
-                <div className="flex-1 overflow-auto card card-pad">
-                    <div className="flex items-center gap-2 mb-4 sticky -top-5 bg-(--base-02) z-10 -mx-5 -mt-5 px-5 pt-5 pb-3 border-b border-(--base-03)">
-                        <Search size={13} className="text-(--base-05)" />
-                        <input
-                            type="text"
-                            value={search}
-                            onChange={e => setSearch(e.target.value)}
-                            placeholder="Search properties…"
-                            className="input-field flex-1 max-w-md min-w-40"
-                        />
-                        <nav aria-label="Property categories" className="flex items-center gap-1 min-w-0 max-w-full overflow-x-auto whitespace-nowrap">
-                            {(Object.keys(filteredGroups) as PropertyGroup[]).map(group => (
-                                <button
-                                    key={group}
-                                    type="button"
-                                    onClick={() => jumpTo(`props-${group}`)}
-                                    className="px-2 py-1 rounded-md text-xs text-(--base-07) hover:text-(--base-09) hover:bg-(--base-03) active:bg-(--base-04) transition-colors"
-                                >
-                                    {GROUP_LABELS[group]}
+                <div className="grid grid-cols-1 gap-6 lg:grid-cols-[13rem_minmax(0,1fr)] lg:gap-8">
+                    <aside className="srv-config-side" aria-label="Find a property">
+                        <InputGroup>
+                            <Input
+                                type="search"
+                                value={search}
+                                onChange={e => setSearch(e.target.value)}
+                                placeholder="Search properties…"
+                                aria-label="Search properties"
+                                className="input-field w-full"
+                            />
+                        </InputGroup>
+                        <nav aria-label="Property categories" className="flex gap-1 overflow-x-auto lg:flex-col lg:overflow-visible">
+                            {visibleGroups.map(group => (
+                                <button key={group} type="button" onClick={() => jumpTo(`props-${group}`)} className="srv-config-side-link w-auto shrink-0 whitespace-nowrap lg:w-full">
+                                    <span>{GROUP_LABELS[group]}</span>
+                                    <span className="srv-num hidden text-xs text-(--base-05) lg:inline">{filteredGroups[group].length}</span>
                                 </button>
                             ))}
                             {unknownEntries.length > 0 && (
-                                <button
-                                    type="button"
-                                    onClick={() => jumpTo('props-unknown')}
-                                    className="px-2 py-1 rounded-md text-xs text-(--warning-light) hover:bg-(--base-03) active:bg-(--base-04) transition-colors"
-                                >
-                                    Custom
+                                <button type="button" onClick={() => jumpTo('props-unknown')} className="srv-config-side-link w-auto shrink-0 whitespace-nowrap lg:w-full">
+                                    <span>Custom</span>
+                                    <span className="srv-num hidden text-xs text-(--base-05) lg:inline">{unknownEntries.length}</span>
                                 </button>
                             )}
                         </nav>
-                    </div>
-                    {(Object.keys(filteredGroups) as PropertyGroup[]).map(group => (
-                        <section key={group} id={`props-${group}`} aria-labelledby={`props-${group}-h`} className="mb-6 scroll-mt-20">
-                            <h2 id={`props-${group}-h`} className="settings-card-title justify-between py-2 mb-1">
-                                {GROUP_LABELS[group]}
-                                <span className="font-mono text-xs font-normal text-(--base-06)">{filteredGroups[group].length}</span>
-                            </h2>
-                            <div className="pl-3 border-l border-(--base-03)">
-                                {filteredGroups[group].map(def => (
-                                    <PropertyRow
-                                        key={def.key}
-                                        def={def}
-                                        raw={pending[def.key] ?? doc.values[def.key]}
-                                        edited={def.key in pending}
-                                        onChange={editProperty}
-                                    />
-                                ))}
-                            </div>
-                        </section>
-                    ))}
+                    </aside>
 
-                    {/* Unknown keys -- anything in server.properties that
-                        our VANILLA_SCHEMA doesn't describe. New MC
-                        versions, plugins / mods, or admin-customized
-                        properties end up here so they're still editable
-                        from Simple mode instead of being silently
-                        invisible. Raw key on the left, free-form text
-                        input on the right; same inlineSave path as the
-                        typed rows. */}
-                    {unknownEntries.length > 0 && (
-                        <section id="props-unknown" className="mb-4 mt-6 scroll-mt-20">
-                            <div className="flex items-center justify-between py-2 mb-1 mono-label text-(--warning-light)">
-                                <span className="flex items-center gap-1.5">
-                                    <FileQuestion size={12} />
-                                    Custom / Unknown Properties
-                                </span>
-                                <span>{unknownEntries.length}</span>
+                    <div className="flex min-w-0 flex-col gap-6">
+                        {visibleGroups.length === 0 && unknownEntries.length === 0 && (
+                            <div className="srv-surface flex flex-col items-center gap-2 px-6 py-12 text-center">
+                                <Search size={24} className="text-(--base-05)" />
+                                <p className="text-sm text-(--base-07)">No properties match &ldquo;{search}&rdquo;.</p>
                             </div>
-                            <p className="text-xs text-(--base-06) mb-2 pl-1">
-                                Keys we don&apos;t have a schema entry for. They save with everything else.
-                            </p>
-                            <div className="pl-3 border-l border-(--warning-border)">
-                                {unknownEntries.map(entry => (
-                                    <div key={entry.key} className="grid grid-cols-[20rem_auto] gap-6 items-center py-3 border-b border-(--base-03) last:border-b-0">
-                                        <div className="min-w-0">
-                                            <code className="font-mono text-xs text-(--base-08) break-all">{entry.key}</code>
-                                        </div>
-                                        <div className="flex items-center">
-                                            <input
-                                                type="text"
-                                                value={entry.value}
-                                                onChange={e => editProperty(entry.key, e.target.value)}
-                                                className="input-field w-72 font-mono text-xs"
-                                                placeholder="(empty)"
-                                            />
-                                        </div>
+                        )}
+                        {visibleGroups.map(group => (
+                            <section key={group} id={`props-${group}`} aria-labelledby={`props-${group}-h`} className="scroll-mt-4">
+                                <div className="mb-3 flex items-baseline justify-between px-1">
+                                    <h2 id={`props-${group}-h`} className="srv-config-card-title">{GROUP_LABELS[group]}</h2>
+                                    <span className="srv-num text-xs text-(--base-05)">{filteredGroups[group].length}</span>
+                                </div>
+                                <div className="srv-surface overflow-hidden">
+                                    {filteredGroups[group].map(def => (
+                                        <PropertyRow
+                                            key={def.key}
+                                            def={def}
+                                            raw={pending[def.key] ?? doc.values[def.key]}
+                                            edited={def.key in pending}
+                                            onChange={editProperty}
+                                        />
+                                    ))}
+                                </div>
+                            </section>
+                        ))}
+
+                        {/* Keys in the file that VANILLA_SCHEMA does not describe
+                            (new MC versions, plugins, hand edits). Listed so they
+                            stay editable here instead of only in Advanced. */}
+                        {unknownEntries.length > 0 && (
+                            <section id="props-unknown" aria-labelledby="props-unknown-h" className="scroll-mt-4">
+                                <div className="mb-3 px-1">
+                                    <div className="flex items-baseline justify-between">
+                                        <h2 id="props-unknown-h" className="srv-config-card-title">Custom properties</h2>
+                                        <span className="srv-num text-xs text-(--base-05)">{unknownEntries.length}</span>
                                     </div>
-                                ))}
-                            </div>
-                        </section>
-                    )}
+                                    <p className="mt-1 text-xs text-(--base-06)">Keys without a schema entry. They save with everything else.</p>
+                                </div>
+                                <div className="srv-surface overflow-hidden">
+                                    {unknownEntries.map(entry => (
+                                        <div key={entry.key} className="srv-config-row" data-edited={entry.key in pending ? 'true' : undefined}>
+                                            <label htmlFor={`prop-custom-${entry.key}`} className="min-w-0">
+                                                <code className="srv-num break-all text-xs text-(--base-08)">{entry.key}</code>
+                                            </label>
+                                            <div className="srv-config-control">
+                                                <Input
+                                                    id={`prop-custom-${entry.key}`}
+                                                    type="text"
+                                                    value={entry.value}
+                                                    onChange={e => editProperty(entry.key, e.target.value)}
+                                                    className="input-field srv-num w-full text-xs"
+                                                    placeholder="(empty)"
+                                                />
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </section>
+                        )}
+                    </div>
                 </div>
             )}
 
             {!loading && !error && doc && mode === 'advanced' && (
-                <div className="flex-1 flex flex-col gap-3 min-h-0">
-                    <div className="flex items-center gap-2 text-xs text-(--base-06)">
-                        <span>Raw <code className="font-mono text-(--base-08)">server.properties</code>. Changes are not applied until you save.</span>
-                        {advancedDirty && <span className="mono-label text-(--warning-light)">unsaved</span>}
-                    </div>
-                    <div ref={cmRef} className="flex-1 min-h-0 rounded-md bg-(--base-01) border border-(--base-03) overflow-hidden">
-                        <Suspense fallback={<div className="h-full flex items-center justify-center text-sm text-(--base-07)">Loading editor…</div>}>
+                <div className="flex min-h-[32rem] flex-1 flex-col gap-3">
+                    <p className="text-xs text-(--base-06)">
+                        Raw <code className="srv-num text-(--base-08)">server.properties</code>. Changes are not applied until you save.
+                    </p>
+                    <div ref={cmRef} className="srv-surface min-h-0 flex-1 overflow-hidden bg-(--base-01)">
+                        <Suspense fallback={<div className="flex h-full items-center justify-center text-sm text-(--base-07)">Loading editor…</div>}>
                             <CodeMirrorEditor
                                 value={advancedText}
                                 onChange={next => { setAdvancedText(next); setAdvancedDirty(true); }}
@@ -688,6 +661,21 @@ export default function ServerPropertiesView() {
                 </div>
             )}
 
+            {/* Appears only while there is something to write. The navigation
+                guard (useUnsavedChanges above) is what protects the edits; this
+                bar is the display. */}
+            {dirty && !error && (
+                <div className="srv-config-savebar" role="region" aria-label="Unsaved changes">
+                    <span>
+                        {mode === 'advanced'
+                            ? 'Unsaved changes'
+                            : `${pendingCount} unsaved ${pendingCount === 1 ? 'change' : 'changes'}`}
+                    </span>
+                    <div className="flex items-center gap-2">
+                        <SettingsCardSave form={form} />
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

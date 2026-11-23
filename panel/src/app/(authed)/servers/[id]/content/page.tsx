@@ -1,13 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { Package, Search, Download, Trash2, ExternalLink, AlertTriangle, Filter, Box, X, RefreshCw, Info, ArrowUpRight, RotateCcw, Lock, LockOpen, Power, PowerOff } from 'lucide-react';
+import '@/styles/server-content.css';
+
+import { Package, Search, AlertTriangle, Filter, Box, X, RefreshCw, Info, ArrowUpRight } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import { visibleCategoriesFor, categoryLabel } from '@/lib/modrinthCategories';
-import ContentCategories from '@/components/mods/ContentCategories';
-import { Skeleton, SkeletonText, SkeletonCard } from '@/components/Skeleton';
-import { ModDescription } from '@/components/mods/ModDescription';
+import { Skeleton, SkeletonText } from '@/components/Skeleton';
 import { systemEvents } from '@/lib/systemEvents';
 import {
     searchModrinth, getModrinthProject, getModrinthVersions, getModrinthCategories,
@@ -21,48 +21,46 @@ import {
 } from '@/lib/api/modrinth';
 import { isPackMember } from '@/lib/modpackMembership';
 import { clientSideNotice } from '@/lib/modpackWarnings';
-import { matchesServerBucket, serverBucket, serverBucketLabel, serverBucketTitle, serverSideParam, type ModSides, type ServerBucketFilter } from '@/lib/modSide';
-import { EnvTag, ServerSideFilter } from '@/components/mods/EnvironmentFilter';
+import { matchesServerBucket, serverSideParam, type ServerBucketFilter } from '@/lib/modSide';
+import { ServerSideFilter } from '@/components/mods/EnvironmentFilter';
 import { browseNotice, envFilterName } from '@/lib/browseNotice';
 import {
     pickPreferredVersion, rowUpdateTarget,
-    type ModStatus,
 } from '@/lib/modVersionCompare';
 import { installQueue, planConfirm, planRefused, updateQueue } from '@/lib/modInstallPlan';
 import { MOD_LOADERS_FOR, PLUGIN_LOADERS, buildMismatch, loaderName, modFitKnown } from '@/lib/modFit';
 import { LOADER_OPTIONS, isKnownLoader, isImportedServer } from '@/lib/serverLoaderMetadata';
 import ServerVersionPanel from '@/components/mods/ServerVersionPanel';
-import { ModrinthProjectActions } from '@/components/mods/ModrinthLibrary';
-import ProjectIcon from '@/components/modpacks/ProjectIcon';
+import Callout from '@/components/server/Callout';
+import Tabs, { type TabItem } from '@/components/ui/Tabs';
+import { BrowseRow, InstalledRow, type RowStatus } from '@/components/server/content/ContentRows';
+import ProjectDrawer from '@/components/server/content/ProjectDrawer';
 import { UnmanagedJars } from '@/components/mods/UnmanagedJars';
 import { isMcVersion } from '@/lib/validation';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import { declareServerLoaderMetadata } from '@/lib/api';
 import { toast } from '@/components/ui/Toast';
+import Select from '@/components/ui/Select';
+import Switch from '@/components/ui/Switch';
 import { useRouteId } from '@/lib/routeParams';
-import { installedState, isOnServer } from '@/lib/installedState';
+import { isOnServer } from '@/lib/installedState';
 import {
     updatableMods, summarise, runWasClean, emptyTally, checkModUpdates,
     type BulkProgress, type UpdateCheckApi,
 } from '@/lib/bulkModUpdate';
 import { useBusy } from '@/lib/useBusy';
 import { useModInstalls } from '@/lib/modInstallManager';
-import { isPending, jobLabel, type InstallJob } from '@/lib/modInstallJobs';
-import { InstallBar } from '@/components/ModInstallWidget';
+import { isPending } from '@/lib/modInstallJobs';
 import { createCoalescer } from '@/lib/coalesce';
 import { fmtDateTime } from '@/lib/time';
 
-// Modrinth Content tab, Modrinth-style layout: an always-visible category
-// sidebar (with the loader + MC-version filters below it, gated behind an
-// "Advanced" toggle), a single-column result list, and a detail column on the
-// right (description with a short/full switch, plus the version list with the
-// newest build for this server's MC version highlighted).
+// Modrinth Content tab, search first: a search field with category, side and
+// "Advanced" (loader + MC-version) filters above a result list; the project
+// detail opens in a drawer (description with a short/full switch, plus the
+// version list with the newest build for this server's MC version highlighted).
 
 type Section = 'browse' | 'installed' | 'version';
-// Row status shown in the browse list: 'checking' is a UI-only state (the
-// matching-version fetch for an installed row is still in flight) layered on
-// top of the pure ModStatus from lib/modVersionCompare.
-type RowStatus = ModStatus | 'checking';
+const ALL_CATEGORIES = '__all__';
 
 const PROJECT_TYPE_FOR_LOADER: Record<string, 'mod' | 'plugin'> = {
     paper: 'plugin', spigot: 'plugin', bukkit: 'plugin', purpur: 'plugin',
@@ -279,7 +277,6 @@ export default function ServerContentPage() {
 
     const [installedError, setInstalledError] = useState<string | null>(null);
     const [history, setHistory] = useState<ModHistoryEntry[]>([]);
-    const [rollbackFor, setRollbackFor] = useState<string | null>(null);
 
     // Newest first, which is the order Core returns and the order a rollback
     // wants: the build you had immediately before is the one you almost always
@@ -674,7 +671,6 @@ export default function ServerContentPage() {
     // list the tab holds is filtered by this server's loader and Minecraft
     // version, and the build being returned to need not match today's filter.
     const handleRollback = async (m: InstalledMod, entry: ModHistoryEntry) => {
-        setRollbackFor(null);
         // Both builds by number, so the reader confirms the move they mean. The
         // file names alone often differ only in a build suffix.
         let builds: ModrinthVersion[];
@@ -930,422 +926,318 @@ export default function ServerContentPage() {
 
     const unknownLoader = !advanced && defaultLoader && PROJECT_TYPE_FOR_LOADER[defaultLoader] === undefined;
     const imported = isImportedServer(server);
+    const categoryOptions = [
+        { value: ALL_CATEGORIES, label: 'All categories' },
+        ...visibleCategories.map(c => ({ value: c.name, label: categoryLabel(c.name) })),
+    ];
+    const sectionItems: TabItem<Section>[] = [
+        { id: 'browse', label: 'Browse', icon: Search },
+        { id: 'installed', label: `Installed (${installed.length})`, icon: Box },
+        { id: 'version', label: 'Minecraft version', icon: ArrowUpRight },
+    ];
 
-    // h-full, not flex-1: ServerShell wraps every server page in a scrolling
-    // `flex-1 overflow-y-auto p-6` box, which is a BLOCK, so flex-1 here sized
-    // nothing and the page was as tall as its content. The whole window
-    // scrolled, the three columns below never reached their own overflow, and
-    // the p-6 sat inside the shell's p-6. Taking the shell's height instead is
-    // what files/page.tsx already does.
     return (
-        <main className="h-full flex flex-col gap-4 overflow-hidden">
-            <header className="flex items-center gap-3 shrink-0">
-                <Package size={20} className="text-(--accent-light)" />
-                <h1 className="text-base font-display font-semibold text-(--base-09)">Content</h1>
-                <span className="text-xs text-(--base-06) hidden sm:inline">
-                    Modrinth-powered mods + plugins
-                    {!advanced && (defaultLoader || defaultMcVersion) && (
-                        <> · auto-filter: <code className="font-mono">{[defaultLoader, defaultMcVersion].filter(Boolean).join(' · ')}</code></>
-                    )}
-                </span>
+        <main className="flex flex-col gap-6">
+            <header className="flex flex-wrap items-end justify-between gap-x-6 gap-y-2">
+                <div className="min-w-0">
+                    <h1 className="font-display text-xl font-bold text-(--base-09)">Content</h1>
+                    <p className="mt-1 text-[13px] text-(--base-06)">
+                        Mods and plugins from Modrinth.
+                        {!advanced && (defaultLoader || defaultMcVersion) && (
+                            <> Filtered to <span className="srv-num text-(--base-07)">{[defaultLoader, defaultMcVersion].filter(Boolean).join(' · ')}</span>.</>
+                        )}
+                    </p>
+                </div>
             </header>
 
-            {/* Section strip */}
-            <nav className="flex gap-1 shrink-0 border-b border-(--base-03)">
-                {([
-                    { id: 'browse' as const, label: 'Browse', Icon: Search },
-                    { id: 'installed' as const, label: `Installed (${installed.length})`, Icon: Box },
-                    { id: 'version' as const, label: 'Minecraft version', Icon: ArrowUpRight },
-                ]).map(({ id, label, Icon }) => (
-                    <button
-                        key={id}
-                        onClick={() => setSection(id)}
-                        className={`flex items-center gap-1.5 px-3 py-2 text-sm font-medium border-b-2 transition-colors ${
-                            section === id
-                                ? 'border-(--accent) text-(--accent-light)'
-                                : 'border-transparent text-(--base-07) hover:text-(--base-09) hover:border-(--base-04)'
-                        }`}
-                    >
-                        <Icon size={12} />
-                        {label}
-                    </button>
-                ))}
-            </nav>
+            <Tabs items={sectionItems} active={section} onChange={setSection} ariaLabel="Content sections" />
 
             {imported && !declareDismissed && (
-                <div className="shrink-0 flex items-start gap-2 px-3 py-2.5 rounded-md border border-(--accent-border) bg-(--accent-ghost) text-xs text-(--base-07)">
-                    <Info size={13} className="mt-0.5 shrink-0 text-(--accent-light)" />
-                    <div className="flex-1 min-w-0">
-                        {!declareOpen ? (
-                            <>
-                                <p className="text-(--base-09) font-medium">Declare this server's loader + Minecraft version</p>
-                                <p className="mt-0.5">
-                                    This looks like an imported server - it's missing loader/version info, so auto-filtering and
-                                    version highlighting above are off. Declaring them is optional, recommended, and does not
-                                    reinstall anything; manual/Advanced filtering keeps working either way.
-                                </p>
-                                <button onClick={handleDeclareOpen} className="btn btn-primary btn-sm mt-2">
-                                    Declare now
-                                </button>
-                            </>
-                        ) : (
-                            <form
-                                onSubmit={e => { e.preventDefault(); handleDeclareSubmit(); }}
-                                className="space-y-2"
-                            >
-                                <div className="flex items-end gap-2 flex-wrap">
-                                    <div>
-                                        <label className="input-label mb-0">Loader</label>
-                                        <select
-                                            value={declareLoader}
-                                            onChange={e => setDeclareLoader(e.target.value)}
-                                            disabled={declareSubmitting}
-                                            className="input-field text-xs mt-1"
-                                        >
-                                            <option value="">Select…</option>
-                                            {LOADER_OPTIONS.map(l => <option key={l} value={l}>{l}</option>)}
-                                        </select>
-                                    </div>
-                                    <div>
-                                        <label className="input-label mb-0">Minecraft version</label>
-                                        <input
-                                            type="text"
-                                            value={declareMcVersion}
-                                            onChange={e => setDeclareMcVersion(e.target.value)}
-                                            disabled={declareSubmitting}
-                                            placeholder="1.20.4"
-                                            className="input-field input-mono text-xs mt-1 w-28"
-                                        />
-                                    </div>
-                                    <button
-                                        type="submit"
-                                        disabled={declareSubmitting || !declareLoader || !isMcVersion(declareMcVersion.trim())}
-                                        className="btn btn-primary btn-sm"
-                                    >
-                                        {declareSubmitting && <RefreshCw size={11} className="animate-spin" />}
-                                        Save
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={() => setDeclareOpen(false)}
+                <Callout
+                    tone="info"
+                    icon={<Info size={16} />}
+                    title="Declare this server's loader and Minecraft version"
+                    actions={
+                        <button onClick={() => setDeclareDismissed(true)} className="btn btn-ghost btn-icon btn-sm" aria-label="Dismiss">
+                            <X size={14} />
+                        </button>
+                    }
+                >
+                    {!declareOpen ? (
+                        <>
+                            <p>
+                                This looks like an imported server. It is missing loader and version info, so auto-filtering and
+                                version highlighting are off. Declaring them is optional, recommended, and does not
+                                reinstall anything; manual/Advanced filtering keeps working either way.
+                            </p>
+                            <button onClick={handleDeclareOpen} className="btn btn-primary btn-sm mt-3">
+                                Declare now
+                            </button>
+                        </>
+                    ) : (
+                        <form
+                            onSubmit={e => { e.preventDefault(); handleDeclareSubmit(); }}
+                            className="mt-1 space-y-2"
+                        >
+                            <div className="flex flex-wrap items-end gap-3">
+                                <div>
+                                    <label className="srv-label" htmlFor="declare-loader">Loader</label>
+                                    <Select
+                                        id="declare-loader"
+                                        ariaLabel="Loader"
+                                        className="mt-1 min-w-32"
+                                        value={declareLoader}
+                                        onChange={setDeclareLoader}
                                         disabled={declareSubmitting}
-                                        className="btn btn-secondary btn-sm"
-                                    >
-                                        Cancel
-                                    </button>
+                                        placeholder="Select…"
+                                        options={LOADER_OPTIONS.map(l => ({ value: l, label: l }))}
+                                    />
                                 </div>
-                                {declareError && <p className="text-(--error-light)">{declareError}</p>}
-                            </form>
-                        )}
-                    </div>
-                    <button
-                        onClick={() => setDeclareDismissed(true)}
-                        className="text-(--base-06) hover:text-(--base-09) transition-colors shrink-0"
-                        title="Dismiss"
-                    >
-                        <X size={14} />
-                    </button>
-                </div>
+                                <div>
+                                    <label className="srv-label" htmlFor="declare-mc">Minecraft version</label>
+                                    <input
+                                        id="declare-mc"
+                                        type="text"
+                                        value={declareMcVersion}
+                                        onChange={e => setDeclareMcVersion(e.target.value)}
+                                        disabled={declareSubmitting}
+                                        placeholder="1.20.4"
+                                        className="input-field input-mono mt-1 block w-28 text-xs"
+                                    />
+                                </div>
+                                <button
+                                    type="submit"
+                                    disabled={declareSubmitting || !declareLoader || !isMcVersion(declareMcVersion.trim())}
+                                    className="btn btn-primary btn-sm"
+                                >
+                                    {declareSubmitting && <RefreshCw size={14} className="animate-spin motion-reduce:animate-none" />}
+                                    Save
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setDeclareOpen(false)}
+                                    disabled={declareSubmitting}
+                                    className="btn btn-secondary btn-sm"
+                                >
+                                    Cancel
+                                </button>
+                            </div>
+                            {declareError && <p className="text-(--error-light)">{declareError}</p>}
+                        </form>
+                    )}
+                </Callout>
             )}
 
             {isModpack && (
-                <div className="shrink-0 flex items-start gap-2 px-3 py-2 rounded-md border border-(--base-04) bg-(--base-03) text-xs text-(--base-07)">
-                    <Package size={13} className="mt-0.5 shrink-0 text-(--accent-light)" />
-                    <span>
-                        This server runs a modpack. Mods you add here are not part of the distributed pack;
-                        players who lack a required client-side mod may fail to connect.
-                    </span>
-                </div>
+                <Callout tone="info" icon={<Package size={16} />}>
+                    This server runs a modpack. Mods you add here are not part of the distributed pack;
+                    players who lack a required client-side mod may fail to connect.
+                </Callout>
             )}
 
             {section === 'browse' && (
-                <div className="flex-1 flex gap-4 overflow-hidden min-h-0">
-                    {/* Category sidebar (always visible) + Advanced-gated filters */}
-                    <aside className="w-60 shrink-0 overflow-y-auto card p-3 space-y-4">
+                <section className="srv-content-browse" aria-label="Browse content">
+                    {/* Filter sidebar, Modrinth style: environment, categories, then the
+                        Advanced loader + MC-version filters. Stacks above the results on
+                        narrow screens. */}
+                    <aside className="srv-content-filters" aria-label="Filters">
                         {isModServer && !advanced && (
-                            <ServerSideFilter value={env} onChange={setEnv} />
-                        )}
-                        <ContentCategories categories={categories} projectType={browseProjectType} value={selectedCategory} onChange={setSelectedCategory} loading={categoriesLoading}/>
-
-                        {/* Advanced toggle - gates the loader / MC-version filters below.
-                            Turning it off resets both back to the server's stored values. */}
-                        <div className="border-t border-(--base-03) pt-3 flex items-center justify-between gap-2">
-                            <div className="min-w-0">
-                                <div className="flex items-center gap-1.5 text-xs font-medium text-(--base-09)">
-                                    <Filter size={11} className="text-(--base-06)" />
-                                    Advanced
-                                </div>
-                                <p className="text-[10px] text-(--base-06) mt-0.5">Edit loader / MC-version filters</p>
-                            </div>
-                            <button
-                                type="button"
-                                role="switch"
-                                aria-checked={advanced}
-                                onClick={handleAdvancedToggle}
-                                className={`toggle-track shrink-0 ${advanced ? 'toggle-track-on' : 'toggle-track-off'}`}
-                                title="Toggle loader / version filters"
-                            >
-                                <span className={`toggle-knob ${advanced ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
-                            </button>
-                        </div>
-
-                        {/* Loader + MC-version filters, greyed until Advanced is on. */}
-                        <div className={advanced ? '' : 'opacity-50 pointer-events-none select-none'}>
-                            <label className="input-label mb-0">Loaders</label>
-                            {/* No max-height and no scroller of its own: the whole
-                                sidebar scrolls now, and a scroll area nested inside a
-                                scroll area is the one that eats the wheel event the
-                                reader meant for the other. */}
-                            <div className="mt-1.5 space-y-1">
-                                {LOADER_OPTIONS.map(l => {
-                                    const on = filterLoaders.includes(l);
-                                    return (
-                                        <label key={l} className="flex items-center gap-2 text-xs cursor-pointer hover:text-(--base-09)">
-                                            <input
-                                                type="checkbox"
-                                                checked={on}
-                                                disabled={!advanced}
-                                                onChange={() => setFilterLoaders(prev => on ? prev.filter(x => x !== l) : [...prev, l])}
-                                                className="checkbox"
-                                            />
-                                            {l}
-                                        </label>
-                                    );
-                                })}
-                            </div>
-                            <label className="input-label mt-3">Game versions (comma)</label>
-                            <input
-                                type="text"
-                                value={filterVersions.join(',')}
-                                onChange={e => setFilterVersions(e.target.value.split(',').map(s => s.trim()).filter(Boolean))}
-                                disabled={!advanced}
-                                className="input-field input-mono w-full text-xs"
-                                placeholder="1.20.2, 1.21"
-                            />
-                        </div>
-                    </aside>
-
-                    {/* Result list (single column). Real min-width so it never
-                        collapses to unusable once the detail column claims its share. */}
-                    <div className="flex-1 min-w-[360px] flex flex-col overflow-hidden">
-                        <div className="relative shrink-0 mb-3">
-                            <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-(--base-05)" />
-                            <input
-                                type="text"
-                                value={query}
-                                onChange={e => setQuery(e.target.value)}
-                                placeholder="Search mods, plugins, datapacks…"
-                                className="input-field input-icon-left w-full"
-                            />
-                        </div>
-
-                        {unknownLoader && (
-                            <div className="shrink-0 mb-2 px-3 py-2 rounded-md bg-(--warning-ghost) border border-(--warning)/30 text-(--warning-light) text-xs flex items-start gap-2">
-                                <AlertTriangle size={12} className="mt-0.5 shrink-0" />
-                                Unknown loader <code className="font-mono">{defaultLoader}</code> — results aren't pre-filtered by mod/plugin type.
+                            <div className="srv-content-filter-group">
+                                {/* ServerSideFilter brings its own "Environment" heading. */}
+                                <ServerSideFilter value={env} onChange={setEnv} />
                             </div>
                         )}
 
-                        <div className="flex-1 overflow-y-auto space-y-2">
-                            {searchLoading ? (
-                                <div className="space-y-2" aria-busy="true" aria-label="Searching">
-                                    {Array.from({ length: 6 }, (_, i) => <Skeleton key={i} className="h-20 w-full rounded-(--radius-md)" />)}
+                        <div className="srv-content-filter-group">
+                            <span className="srv-label" id="content-categories-label">Categories</span>
+                            {categoriesLoading ? (
+                                <div className="flex flex-col gap-2" aria-busy="true">
+                                    {Array.from({ length: 6 }, (_, i) => <SkeletonText key={i} width="w-3/4" className="h-4" />)}
                                 </div>
-                            ) : notice?.kind === 'failed' ? (
-                                <div role="alert" className="text-center py-12 text-sm text-(--warning-light)">
-                                    <AlertTriangle size={20} className="mx-auto mb-2" />
-                                    {notice.message}
-                                    <div>
-                                        <button type="button" onClick={runSearch} className="btn btn-secondary btn-sm mt-3">
-                                            <RefreshCw size={12} />
-                                            Try again
-                                        </button>
-                                    </div>
-                                </div>
-                            ) : notice ? (
-                                <div className="text-center py-12 text-sm text-(--base-06)">{notice.message}</div>
                             ) : (
-                                visibleHits.map(hit => {
-                                    // isOnServer, not "a row exists": a queued install has not
-                                    // happened yet and a failed one never will, so neither is a
-                                    // thing to compare a newer build against - and neither should
-                                    // wear the badge that says the server has this mod.
-                                    const row = installedByProject.get(hit.project_id);
-                                    const installedMod = isOnServer(row) ? row : undefined;
-                                    const candidates = installedMod ? installedRowVersions.get(hit.project_id) : undefined;
-                                    // Release first; a pre-release only when nothing newer is
-                                    // released (Update all never offers one), so the button says
-                                    // which channel it moves to.
-                                    const rowLatest = installedMod && candidates
-                                        ? rowUpdateTarget(installedMod.modrinthVersionId, candidates, { loaders: filterLoaders, mcVersions: filterVersions })
-                                        : null;
-                                    const status: RowStatus = !installedMod
-                                        ? 'not-installed'
-                                        : candidates === undefined
-                                            ? 'checking'
-                                            : rowLatest ? 'update-available' : 'up-to-date';
-                                    return (
-                                        <ModListRow
-                                            key={hit.project_id}
-                                            hit={hit}
-                                            status={status}
-                                            sides={isModServer ? hit : null}
-                                            updateChannel={rowLatest?.version_type}
-                                            installed={!!installedMod}
-                                            busy={busyProjects.has(hit.project_id)}
-                                            job={installs.jobFor(serverId, hit.project_id)}
-                                            selected={selectedSlug === hit.slug}
-                                            onOpen={() => openProjectDetail(hit.slug)}
-                                            onInstall={() => handleRowInstall(hit)}
-                                            onRemove={() => installedMod && handleRowRemove(installedMod)}
-                                            onUpdate={() => {
-                                                if (rowLatest) handleRowUpdate(hit, rowLatest);
-                                            }}
-                                        />
-                                    );
-                                })
+                                <div className="srv-content-cats" role="group" aria-labelledby="content-categories-label">
+                                    {categoryOptions.map(c => {
+                                        const on = (selectedCategory ?? ALL_CATEGORIES) === c.value;
+                                        return (
+                                            <button
+                                                key={c.value}
+                                                type="button"
+                                                className="srv-content-cat"
+                                                aria-pressed={on}
+                                                onClick={() => setSelectedCategory(c.value === ALL_CATEGORIES ? null : c.value)}
+                                            >
+                                                {c.label}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
                             )}
                         </div>
-                    </div>
 
-                    {/* Detail column - hidden below `xl` so it never squeezes the
-                        list to unusable on narrow windows; roughly half the
-                        remaining width from `xl` up, capped so it doesn't grow
-                        absurdly wide on very large screens. */}
-                    {(projectDetail || projectLoading) && (
-                        <aside className="hidden xl:flex xl:w-[46%] xl:max-w-2xl shrink-0 flex-col card overflow-hidden">
-                            {projectLoading || !projectDetail ? (
-                                <div className="p-4 space-y-3">
-                                    <div className="flex items-start gap-3">
-                                        <Skeleton className="w-12 h-12 rounded-md shrink-0" />
-                                        <div className="flex-1 space-y-2">
-                                            <SkeletonText width="w-1/2" className="h-4" />
-                                            <SkeletonText width="w-3/4" className="h-2.5" />
-                                        </div>
-                                    </div>
-                                    <SkeletonCard height="h-40" />
-                                </div>
-                            ) : (
+                        <div className="srv-content-filter-group">
+                            <div className="flex items-center justify-between gap-3">
+                                <span className="flex items-center gap-2 text-[13px] font-medium text-(--base-08)">
+                                    <Filter size={14} aria-hidden="true" /> Advanced
+                                </span>
+                                <Switch checked={advanced} onChange={handleAdvancedToggle} ariaLabel="Advanced filters" />
+                            </div>
+                            <p className="text-xs text-(--base-06)">Pick loaders and Minecraft versions by hand.</p>
+                            {/* Turning Advanced off resets both back to the server's stored values. */}
+                            {advanced && (
                                 <>
-                                    <div className="shrink-0 p-4 border-b border-(--base-03) flex items-start gap-3">
-                                        {projectDetail.icon_url && (
-                                            // eslint-disable-next-line @next/next/no-img-element
-                                            <img src={projectDetail.icon_url} alt="" className="w-12 h-12 rounded-md shrink-0" />
-                                        )}
-                                        <div className="min-w-0 flex-1">
-                                            <h3 className="text-sm font-semibold text-(--base-09) truncate">{projectDetail.title}</h3>
-                                            <p className="mt-1 text-[10px] font-mono text-(--base-06)">{projectDetail.downloads.toLocaleString()} downloads</p>
-                                            {/* The description below is what Modrinth renders on its own page, but
-                                                only what a description can be: no version history, no gallery, no
-                                                comments. This is the way out to the rest, so it is a button rather
-                                                than the 10px text link it used to be next to the download count. */}
-                                            <a
-                                                href={`https://modrinth.com/project/${projectDetail.slug}`}
-                                                target="_blank"
-                                                rel="noopener noreferrer"
-                                                className="btn btn-secondary btn-sm mt-2"
-                                            >
-                                                Open on Modrinth <ExternalLink size={12} />
-                                            </a>
+                                    <div>
+                                        <span className="srv-label">Loaders</span>
+                                        <div className="mt-2 flex flex-wrap gap-2" role="group" aria-label="Loaders">
+                                            {LOADER_OPTIONS.map(l => {
+                                                const on = filterLoaders.includes(l);
+                                                return (
+                                                    <button
+                                                        key={l}
+                                                        type="button"
+                                                        className="srv-content-toggle"
+                                                        aria-pressed={on}
+                                                        onClick={() => setFilterLoaders(prev => on ? prev.filter(x => x !== l) : [...prev, l])}
+                                                    >
+                                                        {l}
+                                                    </button>
+                                                );
+                                            })}
                                         </div>
-                                        <button onClick={closeProjectDetail} className="text-(--base-06) hover:text-(--base-09) transition-colors shrink-0" title="Close">
-                                            <X size={16} />
-                                        </button>
                                     </div>
-
-                                    <div className="flex-1 overflow-y-auto p-4 space-y-4">
-                                        {/* Description with a short/full switch */}
-                                        <div>
-                                            <div className="flex items-center justify-between mb-1.5">
-                                                <label className="input-label mb-0">Description</label>
-                                                <div className="flex bg-(--base-03)/60 rounded-md p-0.5">
-                                                    {(['short', 'full'] as const).map(m => (
-                                                        <button
-                                                            key={m}
-                                                            onClick={() => setDescMode(m)}
-                                                            className={`px-2 py-0.5 rounded-sm text-[10px] font-medium capitalize transition-colors ${
-                                                                descMode === m ? 'bg-(--base-02) text-(--base-09)' : 'text-(--base-06) hover:text-(--base-09)'
-                                                            }`}
-                                                        >
-                                                            {m}
-                                                        </button>
-                                                    ))}
-                                                </div>
-                                            </div>
-                                            {descMode === 'short' ? (
-                                                <p className="text-sm text-(--base-07) leading-relaxed">{projectDetail.description}</p>
-                                            ) : projectDetail.body ? (
-                                                <ModDescription body={projectDetail.body} />
-                                            ) : (
-                                                <p className="text-xs text-(--base-06) italic">No full description provided.</p>
-                                            )}
-                                        </div>
-
-                                        {/* Versions — newest build for this MC version highlighted */}
-                                        <div>
-                                            <label className="input-label">Versions</label>
-                                            <div className="mt-1.5 space-y-1.5">
-                                                {sortedVersions.length === 0 ? (
-                                                    <p className="text-xs text-(--base-06)">No compatible versions found.</p>
-                                                ) : (
-                                                    sortedVersions.slice(0, 30).map(v => {
-                                                        const highlight = v.id === highlightVersionId;
-                                                        // Which build is on the server. The list used to say only
-                                                        // which build is NEWEST, so the one question you open it
-                                                        // with - what have I got - had no answer here.
-                                                        const state = installedState(installedByProject.get(projectDetail.id), v.id);
-                                                        const vJob = installs.jobFor(serverId, projectDetail.id);
-                                                        const job = vJob && vJob.versionId === v.id ? vJob : undefined;
-                                                        const planning = planningVersion === v.id;
-                                                        const jobBusy = (!!job && isPending(job)) || planning;
-                                                        return (
-                                                            <div
-                                                                key={v.id}
-                                                                className={`flex items-center gap-2 p-2 rounded-md border ${
-                                                                    state === 'installed' ? 'border-(--success)/40 bg-(--success-ghost)'
-                                                                        : state === 'failed' ? 'border-(--warning)/40 bg-(--warning-ghost)'
-                                                                        : highlight ? 'border-(--accent-border) bg-(--accent-ghost)'
-                                                                        : 'border-(--base-04)'
-                                                                }`}
-                                                            >
-                                                                <div className="min-w-0 flex-1">
-                                                                    <div className="flex items-center gap-1.5 flex-wrap">
-                                                                        <span className="text-sm font-medium text-(--base-09) truncate">{v.version_number}</span>
-                                                                        {state === 'installed' && <span className="mono-label text-(--success-light) shrink-0">on this server</span>}
-                                                                        {state === 'installing' && <span className="mono-label text-(--base-06) shrink-0">installing…</span>}
-                                                                        {state === 'failed' && <span className="mono-label text-(--warning-light) shrink-0">install failed</span>}
-                                                                        {highlight && state === null && <span className="mono-label text-(--accent-light) shrink-0">newest · {defaultMcVersion}</span>}
-                                                                    </div>
-                                                                    <div className="text-[10px] font-mono text-(--base-06) truncate">
-                                                                        {v.version_type} · {v.loaders.join(', ')} · MC {v.game_versions.join(', ')}
-                                                                    </div>
-                                                                    {job && isPending(job) && <InstallBar job={job} />}
-                                                                    {job && (job.state === 'failed' || job.state === 'unknown') && job.message && (
-                                                                        <p className="mt-1 text-[11px] text-(--warning-light)">{job.message}</p>
-                                                                    )}
-                                                                </div>
-                                                                <button
-                                                                    onClick={() => handleInstall(projectDetail, v)}
-                                                                    disabled={state === 'installing' || jobBusy}
-                                                                    aria-busy={jobBusy}
-                                                                    className="btn btn-secondary btn-sm shrink-0"
-                                                                >
-                                                                    {jobBusy ? <RefreshCw size={11} className="animate-spin motion-reduce:animate-none" /> : <Download size={11} />}
-                                                                    {planning ? 'Checking…' : job && jobBusy ? jobLabel(job) : state === 'installed' ? 'Reinstall' : state === 'failed' ? 'Try again' : 'Install'}
-                                                                </button>
-                                                            </div>
-                                                        );
-                                                    })
-                                                )}
-                                            </div>
-                                        </div>
+                                    <div>
+                                        <label className="srv-label" htmlFor="content-game-versions">Game versions (comma separated)</label>
+                                        <input
+                                            id="content-game-versions"
+                                            type="text"
+                                            value={filterVersions.join(',')}
+                                            onChange={e => setFilterVersions(e.target.value.split(',').map(s => s.trim()).filter(Boolean))}
+                                            className="input-field input-mono mt-1 w-full text-xs"
+                                            placeholder="1.20.2, 1.21"
+                                        />
                                     </div>
                                 </>
                             )}
-                        </aside>
+                        </div>
+                    </aside>
+
+                    <div className="flex min-w-0 flex-col gap-4">
+                    <div className="relative">
+                        <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-(--base-06)" aria-hidden="true" />
+                        <input
+                            type="search"
+                            value={query}
+                            onChange={e => setQuery(e.target.value)}
+                            placeholder="Search mods, plugins, datapacks…"
+                            aria-label="Search content"
+                            className="input-field input-icon-left w-full"
+                        />
+                    </div>
+
+                    {/* Results scroll inside their own box so the filter sidebar and the
+                        page around them keep their own scroll. */}
+                    <div className="srv-content-results">
+                    {unknownLoader && (
+                        <Callout tone="warning" icon={<AlertTriangle size={16} />}>
+                            Unknown loader <span className="srv-num">{defaultLoader}</span>. Results are not pre-filtered by mod or plugin type.
+                        </Callout>
                     )}
-                </div>
+
+                    {searchLoading ? (
+                        <div className="srv-content-list" aria-busy="true" aria-label="Searching">
+                            {Array.from({ length: 6 }, (_, i) => (
+                                <div key={i} className="srv-content-row">
+                                    <Skeleton className="size-11 shrink-0 rounded-(--radius-md)" />
+                                    <div className="flex-1 space-y-2">
+                                        <SkeletonText width="w-1/3" className="h-3.5" />
+                                        <SkeletonText width="w-2/3" className="h-3" />
+                                    </div>
+                                    <Skeleton className="h-8 w-24 rounded-(--radius-md)" />
+                                </div>
+                            ))}
+                        </div>
+                    ) : notice?.kind === 'failed' ? (
+                        <Callout
+                            tone="warning"
+                            icon={<AlertTriangle size={16} />}
+                            role="alert"
+                            actions={
+                                <button type="button" onClick={runSearch} className="btn btn-secondary btn-sm">
+                                    <RefreshCw size={14} />
+                                    Try again
+                                </button>
+                            }
+                        >
+                            {notice.message}
+                        </Callout>
+                    ) : notice ? (
+                        <div className="srv-surface flex flex-col items-center gap-2 px-6 py-12 text-center">
+                            <Search size={20} className="text-(--base-05)" aria-hidden="true" />
+                            <p className="text-sm text-(--base-07)">{notice.message}</p>
+                        </div>
+                    ) : (
+                        <div className="srv-content-list animate-content-in">
+                            {visibleHits.map(hit => {
+                                // isOnServer, not "a row exists": a queued install has not
+                                // happened yet and a failed one never will, so neither is a
+                                // thing to compare a newer build against - and neither should
+                                // wear the badge that says the server has this mod.
+                                const row = installedByProject.get(hit.project_id);
+                                const installedMod = isOnServer(row) ? row : undefined;
+                                const candidates = installedMod ? installedRowVersions.get(hit.project_id) : undefined;
+                                // Release first; a pre-release only when nothing newer is
+                                // released (Update all never offers one), so the button says
+                                // which channel it moves to.
+                                const rowLatest = installedMod && candidates
+                                    ? rowUpdateTarget(installedMod.modrinthVersionId, candidates, { loaders: filterLoaders, mcVersions: filterVersions })
+                                    : null;
+                                const status: RowStatus = !installedMod
+                                    ? 'not-installed'
+                                    : candidates === undefined
+                                        ? 'checking'
+                                        : rowLatest ? 'update-available' : 'up-to-date';
+                                return (
+                                    <BrowseRow
+                                        key={hit.project_id}
+                                        hit={hit}
+                                        status={status}
+                                        sides={isModServer ? hit : null}
+                                        updateChannel={rowLatest?.version_type}
+                                        installed={!!installedMod}
+                                        busy={busyProjects.has(hit.project_id)}
+                                        job={installs.jobFor(serverId, hit.project_id)}
+                                        selected={selectedSlug === hit.slug}
+                                        fitsVersion={!advanced && defaultMcVersion && hit.versions?.includes(defaultMcVersion) ? defaultMcVersion : undefined}
+                                        onOpen={() => openProjectDetail(hit.slug)}
+                                        onInstall={() => handleRowInstall(hit)}
+                                        onRemove={() => installedMod && handleRowRemove(installedMod)}
+                                        onUpdate={() => {
+                                            if (rowLatest) handleRowUpdate(hit, rowLatest);
+                                        }}
+                                    />
+                                );
+                            })}
+                        </div>
+                    )}
+                    </div>
+                    </div>
+                </section>
             )}
+
+            <ProjectDrawer
+                open={selectedSlug !== null}
+                onClose={closeProjectDetail}
+                loading={projectLoading}
+                project={projectDetail}
+                versions={sortedVersions}
+                highlightVersionId={highlightVersionId}
+                mcVersion={defaultMcVersion}
+                descMode={descMode}
+                onDescMode={setDescMode}
+                installedMod={projectDetail ? installedByProject.get(projectDetail.id) : undefined}
+                jobFor={pid => installs.jobFor(serverId, pid)}
+                planningVersion={planningVersion}
+                onInstall={handleInstall}
+            />
 
             {section === 'version' && server && (
                 <ServerVersionPanel
@@ -1356,7 +1248,7 @@ export default function ServerContentPage() {
             )}
 
             {section === 'installed' && (
-                <div className="flex-1 overflow-y-auto space-y-2">
+                <section className="flex flex-col gap-4" aria-label="Installed content">
                     {/* Before the branch below, not inside its non-empty arm: a server
                         whose jars were all placed by hand has NO managed mods, which is
                         the likeliest way to end up looking for this - and the empty
@@ -1372,30 +1264,47 @@ export default function ServerContentPage() {
                         />
                     )}
                     {installedError ? (
-                        <div className="text-center py-12 text-sm text-(--warning-light)">
-                            <AlertTriangle size={20} className="mx-auto mb-2" />
-                            {installedError}
-                            <div>
+                        <Callout
+                            tone="warning"
+                            icon={<AlertTriangle size={16} />}
+                            role="alert"
+                            actions={
                                 <button
                                     type="button"
                                     onClick={() => retryInstalled(refreshInstalled)}
                                     disabled={retryingInstalled}
-                                    className="btn btn-secondary btn-sm mt-3"
+                                    className="btn btn-secondary btn-sm"
                                 >
                                     {retryingInstalled ? 'Trying…' : 'Try again'}
                                 </button>
-                            </div>
-                        </div>
+                            }
+                        >
+                            {installedError}
+                        </Callout>
                     ) : !installedLoaded ? (
-                        <div className="space-y-2" aria-busy="true" aria-label="Loading installed mods">
-                            {Array.from({ length: 4 }, (_, i) => <Skeleton key={i} className="h-16 w-full rounded-(--radius-md)" />)}
+                        <div className="srv-content-list" aria-busy="true" aria-label="Loading installed mods">
+                            {Array.from({ length: 4 }, (_, i) => (
+                                <div key={i} className="srv-content-row">
+                                    <Skeleton className="size-11 shrink-0 rounded-(--radius-md)" />
+                                    <div className="flex-1 space-y-2">
+                                        <SkeletonText width="w-1/4" className="h-3.5" />
+                                        <SkeletonText width="w-1/2" className="h-3" />
+                                    </div>
+                                </div>
+                            ))}
                         </div>
                     ) : installed.length === 0 ? (
-                        <div className="text-center py-12 text-sm text-(--base-06) animate-content-in">No mods installed.</div>
+                        <div className="srv-surface flex animate-content-in flex-col items-center gap-2 px-6 py-12 text-center">
+                            <Box size={20} className="text-(--base-05)" aria-hidden="true" />
+                            <p className="text-sm text-(--base-07)">No mods installed.</p>
+                            <button type="button" onClick={() => setSection('browse')} className="btn btn-secondary btn-sm mt-2">
+                                Browse content
+                            </button>
+                        </div>
                     ) : (
-                        <div className="space-y-2 animate-content-in">
-                            <div className="flex items-center justify-between gap-3 flex-wrap pb-1">
-                                <div className="text-xs text-(--base-06)">
+                        <div className="flex animate-content-in flex-col gap-4">
+                            <div className="flex flex-wrap items-center justify-between gap-3">
+                                <div className="min-w-0 text-[13px] text-(--base-06)">
                                     {bulk
                                         ? bulk.checking
                                             ? `Checked ${bulk.done} of ${bulk.total}`
@@ -1403,7 +1312,7 @@ export default function ServerContentPage() {
                                         : updateAllBlocked
                                             ?? `Updates are limited to ${pinnedLoader} · MC ${pinnedMcVersion}, and never move a mod to a less stable channel.`}
                                 </div>
-                                <div className="flex items-center gap-1.5 shrink-0">
+                                <div className="flex shrink-0 flex-wrap items-center gap-3">
                                     {isModServer && (
                                         <ServerSideFilter value={env} onChange={setEnv} inline />
                                     )}
@@ -1411,9 +1320,9 @@ export default function ServerContentPage() {
                                         onClick={handleUpdateAll}
                                         disabled={bulk !== null || updateAllBlocked !== null}
                                         title={updateAllBlocked ?? undefined}
-                                        className="btn btn-secondary btn-sm"
+                                        className="btn btn-primary btn-sm"
                                     >
-                                        <RefreshCw size={12} className={bulk ? 'animate-spin' : ''} />
+                                        <RefreshCw size={14} className={bulk ? 'animate-spin motion-reduce:animate-none' : ''} />
                                         {bulk ? 'Working…' : 'Update all'}
                                     </button>
                                 </div>
@@ -1423,302 +1332,57 @@ export default function ServerContentPage() {
                                 it stops whatever has not been issued yet. What HAS been issued
                                 is queued on Core and finishes either way. */}
                             {bulk && (
-                                <p className="text-[11px] text-(--warning-light) pb-1">
+                                <Callout tone="warning" icon={<AlertTriangle size={16} />} role="status">
                                     Keep this tab open. Closing it stops the mods that have not been
                                     started yet; the ones already started will finish.
-                                </p>
+                                </Callout>
                             )}
                             {bulkSkipped.length > 0 && (
-                                <div className="card p-3 text-xs">
-                                    <div className="flex items-center gap-1.5 text-(--warning-light) font-medium">
-                                        <AlertTriangle size={12} className="shrink-0" />
-                                        Skipped by Update all ({bulkSkipped.length})
-                                    </div>
-                                    <ul className="mt-1.5 space-y-0.5 text-(--base-07)">
+                                <Callout tone="warning" icon={<AlertTriangle size={16} />} title={`Skipped by Update all (${bulkSkipped.length})`}>
+                                    <ul className="mt-1 space-y-0.5">
                                         {bulkSkipped.map((s, i) => (
                                             <li key={`${s.title}-${i}`}>{s.title}: {s.reason}</li>
                                         ))}
                                     </ul>
-                                </div>
+                                </Callout>
                             )}
                             {visibleInstalled.length < installed.length && (
-                                <p className="text-[11px] text-(--base-06) pb-1">
+                                <p className="text-xs text-(--base-06)">
                                     {installed.length - visibleInstalled.length} hidden by the {envFilterName(sideFilter)} filter under Environment. Update all still covers every mod.
                                 </p>
                             )}
-                            {visibleInstalled.map(m => (
-                                <article key={m.id} className={`card p-3 flex items-start gap-3 ${m.disabled ? 'opacity-70' : ''}`}>
-                                    <ProjectIcon url={installedSides.get(m.modrinthProjectId)?.icon_url} name={m.title || m.fileName} className="w-10 h-10" />
-                                    <div className="min-w-0 flex-1">
-                                        <div className="flex items-center gap-2 min-w-0">
-                                            <span className="text-sm font-medium text-(--base-09) truncate">{m.title || m.fileName}</span>
-                                            {m.disabled && (
-                                                <span className="badge text-[10px] font-sans shrink-0" title="The jar is in .disabled/ and is not loaded">Off</span>
-                                            )}
-                                            {isModServer && <BucketTag sides={installedSides.get(m.modrinthProjectId)} />}
-                                            {mismatchFor(m) && (
-                                                <span className="badge badge-warning text-[10px] font-sans shrink-0">
-                                                    <AlertTriangle size={10} aria-hidden="true" />
-                                                    {mismatchFor(m)}
-                                                </span>
-                                            )}
-                                        </div>
-                                        <div className="text-xs text-(--base-06) font-mono">{m.fileName}</div>
-                                        <div className="text-xs text-(--base-06) mt-0.5">
-                                            {m.status === 'installing'
-                                                ? 'Installing - the node is downloading it'
-                                                : m.status === 'failed'
-                                                ? null
-                                                : `Installed ${fmtDateTime(m.installedAt)}`}
-                                        </div>
-                                        {/* The node reported a reason and this is the only place it can
-                                            reach. Core used to write this row before dispatching and never
-                                            revisit it, so a download that 404ed listed as an installed mod. */}
-                                        {/* Only a job this session is following animates. A row
-                                            left at installing by a lost report keeps the static label
-                                            above instead of pulsing forever. */}
-                                        {(() => {
-                                            const job = installs.jobFor(serverId, m.modrinthProjectId);
-                                            return m.status === 'installing' && job && isPending(job) && job.versionId === m.modrinthVersionId
-                                                ? <InstallBar job={job} />
-                                                : null;
-                                        })()}
-                                        {m.status === 'failed' && (
-                                            <div className="mt-1 flex items-start gap-1.5 text-xs text-(--warning-light)">
-                                                <AlertTriangle size={12} className="mt-0.5 shrink-0" />
-                                                <span>
-                                                    This did not install. The server is still running whatever it
-                                                    had before.{m.statusMessage ? ` ${m.statusMessage}` : ''}
-                                                </span>
-                                            </div>
-                                        )}
-                                    </div>
-                                    <div className="flex items-center gap-1 shrink-0">
-                                        {/* A switched-off mod offers only switching it back on and
-                                            removing it: Core refuses to install over its jar. */}
-                                        {!m.disabled && mismatchFor(m) && (
-                                            <button
-                                                onClick={() => handleSwap(m)}
-                                                disabled={busyProjects.has(m.modrinthProjectId)}
-                                                aria-busy={busyProjects.has(m.modrinthProjectId)}
-                                                className="btn btn-primary btn-sm"
-                                            >
-                                                <RefreshCw size={12} className={busyProjects.has(m.modrinthProjectId) ? 'animate-spin motion-reduce:animate-none' : ''} />
-                                                Swap to the matching build
-                                            </button>
-                                        )}
-                                        {/* Only the builds this server actually ran. Modrinth's own
-                                            version list is one click away and offers everything; what it
-                                            cannot tell you is which build you had before the update that
-                                            broke something. */}
-                                        {!m.disabled && historyFor(m.modrinthProjectId).length > 0 && (
-                                            <div className="relative">
-                                                <button
-                                                    onClick={() => setRollbackFor(rollbackFor === m.modrinthProjectId ? null : m.modrinthProjectId)}
-                                                    disabled={busyProjects.has(m.modrinthProjectId)}
-                                                    className="btn btn-secondary btn-sm"
-                                                    title="Go back to an earlier build"
-                                                >
-                                                    <RotateCcw size={12} />
-                                                    Roll back
-                                                </button>
-                                                {rollbackFor === m.modrinthProjectId && (
-                                                    <div className="dropdown-menu right-0 mt-1 w-72 animate-fade-in origin-top-right">
-                                                        <div className="dropdown-label px-3 pt-2 pb-1">Builds this server had</div>
-                                                        {historyFor(m.modrinthProjectId).map(h => (
-                                                            <button
-                                                                key={h.id}
-                                                                onClick={() => handleRollback(m, h)}
-                                                                className="dropdown-item flex-col items-start gap-0"
-                                                            >
-                                                                <span className="font-mono text-xs truncate w-full text-left">{h.fileName}</span>
-                                                                <span className="text-[10px] text-(--base-06)">
-                                                                    replaced {fmtDateTime(h.replacedAt)}
-                                                                </span>
-                                                            </button>
-                                                        ))}
-                                                    </div>
-                                                )}
-                                            </div>
-                                        )}
-                                        {isOnServer(m) && (
-                                            <button
-                                                onClick={() => handleToggleEnabled(m)}
-                                                disabled={busyProjects.has(m.modrinthProjectId)}
-                                                aria-pressed={!m.disabled}
-                                                className={`btn btn-secondary btn-sm ${m.disabled ? 'text-(--warning-light)' : ''}`}
-                                                title={m.disabled ? 'Switched off. Click to switch it on (moves it back from .disabled/, takes effect at the next restart).' : 'Click to switch it off (moves it to .disabled/, takes effect at the next restart).'}
-                                            >
-                                                {m.disabled ? <PowerOff size={12} /> : <Power size={12} />}
-                                                <span className="sr-only">Enabled</span>
-                                            </button>
-                                        )}
-                                        {!m.disabled && <button
-                                            onClick={() => handleTogglePaused(m)}
-                                            disabled={busyProjects.has(m.modrinthProjectId)}
-                                            aria-pressed={!!m.updatesPaused}
-                                            className={`btn btn-secondary btn-sm ${m.updatesPaused ? 'text-(--warning-light)' : ''}`}
-                                            title={m.updatesPaused ? 'Paused: Update all skips this mod. Click to include it again.' : 'Included in Update all. Click to pause updates for this mod.'}
-                                        >
-                                            {m.updatesPaused ? <Lock size={12} /> : <LockOpen size={12} />}
-                                            {/* A fixed name: aria-pressed already says whether it is on. */}
-                                            <span className="sr-only">Pause updates</span>
-                                        </button>}
-                                        <ModrinthProjectActions projectId={m.modrinthProjectId} title={m.title || m.fileName}/><a
-                                            href={`https://modrinth.com/project/${m.modrinthProjectSlug || m.modrinthProjectId}`}
-                                            target="_blank"
-                                            rel="noopener noreferrer"
-                                            className="btn btn-secondary btn-sm"
-                                            title="View on Modrinth"
-                                        >
-                                            <ExternalLink size={12} />
-                                        </a>
-                                        {/* Core refuses a Remove while the download may still run (it would land after
-                                            the removal); the button follows the job this session is watching. */}
-                                        {(() => {
-                                            const job = installs.jobFor(serverId, m.modrinthProjectId);
-                                            const downloading = m.status === 'installing' && !!job && isPending(job) && job.versionId === m.modrinthVersionId;
-                                            return <button onClick={() => handleUninstall(m)} className="btn btn-secondary btn-sm"
-                                                disabled={downloading} title={downloading ? 'Still installing. Remove it when it has finished.' : undefined}>
-                                                <Trash2 size={12} className="text-(--error-light)" />
-                                                Remove
-                                            </button>;
-                                        })()}
-                                    </div>
-                                </article>
-                            ))}
+                            <div className="srv-content-list">
+                                {visibleInstalled.map(m => {
+                                    const job = installs.jobFor(serverId, m.modrinthProjectId);
+                                    // Only a job this session follows animates. A row left at
+                                    // installing by a lost report keeps the static label instead
+                                    // of pulsing forever.
+                                    const followed = m.status === 'installing' && !!job && isPending(job) && job.versionId === m.modrinthVersionId;
+                                    return (
+                                        <InstalledRow
+                                            key={m.id}
+                                            m={m}
+                                            iconUrl={installedSides.get(m.modrinthProjectId)?.icon_url}
+                                            sides={installedSides.get(m.modrinthProjectId)}
+                                            showSides={isModServer}
+                                            mismatch={mismatchFor(m)}
+                                            busy={busyProjects.has(m.modrinthProjectId)}
+                                            installJob={followed ? job : null}
+                                            downloading={followed}
+                                            history={historyFor(m.modrinthProjectId)}
+                                            onSwap={() => handleSwap(m)}
+                                            onRollback={h => handleRollback(m, h)}
+                                            onToggleEnabled={() => handleToggleEnabled(m)}
+                                            onTogglePaused={() => handleTogglePaused(m)}
+                                            onUninstall={() => handleUninstall(m)}
+                                        />
+                                    );
+                                })}
+                            </div>
                         </div>
                     )}
-                </div>
+                </section>
             )}
-
         </main>
     );
-}
-
-function ModListRow({
-    hit,
-    status,
-    sides,
-    updateChannel,
-    installed,
-    busy,
-    job,
-    selected,
-    onOpen,
-    onInstall,
-    onRemove,
-    onUpdate,
-}: {
-    hit: ModrinthSearchHit;
-    status: RowStatus;
-    sides: ModSides | null;
-    updateChannel?: string;
-    installed: boolean;
-    busy: boolean;
-    job?: InstallJob;
-    selected: boolean;
-    onOpen: () => void;
-    onInstall: () => void;
-    onRemove: () => void;
-    onUpdate: () => void;
-}) {
-    // The row opens the detail column on click, but also hosts a nested real
-    // <button> for install/remove/update - a <button> can't nest another
-    // <button>, so the row itself is a div with button semantics (role +
-    // keyboard handling) and the action button stops propagation.
-    const handleKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
-        if (e.target !== e.currentTarget) return;
-        if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            onOpen();
-        }
-    };
-    // The install job outlives the click: busy covers resolving the version,
-    // the job covers Core and the node until they answer.
-    const jobBusy = !!job && isPending(job);
-    const actionBusy = busy || jobBusy;
-    const stopAnd = (fn: () => void) => (e: MouseEvent) => {
-        e.stopPropagation();
-        fn();
-    };
-
-    return (
-        <div
-            role="button"
-            tabIndex={0}
-            onClick={onOpen}
-            onKeyDown={handleKeyDown}
-            className={`card p-3 w-full flex items-start gap-3 transition-colors cursor-pointer focus:outline-none focus:border-(--accent-border) ${
-                selected ? 'border-(--accent-border)' : 'hover:border-(--base-04)'
-            }`}
-        >
-            {hit.icon_url ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={hit.icon_url} alt="" className="w-11 h-11 rounded-md shrink-0" />
-            ) : (
-                <div className="w-11 h-11 rounded-md bg-(--base-03) flex items-center justify-center shrink-0">
-                    <Package size={16} className="text-(--base-05)" />
-                </div>
-            )}
-            <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                    <span className="font-medium text-sm text-(--base-09) truncate">{hit.title}</span>
-                    <span className="text-[10px] font-mono text-(--base-06) truncate">by {hit.author}</span>
-                </div>
-                <p className="text-xs text-(--base-07) line-clamp-2 mt-0.5">{hit.description}</p>
-                <div className="text-[10px] font-mono text-(--base-06) flex items-center gap-1.5 mt-1">
-                    <Download size={10} />
-                    {hit.downloads.toLocaleString()}
-                    <BucketTag sides={sides} />
-                </div>
-                {job && jobBusy && <InstallBar job={job} />}
-                {job && (job.state === 'failed' || job.state === 'unknown') && job.message && (
-                    <p className="mt-1 text-[11px] text-(--warning-light) flex items-start gap-1">
-                        <AlertTriangle size={11} className="mt-0.5 shrink-0" />
-                        <span>{job.message}</span>
-                    </p>
-                )}
-            </div>
-
-            <div className="flex flex-col items-end gap-1.5 shrink-0"><div className="flex" onClick={event=>event.stopPropagation()}><ModrinthProjectActions projectId={hit.project_id} title={hit.title}/></div>
-                {status === 'up-to-date' && (
-                    <span className="mono-label bg-(--success-ghost) text-(--success-light) px-1.5 rounded-sm">installed</span>
-                )}
-                {status === 'update-available' && (
-                    <span className="mono-label bg-(--warning-ghost) text-(--warning-light) px-1.5 rounded-sm">update available</span>
-                )}
-                {status === 'checking' && (
-                    <span className="mono-label bg-(--base-03) text-(--base-06) px-1.5 rounded-sm">checking…</span>
-                )}
-
-                {status === 'not-installed' && (
-                    <button onClick={stopAnd(onInstall)} disabled={actionBusy} aria-busy={actionBusy} className="btn btn-primary btn-sm">
-                        {actionBusy ? <RefreshCw size={11} className="animate-spin motion-reduce:animate-none" /> : <Download size={11} />}
-                        {job && jobBusy ? jobLabel(job) : job?.state === 'failed' || job?.state === 'unknown' ? 'Try again' : 'Install'}
-                    </button>
-                )}
-                {status === 'update-available' && (
-                    <button onClick={stopAnd(onUpdate)} disabled={actionBusy} aria-busy={actionBusy} className="btn btn-primary btn-sm">
-                        {actionBusy ? <RefreshCw size={11} className="animate-spin motion-reduce:animate-none" /> : <Download size={11} />}
-                        {job && jobBusy ? jobLabel(job) : updateChannel && updateChannel !== 'release' ? `Update (${updateChannel})` : 'Update'}
-                    </button>
-                )}
-                {installed && (
-                    <button onClick={stopAnd(onRemove)} disabled={busy} className="btn btn-secondary btn-sm" title="Remove">
-                        {busy ? <RefreshCw size={11} className="animate-spin" /> : <Trash2 size={11} className="text-(--error-light)" />}
-                        Remove
-                    </button>
-                )}
-            </div>
-        </div>
-    );
-}
-
-// The server-side bucket tag ("Server only", ...); none where Modrinth does
-// not say enough. Client only is a warning: it only appears on Installed.
-function BucketTag({ sides }: { sides?: ModSides | null }) {
-    const b = sides ? serverBucket(sides) : null;
-    if (!sides || !b) return null;
-    return <EnvTag label={serverBucketLabel(b)} title={serverBucketTitle(sides) ?? undefined} warning={b === 'client_only'} />;
 }

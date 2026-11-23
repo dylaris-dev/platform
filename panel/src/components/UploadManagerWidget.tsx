@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from 'react';
+import { Popover, PopoverContent, PopoverTrigger } from '@ui-sdk/react/popover';
 import { Upload, X, CircleCheck, CircleAlert, Trash2, Loader2 } from 'lucide-react';
 import {
     useUploadManager,
@@ -99,7 +100,6 @@ export function ProgressRing({ progress, size = 24, stroke = 2.5, children }: Ri
 export default function UploadManagerWidget() {
     const mgr = useUploadManager();
     const [open, setOpen] = useState(false);
-    const wrapRef = useRef<HTMLDivElement>(null);
 
     // Auto-open the panel briefly when the first upload starts so the
     // user can confirm it's tracked, then let them collapse it.
@@ -111,36 +111,25 @@ export default function UploadManagerWidget() {
         prevActiveRef.current = mgr.activeCount;
     }, [mgr.activeCount]);
 
-    useEffect(() => {
-        const handler = (e: MouseEvent) => {
-            if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
-        };
-        document.addEventListener('click', handler);
-        return () => document.removeEventListener('click', handler);
-    }, []);
-
     if (mgr.jobs.length === 0) return null; // hidden when nothing to show
 
     const hasActive = mgr.hasActive;
     const tone = hasActive
-        ? 'bg-(--accent-ghost) text-(--accent-light) border-(--accent-border) hover:bg-(--accent-ghost)/80'
-        : 'bg-(--success)/10 text-(--success-light) border-(--success)/20 hover:bg-(--success)/15';
+        ? 'text-(--accent-light)'
+        : 'text-(--success-light)';
 
     const label = hasActive
         ? `${mgr.activeCount} upload${mgr.activeCount !== 1 ? 's' : ''} active`
         : 'Uploads finished';
 
     return (
-        <div ref={wrapRef} className="relative mr-2">
-            <button
-                type="button"
-                onClick={() => setOpen(o => !o)}
+        <div className="relative">
+          <Popover open={open} onOpenChange={setOpen}>
+            <PopoverTrigger
+                render={<button type="button" />}
                 title={label}
-                className={`relative flex items-center justify-center w-9 h-9 rounded-md transition-colors border ${
-                    open
-                        ? 'bg-(--base-03) border-(--base-04) text-(--base-09)'
-                        : tone
-                }`}
+                aria-label={label}
+                className={`app-icon-btn relative ${open ? '' : tone}`}
             >
                 {hasActive ? (
                     <ProgressRing progress={mgr.aggregateProgress}>
@@ -154,9 +143,13 @@ export default function UploadManagerWidget() {
                         {mgr.activeCount}
                     </span>
                 )}
-            </button>
+            </PopoverTrigger>
 
-            {open && <UploadPanel onClose={() => setOpen(false)} />}
+            {/* initialFocus none: it also opens by itself when an upload starts, and must not steal focus. */}
+            <PopoverContent side="bottom" align="end" sideOffset={12} initialFocus="none" aria-label="Uploads" className="ui-popup w-96 max-w-[calc(100vw-1rem)]">
+                <UploadPanel onClose={() => setOpen(false)} />
+            </PopoverContent>
+          </Popover>
         </div>
     );
 }
@@ -176,9 +169,9 @@ function UploadPanel({ onClose }: { onClose: () => void }) {
     }, []);
 
     return (
-        <div className="dropdown-menu right-0 mt-3 w-96 animate-fade-in origin-top-right">
-            <div className="flex items-center justify-between px-4 py-2 border-b border-(--base-03)">
-                <div className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06)">
+        <div>
+            <div className="flex items-center justify-between px-4 py-2.5">
+                <div className="text-sm font-medium text-(--base-09)">
                     Uploads ({mgr.jobs.length})
                 </div>
                 <div className="flex items-center gap-1">

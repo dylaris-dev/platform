@@ -4,6 +4,8 @@ import { useEffect, useState } from 'react';
 import RoutesPanel from '@/views/infrastructure/RoutesPanel';
 import { getInfrastructureOverview, type GatewayEdge } from '@/lib/api';
 import { SkeletonTable } from '@/components/Skeleton';
+import EmptyState from '@/components/ui/EmptyState';
+import { Globe } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import { MANAGED_GATEWAY_NOTE } from '@/lib/gatewayProvider';
 
@@ -47,7 +49,7 @@ export default function Page() {
     }, [local]);
 
     // The provider holds the route list; this Core's admin route API answers 409.
-    if (!local) return <div className="card p-8 text-center text-(--base-06) text-sm">{MANAGED_GATEWAY_NOTE}</div>;
+    if (!local) return <EmptyState icon={<Globe size={20} />} title="Routes are managed by the provider" description={MANAGED_GATEWAY_NOTE} />;
 
     if (edges === null) return <SkeletonTable rows={6} />;
 
@@ -55,9 +57,11 @@ export default function Page() {
     // link is enough; either one can serve a route.
     if (edges.length === 0 && links === 0) {
         return (
-            <div className="card p-8 text-center text-(--base-06) text-sm">
-                Routes are served by the gateway, and none is deployed. Enable gateway routing and deploy an edge first.
-            </div>
+            <EmptyState
+                icon={<Globe size={20} />}
+                title="No gateway deployed"
+                description="Routes are served by the gateway, and none is deployed. Enable gateway routing and deploy an edge first."
+            />
         );
     }
 

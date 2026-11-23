@@ -1,0 +1,47 @@
+/* Modpacks and templates: card grid and quiet rows on top of the .srv-* surface styles. */
+.mp-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+}
+.mp-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 120px;
+  background: var(--base-02);
+  border-radius: var(--radius-lg);
+  transition: background 0.15s ease-out;
+}
+.mp-card:hover { background: var(--base-03); }
+.mp-card-link {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 48px 4px 16px;
+  border-radius: var(--radius-lg);
+}
+.mp-card-link:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.mp-card-icon {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-md);
+  background: var(--base-03);
+  overflow: hidden;
+}
+.mp-card-menu { position: absolute; top: 12px; right: 10px; }
+/* Pack and template detail: one scroll area, one reading column. */
+.mp-page {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 24px max(16px, calc((100% - 1100px) / 2));
+}
+@media (prefers-reduced-motion: reduce) {
+  .mp-card { transition: none; }
+}

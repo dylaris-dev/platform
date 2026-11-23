@@ -8,6 +8,26 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.23
+
+### Features
+- The panel has a new look: calmer pages, lists as rows with an action menu per row, a server header with one
+  Server settings panel, and menus, dialogs and selects that work by keyboard. Nothing was removed. `panel`
+- Server Content filters sit in a sidebar next to the results, each scrolling on its own, and the server state
+  shows Starting, Stopping or Restarting while a power action runs. `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Several settings, account and infrastructure pages showed an empty list when loading failed; they now say it
+  failed and offer Try again. `panel`
+- World Type and other server.properties values written with escapes (`minecraft\:normal`) show the saved
+  value instead of a wrong one. `panel`
+
 ## 2026.11.18
 
 ### Features

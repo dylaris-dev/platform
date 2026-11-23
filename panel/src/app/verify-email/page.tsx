@@ -41,8 +41,8 @@ function VerifyEmailInner() {
     }, [token]);
 
     return (
-        <div className="min-h-screen flex items-center justify-center p-4 bg-(--background)">
-            <div className="card w-full max-w-md p-8 text-center space-y-4">
+        <div className="app-auth">
+            <div className="app-auth-card text-center space-y-4">
                 {status === 'pending' && (
                     <>
                         <Loader2 size={32} className="mx-auto animate-spin text-(--accent-light)" />
@@ -82,8 +82,8 @@ import { Suspense } from 'react';
 export default function VerifyEmailPage() {
     return (
         <Suspense fallback={
-            <div className="min-h-screen flex items-center justify-center p-4 bg-(--background)">
-                <div className="card w-full max-w-md p-8 space-y-3">
+            <div className="app-auth">
+                <div className="app-auth-card space-y-3">
                     <SkeletonHeader />
                     <SkeletonCard height="h-16" />
                 </div>

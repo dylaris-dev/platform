@@ -3,15 +3,19 @@
 import { toast as notifyToast } from '@/components/ui/Toast';
 
 import React, { useEffect, useState } from 'react';
-import { LifeBuoy, Plus, Pencil, Trash2, X, Loader2, CircleCheck, CircleAlert } from 'lucide-react';
+import { LifeBuoy, Plus, Pencil, Trash2, X, Loader2, CircleAlert, MoreHorizontal } from 'lucide-react';
 import {
     adminListTicketCategories, createTicketCategory, updateTicketCategory, deleteTicketCategory,
     TicketCategory, TicketPriority,
 } from '@/lib/api/tickets';
-import { SkeletonHeader, SkeletonTable } from '@/components/Skeleton';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import SettingsPage from '@/components/settings/SettingsPage';
 import ModalPanel from '@/components/ui/ModalPanel';
+import Select from '@/components/ui/Select';
+import Checkbox from '@/components/ui/Checkbox';
+import Menu from '@/components/ui/Menu';
+import EmptyState from '@/components/ui/EmptyState';
+import { RowList, Row } from '@/components/ui/RowList';
 
 const PRIORITIES: TicketPriority[] = ['low', 'normal', 'high', 'urgent'];
 
@@ -126,10 +130,7 @@ export default function TicketCategoriesTab() {
     };
 
     if (loading) return (
-        <div className="space-y-6 max-w-4xl">
-            <SkeletonHeader />
-            <SkeletonTable rows={4} cols={6} />
-        </div>
+        <SettingsPage title="Ticket categories" loading skeletonCards={2} width="4xl">{null}</SettingsPage>
     );
 
     return (
@@ -149,79 +150,53 @@ export default function TicketCategoriesTab() {
                 </button>
             }
         >
-            <div className="card overflow-hidden">
-                <table className="w-full text-sm">
-                    <thead className="bg-(--base-03) text-(--base-06)">
-                        <tr>
-                            <th className="text-left font-mono text-[10px] uppercase tracking-[0.08em] px-4 py-2">Name</th>
-                            <th className="text-left font-mono text-[10px] uppercase tracking-[0.08em] px-4 py-2">Server</th>
-                            <th className="text-left font-mono text-[10px] uppercase tracking-[0.08em] px-4 py-2">Default priority</th>
-                            <th className="text-left font-mono text-[10px] uppercase tracking-[0.08em] px-4 py-2">Default team</th>
-                            <th className="text-left font-mono text-[10px] uppercase tracking-[0.08em] px-4 py-2">Status</th>
-                            <th className="text-right font-mono text-[10px] uppercase tracking-[0.08em] px-4 py-2 w-32">Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {loadError ? (
-                            <tr>
-                                <td colSpan={6} className="text-center py-8 text-(--error-light) text-sm">
-                                    {loadError}
-                                </td>
-                            </tr>
-                        ) : categories.length === 0 && (
-                            <tr>
-                                <td colSpan={6} className="text-center py-8 text-(--base-06) text-sm">
-                                    No categories yet. Add one to enable ticket creation.
-                                </td>
-                            </tr>
-                        )}
+            {loadError ? (
+                <EmptyState tone="error" icon={<CircleAlert size={20} />} title="Categories could not be loaded" description={loadError} />
+            ) : categories.length === 0 ? (
+                <EmptyState
+                    icon={<LifeBuoy size={20} />}
+                    title="No categories yet"
+                    description="Add one to enable ticket creation."
+                    action={<button type="button" onClick={openCreate} className="btn btn-primary btn-sm inline-flex items-center gap-1.5"><Plus size={13} /> Add category</button>}
+                />
+            ) : (
+                <div className="srv-surface">
+                    <RowList label="Ticket categories">
                         {categories.map(c => (
-                            <tr key={c.id} className="border-t border-(--base-03)">
-                                <td className="px-4 py-3">
-                                    <div className="flex items-center gap-2">
-                                        {c.color && <span className="inline-block w-2.5 h-2.5 rounded-full" style={{ background: c.color }} />}
-                                        <span className="font-medium">{c.name}</span>
-                                    </div>
-                                    {c.description && <p className="text-xs text-(--base-06) mt-0.5 line-clamp-1">{c.description}</p>}
-                                </td>
-                                <td className="px-4 py-3 text-xs">
-                                    {c.requiresServer
-                                        ? <span className="font-mono text-(--warning-light)">required</span>
-                                        : <span className="text-(--base-06)">—</span>}
-                                </td>
-                                <td className="px-4 py-3 font-mono text-xs">{c.defaultPriority}</td>
-                                <td className="px-4 py-3 font-mono text-xs">{c.defaultAssigneeTeam || <span className="text-(--base-06)">—</span>}</td>
-                                <td className="px-4 py-3">
-                                    {c.enabled
-                                        ? <span className="text-xs text-(--success-light)">enabled</span>
-                                        : <span className="text-xs text-(--base-06)">disabled</span>}
-                                </td>
-                                <td className="px-4 py-3 text-right">
-                                    <div className="flex items-center justify-end gap-1">
-                                        <button
-                                            type="button"
-                                            onClick={() => openEdit(c)}
-                                            className="p-1.5 rounded text-(--base-07) hover:bg-(--base-04) hover:text-(--base-09)"
-                                            title="Edit"
-                                        >
-                                            <Pencil size={13} />
-                                        </button>
-                                        <button
-                                            type="button"
-                                            onClick={() => handleDelete(c)}
-                                            disabled={deleting === c.id}
-                                            className="p-1.5 rounded text-(--error-light) hover:bg-(--error-ghost) disabled:opacity-40"
-                                            title="Delete"
-                                        >
-                                            {deleting === c.id ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
-                                        </button>
-                                    </div>
-                                </td>
-                            </tr>
+                            <Row
+                                key={c.id}
+                                leading={<span className="inline-block size-2.5 rounded-full" style={{ background: c.color || 'var(--base-05)' }} aria-hidden="true" />}
+                                title={c.name}
+                                meta={<>
+                                    {c.description && <>{c.description} &middot; </>}
+                                    <span className="font-mono">{c.defaultPriority}</span>
+                                    {c.defaultAssigneeTeam && <> &middot; team <span className="font-mono">{c.defaultAssigneeTeam}</span></>}
+                                </>}
+                                trailing={
+                                    <span className="flex items-center gap-3">
+                                        {c.requiresServer && <span className="text-(--warning-light)">Server required</span>}
+                                        <span className={c.enabled ? 'text-(--success-light)' : 'text-(--base-06)'}>{c.enabled ? 'Enabled' : 'Disabled'}</span>
+                                    </span>
+                                }
+                                actions={
+                                    deleting === c.id
+                                        ? <Loader2 size={14} className="mx-2 animate-spin text-(--base-06)" aria-label="Deleting" />
+                                        : (
+                                            <Menu
+                                                trigger={<button type="button" className="app-icon-btn" aria-label={`Actions for ${c.name}`}><MoreHorizontal size={16} /></button>}
+                                                items={[
+                                                    { label: 'Edit', icon: <Pencil size={14} />, onSelect: () => openEdit(c) },
+                                                    { type: 'separator' },
+                                                    { label: 'Delete', icon: <Trash2 size={14} />, danger: true, onSelect: () => handleDelete(c) },
+                                                ]}
+                                            />
+                                        )
+                                }
+                            />
                         ))}
-                    </tbody>
-                </table>
-            </div>
+                    </RowList>
+                </div>
+            )}
 
             {modal && (
                 <div className="modal-overlay">
@@ -253,25 +228,20 @@ export default function TicketCategoriesTab() {
                                 />
                                 <p className="text-xs text-(--base-06)">Shown to the user when they pick this category.</p>
                             </div>
-                            <label className="flex items-center gap-2 text-sm cursor-pointer">
-                                <input
-                                    type="checkbox"
-                                    checked={form.requiresServer}
-                                    onChange={e => setForm({ ...form, requiresServer: e.target.checked })}
-                                    className="checkbox"
-                                />
-                                <span>Require server attachment</span>
-                            </label>
+                            <Checkbox
+                                checked={form.requiresServer}
+                                onChange={c => setForm({ ...form, requiresServer: c })}
+                                label="Require server attachment"
+                            />
                             <div className="grid grid-cols-2 gap-3">
                                 <div className="flex flex-col gap-[5px]">
                                     <label className="input-label">Default priority</label>
-                                    <select
+                                    <Select
+                                        ariaLabel="Default priority"
                                         value={form.defaultPriority}
-                                        onChange={e => setForm({ ...form, defaultPriority: e.target.value as TicketPriority })}
-                                        className="input-field w-full"
-                                    >
-                                        {PRIORITIES.map(p => <option key={p} value={p}>{p}</option>)}
-                                    </select>
+                                        onChange={v => setForm({ ...form, defaultPriority: v as TicketPriority })}
+                                        options={PRIORITIES.map(p => ({ value: p, label: p }))}
+                                    />
                                 </div>
                                 <div className="flex flex-col gap-[5px]">
                                     <label className="input-label">Default team</label>
@@ -314,15 +284,12 @@ export default function TicketCategoriesTab() {
                                     />
                                 </div>
                             </div>
-                            <label className="flex items-center gap-2 text-sm cursor-pointer pt-1">
-                                <input
-                                    type="checkbox"
-                            className="checkbox"
-                                    checked={form.enabled}
-                                    onChange={e => setForm({ ...form, enabled: e.target.checked })}
-                                />
-                                <span>Enabled (visible to users)</span>
-                            </label>
+                            <Checkbox
+                                className="pt-1"
+                                checked={form.enabled}
+                                onChange={c => setForm({ ...form, enabled: c })}
+                                label="Enabled (visible to users)"
+                            />
                             {error && (
                                 <p className="text-xs text-(--error-light) flex items-center gap-1">
                                     <CircleAlert size={12} /> {error}

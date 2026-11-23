@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, useCallback } from 'react';
-import { AlertTriangle } from 'lucide-react';
+import { AlertTriangle, Info, RefreshCw, ServerCrash } from 'lucide-react';
 import {
   getGatewayBandwidthOverview,
   getGatewayBandwidthHistory,
@@ -10,6 +10,13 @@ import {
   type RebalanceView,
 } from '@/lib/api';
 import BandwidthHostRow from './BandwidthRow';
+import Select from '@/components/ui/Select';
+import Segmented from '@/components/ui/Segmented';
+import Section from '@/components/ui/Section';
+import EmptyState from '@/components/ui/EmptyState';
+import Callout from '@/components/server/Callout';
+import { RowList, Row } from '@/components/ui/RowList';
+import { SkeletonCard } from '@/components/Skeleton';
 import {
   hostRows,
   seriesKey,
@@ -61,12 +68,17 @@ export default function BandwidthPanel() {
   const [rebalance, setRebalance] = useState<RebalanceView | null>(null);
   const [savingMode, setSavingMode] = useState(false);
   const [modeError, setModeError] = useState<string | null>(null);
+  // Set when the overview cannot be fetched and there is no earlier snapshot to
+  // keep showing; otherwise the panel would sit on its loading state forever.
+  const [loadFailed, setLoadFailed] = useState(false);
 
   const load = useCallback(async () => {
     try {
       setOverview(await getGatewayBandwidthOverview());
+      setLoadFailed(false);
     } catch {
       // best-effort; keep the last snapshot
+      setLoadFailed(true);
     }
     try {
       setRebalance(await getGatewayRebalance());
@@ -152,7 +164,23 @@ export default function BandwidthPanel() {
   }, [history]);
 
   if (!overview) {
-    return <div className="card p-8 text-center text-(--base-06) text-sm">Loading bandwidth telemetry...</div>;
+    if (loadFailed) {
+      return (
+        <EmptyState
+          tone="error"
+          icon={<ServerCrash size={20} />}
+          title="Could not load bandwidth telemetry"
+          description="The gateway did not answer. Check that its components are running, then try again."
+          action={<button type="button" onClick={load} className="btn btn-secondary btn-sm"><RefreshCw size={14} /> Retry</button>}
+        />
+      );
+    }
+    return (
+      <div className="flex flex-col gap-4" aria-busy="true">
+        <SkeletonCard height="h-32" />
+        <SkeletonCard height="h-56" />
+      </div>
+    );
   }
 
   const bellItems = summarizeAlerts(overview.alerts);
@@ -161,49 +189,58 @@ export default function BandwidthPanel() {
   // gateway component is currently reporting telemetry, so it renders in
   // both the "no components" empty state and the normal overview below.
   const rebalancerSection = rebalance && (
-    <div className="card p-4 flex flex-col gap-3">
-      <div className="flex items-center justify-between">
-        <span className="mono-label">Warp rebalancer</span>
-        <select
+    <Section
+      title="Warp rebalancer"
+      description="Moves peers away from saturated warp leaders."
+      actions={
+        <Select
+          ariaLabel="Warp rebalancer mode"
           value={rebalance.mode}
-          onChange={(e) => handleModeChange(e.target.value as 'off' | 'dry-run' | 'armed')}
+          onChange={(v) => handleModeChange(v as 'off' | 'dry-run' | 'armed')}
           disabled={savingMode}
-          className="input-field text-sm w-32"
-        >
-          <option value="off">Off</option>
-          <option value="dry-run">Dry run</option>
-          <option value="armed">Armed</option>
-        </select>
-      </div>
-      {rebalance.mode === 'dry-run' && (
-        <p className="text-xs text-(--base-06)">Computing only, no moves applied.</p>
-      )}
-      {rebalance.mode === 'armed' && (
-        <p className="text-xs text-(--base-06)">Moves are applied automatically to relieve saturated warp leaders.</p>
-      )}
-      {modeError && <p className="text-xs text-(--error-light)">{modeError}</p>}
-      <div className="flex flex-col gap-1.5 border-t border-(--base-03) pt-2">
+          className="w-32"
+          options={[
+            { value: 'off', label: 'Off' },
+            { value: 'dry-run', label: 'Dry run' },
+            { value: 'armed', label: 'Armed' },
+          ]}
+        />
+      }
+    >
+      <div className="srv-surface">
+        {rebalance.mode === 'dry-run' && (
+          <p className="px-4 pt-3 text-[13px] text-(--base-06)">Computing only, no moves applied.</p>
+        )}
+        {rebalance.mode === 'armed' && (
+          <p className="px-4 pt-3 text-[13px] text-(--base-06)">Moves are applied automatically to relieve saturated warp leaders.</p>
+        )}
+        {modeError && <p role="alert" className="px-4 pt-3 text-[13px] text-(--error-light)">{modeError}</p>}
         {rebalance.decisions.length === 0 ? (
-          <p className="text-xs text-(--base-06)">No recent rebalancer activity</p>
+          <p className="px-4 py-4 text-[13px] text-(--base-06)">No recent rebalancer activity</p>
         ) : (
-          rebalance.decisions.map((d, i) => (
-            <div key={`${d.ts}-${i}`} className="flex items-center justify-between text-xs gap-3">
-              <span className="text-(--base-08)">{summarizeDecision(d)}</span>
-              <span className="text-(--base-05) font-mono shrink-0">{timeAgo(d.ts)}</span>
-            </div>
-          ))
+          <RowList label="Recent rebalancer decisions">
+            {rebalance.decisions.map((d, i) => (
+              <Row
+                key={`${d.ts}-${i}`}
+                title={<span className="font-normal text-(--base-08)">{summarizeDecision(d)}</span>}
+                trailing={<span className="srv-num">{timeAgo(d.ts)}</span>}
+              />
+            ))}
+          </RowList>
         )}
       </div>
-    </div>
+    </Section>
   );
 
   if (rows.length === 0) {
     return (
       <div className="flex flex-col gap-4">
         {rebalancerSection}
-        <div className="card p-8 text-center text-(--base-06) text-sm">
-          No gateway components reporting. Edges, beam relays and warp leaders publish bandwidth once BANDWIDTH_MBIT is set and traffic flows.
-        </div>
+        <EmptyState
+          icon={<Info size={20} />}
+          title="No gateway components reporting"
+          description="Edges, beam relays and warp leaders publish bandwidth once BANDWIDTH_MBIT is set and traffic flows."
+        />
       </div>
     );
   }
@@ -213,29 +250,20 @@ export default function BandwidthPanel() {
       {rebalancerSection}
 
       {bellItems.length > 0 && (
-        <div className="border border-(--warning-border) bg-(--warning-ghost) rounded-lg p-3 flex flex-col gap-2">
+        <div className="flex flex-col gap-2">
           {bellItems.map((it) => (
-            <div key={it.id} className="flex items-start gap-2">
-              <AlertTriangle size={15} className="text-(--warning-light) mt-0.5 shrink-0" />
-              <div>
-                <div className="text-sm font-medium text-(--base-09)">{it.title}</div>
-                <div className="text-xs text-(--base-07)">{it.message}</div>
-              </div>
-            </div>
+            <Callout key={it.id} tone="warning" icon={<AlertTriangle size={16} />} title={it.title}>{it.message}</Callout>
           ))}
         </div>
       )}
 
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <span className="mono-label">Throughput by host</span>
-        <RangePicker range={range} onChange={setRange} />
-      </div>
-
-      {history?.note && (
-        <div className="rounded-lg border border-(--base-03) bg-(--base-02) px-4 py-2.5 text-xs text-(--base-06)">
-          {history.note}
-        </div>
-      )}
+      <Section
+        title="Throughput by host"
+        description="Outbound above the line, inbound below it."
+        actions={<RangePicker range={range} onChange={setRange} />}
+      >
+        {history?.note && <Callout tone="info" icon={<Info size={16} />}>{history.note}</Callout>}
+      </Section>
 
       {/* One row per host, one column per kind. The charts line up down the
           screen, which is what makes two hosts comparable at a glance. */}
@@ -259,20 +287,7 @@ export default function BandwidthPanel() {
 
 function RangePicker({ range, onChange }: { range: BandwidthRange; onChange: (r: BandwidthRange) => void }) {
   return (
-    <div className="flex gap-1" role="group" aria-label="Time range">
-      {BANDWIDTH_RANGES.map(r => (
-        <button
-          key={r}
-          onClick={() => onChange(r)}
-          aria-pressed={range === r}
-          className={`px-2.5 py-1 rounded-sm text-xs font-medium transition-colors ${
-            range === r ? 'bg-(--base-04) text-(--base-09)' : 'text-(--base-07) hover:text-(--base-09)'
-          }`}
-        >
-          {r}
-        </button>
-      ))}
-    </div>
+    <Segmented options={BANDWIDTH_RANGES.map(r => ({ id: r, label: r }))} value={range} onChange={onChange} ariaLabel="Time range" />
   );
 }
 

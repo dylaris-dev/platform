@@ -47,12 +47,10 @@ export default function BeamDownloadButton() {
             disabled={downloading}
             title="Download the Beam desktop app"
             aria-label="Download the Beam desktop app"
-            className="flex items-center gap-2 px-3 py-1.5 rounded-md border border-transparent font-medium
-                       text-(--base-07) transition-colors hover:bg-(--base-04)/50 hover:text-(--base-09)
-                       disabled:opacity-50 disabled:cursor-not-allowed"
+            className="app-icon-btn"
         >
-            {downloading ? <Loader2 size={20} className="animate-spin" /> : <Download size={20} />}
-            <span className="text-sm hidden xl:block">Beam app</span>
+            {downloading ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
+            <span className="app-label hidden xl:block">Beam app</span>
         </button>
     );
 }

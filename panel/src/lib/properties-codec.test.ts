@@ -24,6 +24,18 @@ describe('parseProperties', () => {
         expect(doc.values.motd).toBe('line1\nline2\ttabbed\\literal');
     });
 
+    it('unescapes the \\: Minecraft itself writes, so select values match their options', () => {
+        // The server writes level-type=minecraft\:normal; read raw, no option matched it.
+        const doc = parseProperties('level-type=minecraft\\:normal\ngenerator-settings=\\{\\}\nmotd=\\u00a7aHi');
+        expect(doc.values['level-type']).toBe('minecraft:normal');
+        expect(doc.values['generator-settings']).toBe('{}');
+        expect(doc.values.motd).toBe('§aHi');
+    });
+
+    it('does not chain escapes: \\\\n is a backslash and an n, not a newline', () => {
+        expect(parseProperties('a=x\\\\ny').values.a).toBe('x\\ny');
+    });
+
     it('keeps the last value and the last line index when a key repeats', () => {
         const doc = parseProperties('a=1\na=2\n');
         expect(doc.values.a).toBe('2');

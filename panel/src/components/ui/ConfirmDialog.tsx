@@ -2,6 +2,14 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertTriangle } from 'lucide-react';
+import {
+    AlertDialog,
+    AlertDialogBackdrop,
+    AlertDialogClose,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogTitle,
+} from '@ui-sdk/react/alert-dialog';
 
 /**
  * Replacement for window.confirm on destructive actions.
@@ -73,62 +81,54 @@ export function ConfirmDialogRoot() {
         });
     }, []);
 
-    // Escape cancels and focus starts on the confirm button, so the dialog stays
-    // operable from the keyboard the way the native one was.
+    // Back to the button that asked, so a confirm opened over a modal leaves
+    // the keyboard in that modal rather than on the page body: the SDK only
+    // restores focus to a trigger, and this dialog has none.
     useEffect(() => {
         if (!pending) return;
-        // Back to the button that asked, so a confirm opened over a modal
-        // leaves the keyboard in that modal rather than on the page body.
         const opener = document.activeElement as HTMLElement | null;
-        (pending.focusCancel ? cancelRef : confirmRef).current?.focus();
-        const onKey = (e: KeyboardEvent) => {
-            if (e.key === 'Escape') close(false);
-        };
-        window.addEventListener('keydown', onKey);
         return () => {
-            window.removeEventListener('keydown', onKey);
             if (opener && document.contains(opener)) opener.focus();
         };
-    }, [pending, close]);
+    }, [pending]);
 
     if (!pending) return null;
 
     const destructive = pending.destructive !== false;
 
     return (
-        <div className="modal-overlay animate-fade-in" onClick={() => close(false)}>
-            <div
-                className="modal-panel max-w-sm"
-                role="alertdialog"
-                aria-modal="true"
-                aria-labelledby="confirm-dialog-title"
-                onClick={(e) => e.stopPropagation()}
+        <AlertDialog open onOpenChange={(open, details) => { if (!open) close(details.returnValue === 'confirm'); }}>
+            <AlertDialogBackdrop className="modal-overlay animate-fade-in" onClick={() => close(false)} />
+            <AlertDialogContent
+                className="modal-panel fixed inset-0 m-auto h-fit w-[calc(100%-2rem)] max-w-sm"
+                initialFocus={() => (pending.focusCancel ? cancelRef : confirmRef).current}
             >
                 <div className="modal-header">
-                    <h3
-                        id="confirm-dialog-title"
+                    <AlertDialogTitle
                         className={`modal-title flex items-center gap-2 ${destructive ? 'text-(--error-light)' : ''}`}
                     >
                         {destructive && <AlertTriangle size={16} />} {pending.title}
-                    </h3>
+                    </AlertDialogTitle>
                 </div>
                 <div className="modal-body">
                     {/* pre-line: a message may carry its steps as separate paragraphs. */}
-                    <p className="text-sm text-(--base-07) whitespace-pre-line">{pending.message}</p>
+                    <AlertDialogDescription className="text-sm text-(--base-07) whitespace-pre-line">
+                        {pending.message}
+                    </AlertDialogDescription>
                 </div>
                 <div className="modal-footer">
-                    <button ref={cancelRef} onClick={() => close(false)} className="btn btn-secondary">
+                    <AlertDialogClose ref={cancelRef} className="btn btn-secondary">
                         {pending.cancelLabel ?? 'Cancel'}
-                    </button>
-                    <button
+                    </AlertDialogClose>
+                    <AlertDialogClose
                         ref={confirmRef}
-                        onClick={() => close(true)}
+                        value="confirm"
                         className={`btn ${destructive ? 'btn-danger' : 'btn-primary'}`}
                     >
                         {pending.confirmLabel ?? 'Delete'}
-                    </button>
+                    </AlertDialogClose>
                 </div>
-            </div>
-        </div>
+            </AlertDialogContent>
+        </AlertDialog>
     );
 }

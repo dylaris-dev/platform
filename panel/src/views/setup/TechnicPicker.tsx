@@ -1,5 +1,6 @@
 "use client";
 
+import Select from '@/components/ui/Select';
 import { useEffect, useRef, useState } from 'react';
 import { Search, Package, RefreshCw, AlertTriangle, Info, Check, ExternalLink } from 'lucide-react';
 import { searchTechnic, getTechnicPack, type TechnicSearchHit, type TechnicPack } from '@/lib/api/technic';
@@ -116,16 +117,16 @@ export default function TechnicPicker({ selection, onSelect }: TechnicPickerProp
     if (selection) {
         return (
             <div className="min-h-[220px] space-y-2">
-                <div className="card p-3 border-(--accent) bg-(--accent-ghost)/30 flex items-start gap-3">
+                <div className="srv-setup-selected">
                     <Check size={16} className="text-(--accent-light) shrink-0 mt-0.5" />
                     <div className="min-w-0 flex-1">
                         <div className="text-sm font-medium text-(--base-09)">{selection.displayName}</div>
-                        <div className="text-xs text-(--base-06) font-mono mt-0.5">
+                        <div className="srv-num text-xs text-(--base-06) mt-0.5">
                             {selection.mcVersion && <>MC {selection.mcVersion}</>}
                             {selection.build && <> · build {selection.build}</>}
                         </div>
                     </div>
-                    <button type="button" onClick={() => onSelect(null)} className="text-xs text-(--base-06) hover:text-(--base-09)">
+                    <button type="button" onClick={() => onSelect(null)} className="btn btn-ghost btn-sm">
                         Change
                     </button>
                 </div>
@@ -152,7 +153,7 @@ export default function TechnicPicker({ selection, onSelect }: TechnicPickerProp
             {searching ? (
                 <div className="space-y-1.5">
                     {Array.from({ length: 4 }).map((_, i) => (
-                        <div key={i} className="card p-2 flex items-center gap-3">
+                        <div key={i} className="srv-setup-option">
                             <Skeleton className="w-8 h-8 rounded-md shrink-0" />
                             <SkeletonText width="w-1/3" className="h-3" />
                         </div>
@@ -169,13 +170,13 @@ export default function TechnicPicker({ selection, onSelect }: TechnicPickerProp
                             <button
                                 type="button"
                                 onClick={() => openPack(hit.slug)}
-                                className="w-full card p-2 flex items-center gap-3 text-left hover:border-(--accent-border)"
+                                className="srv-setup-option"
                             >
                                 {hit.iconUrl ? (
                                     // eslint-disable-next-line @next/next/no-img-element
                                     <img src={hit.iconUrl} alt="" className="w-8 h-8 rounded-md shrink-0" />
                                 ) : (
-                                    <div className="w-8 h-8 rounded-md bg-(--base-03) flex items-center justify-center shrink-0">
+                                    <div className="w-8 h-8 rounded-md bg-(--base-04) flex items-center justify-center shrink-0">
                                         <Package size={12} className="text-(--base-05)" />
                                     </div>
                                 )}
@@ -198,16 +199,19 @@ export default function TechnicPicker({ selection, onSelect }: TechnicPickerProp
                                                 version {pack.version || 'unknown'}
                                             </div>
                                             {pack.variant === 'client-solder' && pack.builds && (
-                                                <label className="flex items-center gap-2 text-xs text-(--base-07)">
+                                                <div className="flex items-center gap-2 text-xs text-(--base-07)">
                                                     Build
-                                                    <select value={build} onChange={e => setBuild(e.target.value)} className="input-field py-1 text-xs">
-                                                        {pack.builds.list.map(b => (
-                                                            <option key={b} value={b}>
-                                                                {b}{b === pack.builds?.recommended ? ' (recommended)' : b === pack.builds?.latest ? ' (latest)' : ''}
-                                                            </option>
-                                                        ))}
-                                                    </select>
-                                                </label>
+                                                    <Select
+                                                        ariaLabel="Build"
+                                                        className="min-w-36"
+                                                        value={build}
+                                                        onChange={setBuild}
+                                                        options={pack.builds.list.map(b => ({
+                                                            value: b,
+                                                            label: `${b}${b === pack.builds?.recommended ? ' (recommended)' : b === pack.builds?.latest ? ' (latest)' : ''}`,
+                                                        }))}
+                                                    />
+                                                </div>
                                             )}
                                             <Notice variant={pack.variant} />
                                             <Source url={pack.platformUrl} />

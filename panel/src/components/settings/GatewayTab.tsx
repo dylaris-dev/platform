@@ -20,12 +20,17 @@ import GatewayDnsCard from '@/components/settings/GatewayDnsCard';
 import SettingsCard, { SettingsGroup } from '@/components/settings/SettingsCard';
 import { useBusy } from '@/lib/useBusy';
 import { cnameTargetsFor } from '@/lib/cnameTargets';
+import RadioCards from '@/components/settings/RadioCards';
 import HelpTip from '@/components/ui/HelpTip';
 import SettingsPage from '@/components/settings/SettingsPage';
 import ModalPanel from '@/components/ui/ModalPanel';
 import { fmtDateTime } from '@/lib/time';
 import { useAppData } from '@/lib/AppDataContext';
 import GatewayProviderCard from '@/components/settings/GatewayProviderCard';
+import Select from '@/components/ui/Select';
+import Switch from '@/components/ui/Switch';
+import Checkbox from '@/components/ui/Checkbox';
+import Tooltip from '@/components/ui/Tooltip';
 
 // ─────────────────────────────────────────────
 // Gateway settings
@@ -132,16 +137,11 @@ function DnsCheckCard() {
     const checked = result && !checking;
 
     return (
-        <div className="card p-5 space-y-5">
+        <div className="srv-surface p-5 space-y-5">
             <div className="flex items-start justify-between gap-4">
-                <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-md bg-(--base-03) flex items-center justify-center">
-                        <Network size={18} className="text-(--accent-light)" />
-                    </div>
-                    <div>
-                        <div className="font-medium text-sm text-(--base-09)">DNS &amp; Domains</div>
-                        <div className="text-xs text-(--base-06)">The records to create at your DNS provider — then verify they resolve and the ingress is reachable</div>
-                    </div>
+                <div>
+                    <h3 className="settings-card-title"><Network size={15} className="text-(--base-06) shrink-0" />DNS &amp; Domains</h3>
+                    <p className="settings-card-description">The records to create at your DNS provider — then verify they resolve and the ingress is reachable</p>
                 </div>
                 <button
                     type="button"
@@ -191,13 +191,13 @@ function DnsCheckCard() {
                         </div>
                     ) : (
                         <div>
-                            <h3 className="mono-label mb-3">Required Records</h3>
+                            <h3 className="srv-label mb-3">Required Records</h3>
                             <div className="border border-(--base-03) rounded-md overflow-hidden">
                                 {/* Header */}
                                 <div className="hidden md:grid grid-cols-[auto_1fr_auto] gap-4 px-4 py-2.5 bg-(--base-02) border-b border-(--base-03)">
-                                    <span className="mono-label">Type</span>
-                                    <span className="mono-label">Name &amp; expected target</span>
-                                    <span className="mono-label text-right">{checked ? 'Status' : ''}</span>
+                                    <span className="srv-label">Type</span>
+                                    <span className="srv-label">Name &amp; expected target</span>
+                                    <span className="srv-label text-right">{checked ? 'Status' : ''}</span>
                                 </div>
                                 {result.records.map((rec, idx) => (
                                     <DnsRecordRow key={`${rec.name}-${rec.type}-${idx}`} rec={rec} checked={!!checked} />
@@ -209,7 +209,7 @@ function DnsCheckCard() {
                     {/* Reachability */}
                     {result.reachability.length > 0 && (
                         <div>
-                            <h3 className="mono-label mb-3">Reachability</h3>
+                            <h3 className="srv-label mb-3">Reachability</h3>
                             <div className="space-y-2">
                                 {result.reachability.map((r, idx) => (
                                     <div key={`${r.target}-${idx}`} className="flex items-start justify-between gap-4 p-3 rounded-md bg-(--base-02)">
@@ -258,7 +258,7 @@ function DnsRecordRow({ rec, checked }: { rec: DnsRecord; checked: boolean }) {
                 {/* Expected targets — copyable */}
                 {rec.expected.length > 0 && (
                     <div className="flex flex-col gap-1 pt-0.5">
-                        <span className="text-[10px] font-mono uppercase tracking-[0.08em] text-(--base-05)">Expected</span>
+                        <span className="text-[11px] font-medium text-(--base-06)">Expected</span>
                         {rec.expected.map((v, i) => <CopyValue key={i} value={v} />)}
                     </div>
                 )}
@@ -266,7 +266,7 @@ function DnsRecordRow({ rec, checked }: { rec: DnsRecord; checked: boolean }) {
                 {/* Actual resolved values + hint (post-check) */}
                 {checked && (
                     <div className="flex flex-col gap-1 pt-0.5">
-                        <span className="text-[10px] font-mono uppercase tracking-[0.08em] text-(--base-05)">Resolved</span>
+                        <span className="text-[11px] font-medium text-(--base-06)">Resolved</span>
                         {rec.actual.length > 0 ? (
                             rec.actual.map((v, i) => (
                                 <code key={i} className="font-mono text-xs text-(--base-08) break-all">{v}</code>
@@ -588,19 +588,14 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
             <GatewayProviderCard reloadToken={providerReload} />
 
             {/* Routing Mode. The provider card links here by id. */}
-            <div id="traffic-routing" className="card p-5 space-y-5 scroll-mt-4">
-                <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-md bg-(--base-03) flex items-center justify-center">
-                        <Router size={18} className="text-(--accent-light)" />
-                    </div>
-                    <div>
-                        <div className="font-medium text-sm text-(--base-09)">Traffic Routing</div>
-                        <div className="text-xs text-(--base-06)">How game traffic and file access are routed to servers</div>
-                    </div>
+            <div id="traffic-routing" className="srv-surface p-5 space-y-5 scroll-mt-4">
+                <div>
+                    <h3 className="settings-card-title"><Router size={15} className="text-(--base-06) shrink-0" />Traffic Routing</h3>
+                    <p className="settings-card-description">How game traffic and file access are routed to servers</p>
                 </div>
 
                 <div>
-                    <h3 className="mono-label mb-3 flex items-center gap-1.5">
+                    <h3 className="srv-label mb-3 flex items-center gap-1.5">
                         Game Traffic
                         <HelpTip label="About the routing mode">
                             <p className="mb-2">
@@ -624,19 +619,18 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
                             </p>
                         </HelpTip>
                     </h3>
-                    <div className="grid grid-cols-3 gap-2">
-                        {ROUTING_OPTIONS.map(opt => (
-                            <button key={opt.value} type="button" onClick={() => setRoutingMode(opt.value)}
-                                className={`p-3 rounded-md border text-left transition-colors ${routingMode === opt.value ? 'border-(--accent) bg-(--accent)/10' : 'border-(--base-03) bg-(--base-02) hover:border-(--base-05)'}`}>
-                                <div className={`text-sm font-medium ${routingMode === opt.value ? 'text-(--accent-light)' : 'text-(--base-09)'}`}>{opt.label}</div>
-                                <div className="text-xs text-(--base-06) mt-0.5">{opt.desc}</div>
-                            </button>
-                        ))}
-                    </div>
+                    <RadioCards
+                        className="grid grid-cols-1 gap-2 sm:grid-cols-3"
+                        ariaLabel="Game traffic"
+                        value={routingMode}
+                        onChange={v => setRoutingMode(v)}
+                        options={ROUTING_OPTIONS.map(opt => ({ value: opt.value, label: opt.label, description: opt.desc }))}
+                        cardClassName={checked => `flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${checked ? 'border-(--accent-border) bg-(--accent-ghost)' : 'border-transparent bg-(--base-03) hover:bg-(--base-04)'}`}
+                    />
                 </div>
 
                 <div>
-                    <h3 className="mono-label mb-3 flex items-center gap-1.5">
+                    <h3 className="srv-label mb-3 flex items-center gap-1.5">
                         File Access
                         <HelpTip label="About file access">
                             <p className="mb-2">
@@ -657,15 +651,14 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
                             </p>
                         </HelpTip>
                     </h3>
-                    <div className="grid grid-cols-3 gap-2">
-                        {FILE_OPTIONS.map(opt => (
-                            <button key={opt.value} type="button" onClick={() => setFileMode(opt.value)}
-                                className={`p-3 rounded-md border text-left transition-colors ${fileMode === opt.value ? 'border-(--accent) bg-(--accent)/10' : 'border-(--base-03) bg-(--base-02) hover:border-(--base-05)'}`}>
-                                <div className={`text-sm font-medium ${fileMode === opt.value ? 'text-(--accent-light)' : 'text-(--base-09)'}`}>{opt.label}</div>
-                                <div className="text-xs text-(--base-06) mt-0.5">{opt.desc}</div>
-                            </button>
-                        ))}
-                    </div>
+                    <RadioCards
+                        className="grid grid-cols-1 gap-2 sm:grid-cols-3"
+                        ariaLabel="File access"
+                        value={fileMode}
+                        onChange={v => setFileMode(v)}
+                        options={FILE_OPTIONS.map(opt => ({ value: opt.value, label: opt.label, description: opt.desc }))}
+                        cardClassName={checked => `flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${checked ? 'border-(--accent-border) bg-(--accent-ghost)' : 'border-transparent bg-(--base-03) hover:bg-(--base-04)'}`}
+                    />
                 </div>
 
                 <div className={`flex items-start gap-3 p-3 rounded-md border ${routingMode === 'gateway' && fileMode === 'beam' ? 'border-(--success)/30 bg-(--success)/5' : 'border-(--base-04) bg-(--base-02)'}`}>
@@ -745,23 +738,21 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
                                     placeholder="dylaris.com"
                                     className="input-field input-mono flex-1 text-sm"
                                 />
-                                <select
+                                <Select
+                                    ariaLabel="Validation"
                                     value={hd.validation}
-                                    onChange={e => updateHoster(idx, { validation: e.target.value as HosterValidation })}
-                                    className="input-field text-sm w-52"
-                                >
-                                    {(Object.keys(VALIDATION_LABELS) as HosterValidation[]).map(k => (
-                                        <option key={k} value={k}>{VALIDATION_LABELS[k]}</option>
-                                    ))}
-                                </select>
-                                <button
+                                    onChange={v => updateHoster(idx, { validation: v as HosterValidation })}
+                                    className="w-52"
+                                    options={(Object.keys(VALIDATION_LABELS) as HosterValidation[]).map(k => ({ value: k, label: VALIDATION_LABELS[k] }))}
+                                />
+                                <Tooltip content="Remove"><button
                                     type="button"
                                     onClick={() => removeHoster(idx)}
                                     className="text-(--base-06) hover:text-(--error-light) transition-colors p-2"
-                                    title="Remove"
-                                >
+                                    
+                                 aria-label="Remove">
                                     <Trash2 size={14} />
-                                </button>
+                                </button></Tooltip>
                             </div>
                         ))}
                     </div>
@@ -778,22 +769,18 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
                 <div className={`${gatewayVisibility.hosterDomainEditor ? 'border-t border-(--base-03) pt-5 ' : ''}space-y-4`}>
                     <div className="flex items-center justify-between gap-4">
                         <div>
-                            <h3 className="mono-label">Custom Domains</h3>
+                            <h3 className="srv-label">Custom Domains</h3>
                             <p className="text-xs text-(--base-06) mt-1">
                                 {remoteGateway
                                     ? "Allow users to bring their own domain to the managed gateway. They publish two TXT records, one for this platform and one for the gateway provider, and point a CNAME at the provider's target. The provider's plan must allow own domains too."
                                     : 'Allow users to bring their own domain. They prove ownership with a TXT record and point it at us with a CNAME.'}
                             </p>
                         </div>
-                        <button
-                            type="button"
-                            role="switch"
-                            aria-checked={settings.customDomainsEnabled}
-                            onClick={() => setSettings(prev => ({ ...prev, customDomainsEnabled: !prev.customDomainsEnabled }))}
-                            className={`toggle-track ${settings.customDomainsEnabled ? 'toggle-track-on' : 'toggle-track-off'}`}
-                        >
-                            <span className={`toggle-knob ${settings.customDomainsEnabled ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
-                        </button>
+                        <Switch
+                            ariaLabel="Custom Domains"
+                            checked={settings.customDomainsEnabled}
+                            onChange={c => setSettings(prev => ({ ...prev, customDomainsEnabled: c }))}
+                        />
                     </div>
                     {settings.customDomainsEnabled && (
                         <div className="flex flex-col gap-[5px]">
@@ -847,7 +834,7 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
 
                 <div className="border-t border-(--base-03) pt-5 space-y-3">
                     <div>
-                        <h3 className="mono-label">Reserved Route Prefixes</h3>
+                        <h3 className="srv-label">Reserved Route Prefixes</h3>
                         <p className="text-xs text-(--base-06) mt-1">
                             Leftmost labels users cannot register (subdomain picker and the first label of custom domains). One per line.
                         </p>
@@ -875,7 +862,7 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
                 <SettingsGroup title="Route limits" description="Maximum route allocations and port access.">
 
                 <div>
-                    <h3 className="mono-label mb-3 flex items-center gap-1.5">
+                    <h3 className="srv-label mb-3 flex items-center gap-1.5">
                         Route Allocation
                         <HelpTip label="About route allocation">
                             <p className="mb-2">
@@ -914,7 +901,7 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
                 </div>
 
                 <div className="border-t border-(--base-03) pt-5">
-                    <h3 className="mono-label mb-3">Port Configuration</h3>
+                    <h3 className="srv-label mb-3">Port Configuration</h3>
                     <div className="space-y-3">
                         {/* MC Port */}
                         <div className={`p-3 rounded-md bg-(--base-02) ${!settings.limits.portMcEnabled ? 'opacity-60' : ''}`}>
@@ -923,11 +910,11 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
                                     <span className="text-sm font-semibold text-(--base-09)">Minecraft</span>
                                     <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-(--base-03) text-(--base-06)">25565</span>
                                 </div>
-                                <button type="button" role="switch" aria-checked={settings.limits.portMcEnabled}
-                                    onClick={() => setSettings(prev => ({ ...prev, limits: { ...prev.limits, portMcEnabled: !prev.limits.portMcEnabled } }))}
-                                    className={`toggle-track ${settings.limits.portMcEnabled ? 'toggle-track-on' : 'toggle-track-off'}`}>
-                                    <span className={`toggle-knob ${settings.limits.portMcEnabled ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
-                                </button>
+                                <Switch
+                                    ariaLabel="Minecraft port enabled"
+                                    checked={settings.limits.portMcEnabled}
+                                    onChange={c => setSettings(prev => ({ ...prev, limits: { ...prev.limits, portMcEnabled: c } }))}
+                                />
                             </div>
                         </div>
                     </div>
@@ -948,7 +935,7 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
             {/* Routing confirmation modal */}
             {confirmModal && (
                 <div className="modal-overlay">
-                    <ModalPanel className="card p-6 max-w-md w-full mx-4 space-y-4">
+                    <ModalPanel className="srv-surface p-6 max-w-md w-full mx-4 space-y-4">
                         <div className="flex items-start gap-3">
                             <div className="w-9 h-9 rounded-md bg-(--warning)/10 border border-(--warning)/20 flex items-center justify-center shrink-0">
                                 <AlertTriangle size={18} className="text-(--warning-light)" />
@@ -1002,17 +989,12 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
                                 Users will no longer be able to register new subdomains under it. Existing routes pointing to this domain stay active by default.
                             </p>
 
-                            <label className="flex items-start gap-2 cursor-pointer pt-1">
-                                <input
-                                    type="checkbox"
-                                    checked={removeCascade}
-                                    onChange={e => setRemoveCascade(e.target.checked)}
-                                    className="checkbox mt-0.5"
-                                />
-                                <span className="text-sm text-(--base-08)">
-                                    Also delete all related routes ending in <code className="font-mono">.{removeTarget.domain}</code>
-                                </span>
-                            </label>
+                            <Checkbox
+                                className="pt-1"
+                                checked={removeCascade}
+                                onChange={setRemoveCascade}
+                                label={<>Also delete all related routes ending in <code className="font-mono">.{removeTarget.domain}</code></>}
+                            />
                             {removeCascade && (
                                 <div className="alert alert-error text-xs">
                                     <AlertTriangle size={14} className="shrink-0 mt-0.5" />

@@ -10,6 +10,10 @@ import { useAppData } from '@/lib/AppDataContext';
 import { DynamicIcon } from '@/lib/icons';
 import { Skeleton } from '@/components/Skeleton';
 import { systemEvents } from '@/lib/systemEvents';
+import PageHeader from '@/components/ui/PageHeader';
+import EmptyState from '@/components/ui/EmptyState';
+import Tooltip from '@/components/ui/Tooltip';
+import '@/styles/tickets.css';
 
 // Every proxied custom tab the viewer may see, full width, grouped by server.
 //
@@ -45,7 +49,7 @@ const GROUP_LABEL: Record<NavGroup, string> = { mine: 'My servers', invited: 'In
 // useSearchParams needs a Suspense boundary under the static export.
 export default function CustomTabsPage() {
     return (
-        <Suspense fallback={<div className="flex-1 p-4"><Skeleton className="w-full h-full rounded" /></div>}>
+        <Suspense fallback={<Skeleton className="h-96 w-full rounded-lg" />}>
             <CustomTabsInner />
         </Suspense>
     );
@@ -176,36 +180,36 @@ function CustomTabsInner() {
 
     if (!coreInfo?.tabProxyAvailable) {
         return (
-            <main className="flex-1 flex items-center justify-center p-6">
-                <div className="card p-6 max-w-md text-center space-y-2">
-                    <AlertTriangle size={20} className="text-(--warning-light) mx-auto" />
-                    <p className="text-sm text-(--base-07)">
-                        Proxied tabs are not available on this instance. An admin has to give Core a
-                        proxy host before a tab can be served.
-                    </p>
-                </div>
-            </main>
+            <EmptyState
+                icon={<AlertTriangle size={20} />}
+                title="Proxied tabs are not available"
+                description="An admin has to give Core a proxy host before a tab can be served."
+                className="mx-auto mt-8 max-w-md"
+            />
         );
     }
 
     return (
-        <div className="flex-1 flex min-h-0">
-            <nav aria-label="Custom tabs" className="w-64 shrink-0 border-r border-(--base-03) bg-(--base-01) overflow-y-auto flex flex-col">
-                <div className="px-4 pt-4 pb-2 flex items-center justify-between gap-2">
-                    <h1 className="text-xs font-medium uppercase tracking-wide text-(--base-06)">Custom tabs</h1>
-                    {isAdmin && (
+        <div className="space-y-6">
+            <PageHeader
+                title="Custom tabs"
+                description="Every proxied tab you can open, full width, grouped by server."
+                actions={isAdmin ? (
+                    <Tooltip content="Show every server's tabs">
                         <button
                             type="button"
                             onClick={() => setAdminMode(m => !m)}
                             aria-pressed={adminMode}
-                            title="Show every server's tabs"
-                            className={`btn text-xs px-2.5 py-1 ${adminMode ? 'btn-primary' : 'btn-secondary'}`}
+                            className={`btn btn-sm ${adminMode ? 'btn-primary' : 'btn-secondary'}`}
                         >
                             <ShieldCheck size={12} /> Admin
                         </button>
-                    )}
-                </div>
-                <div className="px-3 pb-2">
+                    </Tooltip>
+                ) : undefined}
+            />
+        <div className="tk-tabs-shell">
+            <nav aria-label="Custom tabs" className="srv-surface flex min-h-0 flex-col overflow-y-auto">
+                <div className="p-3">
                     <div className="relative">
                         <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-(--base-06) pointer-events-none" aria-hidden="true" />
                         <input
@@ -218,14 +222,14 @@ function CustomTabsInner() {
                     </div>
                 </div>
                 {loading && (
-                    <div className="px-4 space-y-2">
+                    <div className="space-y-2 px-4 pb-3">
                         <Skeleton className="h-4 w-32 rounded" />
                         <Skeleton className="h-4 w-24 rounded" />
                         <Skeleton className="h-4 w-28 rounded" />
                     </div>
                 )}
                 {!loading && !anyListed && (
-                    <p className="px-4 py-3 text-xs text-(--base-06)">
+                    <p className="px-4 pb-3 text-[13px] text-(--base-06)">
                         {query.trim()
                             ? 'Nothing matches the search.'
                             : <>None of your servers has a proxied tab yet. Add one under a server&apos;s Config &rarr; Tabs.</>}
@@ -234,27 +238,27 @@ function CustomTabsInner() {
                 {!loading && (['mine', 'invited', 'admin'] as NavGroup[]).map(g => groups[g].length > 0 && (
                     <div key={g} className="pb-1">
                         {(groups.invited.length > 0 || groups.admin.length > 0) && (
-                            <p className="px-4 pt-2 pb-1 mono-label text-(--base-05)">{GROUP_LABEL[g]}</p>
+                            <p className="srv-label px-4 pb-1 pt-2">{GROUP_LABEL[g]}</p>
                         )}
                         {groups[g].map(server => {
                             const open = !collapsed.has(server.id) || !!query.trim();
                             const list = visibleByServer[server.id] ?? [];
                             return (
-                                <section key={server.id} className="pb-1">
+                                <section key={server.id} className="px-1.5 pb-1">
                                     <button
                                         type="button"
                                         onClick={() => toggleCollapsed(server.id)}
                                         aria-expanded={open}
-                                        className="w-full flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-(--base-07) hover:text-(--base-09) transition-colors focus-visible:outline-hidden focus-visible:shadow-(--focus-ring)"
+                                        className="app-row w-full gap-1.5 text-xs font-medium text-(--base-07) hover:text-(--base-09) focus-visible:outline-hidden focus-visible:shadow-(--focus-ring)"
                                         title={g === 'admin' && server.owner ? `${server.name} (${server.owner})` : server.name}
                                     >
                                         {open ? <ChevronDown size={12} className="shrink-0" /> : <ChevronRight size={12} className="shrink-0" />}
                                         <span className="truncate">{server.name}</span>
-                                        {g === 'admin' && server.owner && <span className="truncate text-(--base-05) font-normal">{server.owner}</span>}
-                                        <span className="ml-auto mono-label text-(--base-05)">{list.length}</span>
+                                        {g === 'admin' && server.owner && <span className="truncate font-normal text-(--base-05)">{server.owner}</span>}
+                                        <span className="srv-num ml-auto text-(--base-06)">{list.length}</span>
                                     </button>
                                     {open && (
-                                        <ul>
+                                        <ul className="flex flex-col gap-0.5">
                                             {list.map(tab => {
                                                 const active = selected?.id === tab.id;
                                                 return (
@@ -263,11 +267,7 @@ function CustomTabsInner() {
                                                             href={tabHref(server.id, tab.id)}
                                                             onClick={e => { e.preventDefault(); select(server.id, tab); }}
                                                             aria-current={active ? 'page' : undefined}
-                                                            className={`w-full flex items-center gap-2 pl-7 pr-4 py-1.5 text-sm text-left transition-colors
-                                                                focus-visible:outline-hidden focus-visible:shadow-(--focus-ring)
-                                                                ${active
-                                                                    ? 'bg-(--accent-dim) text-(--base-09) border-l-2 border-(--accent-light)'
-                                                                    : 'text-(--base-07) border-l-2 border-transparent hover:bg-(--base-02) hover:text-(--base-09)'}`}
+                                                            className="app-row w-full gap-2 pl-7 text-sm text-(--base-07) aria-[current=page]:text-(--accent-light) focus-visible:outline-hidden focus-visible:shadow-(--focus-ring)"
                                                         >
                                                             <DynamicIcon name={tab.icon || 'layout-dashboard'} size={13} className="shrink-0" />
                                                             <span className="truncate">{tab.name}</span>
@@ -284,33 +284,22 @@ function CustomTabsInner() {
                 ))}
             </nav>
 
-            <main className="flex-1 min-w-0 bg-(--base-01)">
+            <div className="srv-surface min-h-0 min-w-0 overflow-hidden">
                 {!selected && (
-                    <div className="h-full flex items-center justify-center p-6">
-                        <div className="text-center space-y-2">
-                            {wantedMissing ? (
-                                <>
-                                    <AlertTriangle size={22} className="text-(--warning-light) mx-auto" />
-                                    <p className="text-sm text-(--base-07)">This tab does not exist, is not running, or you have no access to it.</p>
-                                </>
-                            ) : (
-                                <>
-                                    <LayoutDashboard size={22} className="text-(--base-05) mx-auto" />
-                                    <p className="text-sm text-(--base-06)">Pick a tab to open it here.</p>
-                                </>
-                            )}
-                        </div>
+                    <div className="flex h-full items-center justify-center p-6">
+                        {wantedMissing ? (
+                            <EmptyState bare tone="error" icon={<AlertTriangle size={20} />} title="This tab does not exist, is not running, or you have no access to it." />
+                        ) : (
+                            <EmptyState bare icon={<LayoutDashboard size={20} />} title="Pick a tab to open it here." />
+                        )}
                     </div>
                 )}
                 {selected && authState === 'pending' && (
                     <div className="h-full p-4"><Skeleton className="w-full h-full rounded" /></div>
                 )}
                 {selected && authState === 'error' && (
-                    <div className="h-full flex items-center justify-center p-6">
-                        <div className="card p-6 max-w-md text-center space-y-2">
-                            <AlertTriangle size={20} className="text-(--warning-light) mx-auto" />
-                            <p className="text-sm text-(--base-07)">{authError}</p>
-                        </div>
+                    <div className="flex h-full items-center justify-center p-6">
+                        <EmptyState bare tone="error" icon={<AlertTriangle size={20} />} title={authError || 'Failed to authorize this tab.'} />
                     </div>
                 )}
                 {selected && authState === 'ready' && tabContentSrc(selected.proxyOrigin) && (
@@ -325,7 +314,8 @@ function CustomTabsInner() {
                         sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-downloads"
                     />
                 )}
-            </main>
+            </div>
+        </div>
         </div>
     );
 }

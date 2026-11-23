@@ -11,6 +11,9 @@ import { ArrowLeft, Trash2, ShieldAlert, RefreshCw, Loader2 } from 'lucide-react
 import { useAppData } from '@/lib/AppDataContext';
 import { listTicketDeletions, TicketDeletion } from '@/lib/api/tickets';
 import { SkeletonCard, SkeletonHeader } from '@/components/Skeleton';
+import PageHeader from '@/components/ui/PageHeader';
+import EmptyState from '@/components/ui/EmptyState';
+import { RowList, Row } from '@/components/ui/RowList';
 import { fmtDateTime } from '@/lib/time';
 
 const PAGE_SIZE = 50;
@@ -61,134 +64,107 @@ export default function TicketDeletionLogPage() {
 
     if (!isAdmin) {
         return (
-            <main className="flex-1 flex items-center justify-center p-6 text-(--base-06)">
-                <div className="text-center max-w-md">
-                    <ShieldAlert size={28} className="mx-auto text-(--error-light)" />
-                    <p className="mt-3 text-sm">Admins only.</p>
-                </div>
-            </main>
+            <EmptyState tone="error" icon={<ShieldAlert size={20} />} title="Admins only" />
         );
     }
 
     return (
         <div className="space-y-6 max-w-5xl">
-            <header className="flex items-start justify-between gap-4 flex-wrap">
-                <div>
-                    <Link href="/settings/tickets" className="inline-flex items-center gap-1.5 text-xs text-(--base-06) hover:text-(--accent-light) mb-3">
-                        <ArrowLeft size={12} /> Back to ticket settings
-                    </Link>
-                    <h2 className="h-section flex items-center gap-2">
-                        <Trash2 size={18} className="text-(--error-light)" /> Ticket Deletion Log
-                    </h2>
-                    <p className="text-sm text-(--base-06) mt-1">
-                        Append-only audit trail of admin-driven ticket deletions. Snapshot fields are preserved even if the originating user or category is later removed.
-                    </p>
-                </div>
-                <button
-                    type="button"
-                    onClick={() => load(true)}
-                    disabled={refreshing}
-                    className="btn btn-secondary btn-sm inline-flex items-center gap-1.5"
-                >
-                    {refreshing ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
-                    Refresh
-                </button>
-            </header>
-
-            {/* Filter bar */}
-            <div className="card p-4 border border-(--base-03)">
-                <form
-                    onSubmit={e => {
-                        e.preventDefault();
-                        setCommittedFilter(deletedByFilter.trim());
-                    }}
-                    className="flex items-end gap-3 flex-wrap"
-                >
-                    <div className="flex flex-col gap-[5px] min-w-72">
-                        <label className="mono-label">Deleted by (admin UUID)</label>
-                        <input
-                            type="text"
-                            value={deletedByFilter}
-                            onChange={e => setDeletedByFilter(e.target.value)}
-                            placeholder="00000000-0000-0000-0000-000000000000"
-                            className="input-mono w-full"
-                        />
-                    </div>
-                    <button type="submit" className="btn btn-primary btn-sm">Filter</button>
-                    {committedFilter && (
+            <div>
+                <Link href="/settings/tickets" className="mb-3 inline-flex items-center gap-1.5 text-xs text-(--base-06) hover:text-(--accent-light)">
+                    <ArrowLeft size={12} /> Back to ticket settings
+                </Link>
+                <PageHeader
+                    as="h2"
+                    icon={<Trash2 size={18} />}
+                    title="Ticket deletion log"
+                    description="Append-only audit trail of admin-driven ticket deletions. Snapshot fields are preserved even if the originating user or category is later removed."
+                    actions={
                         <button
                             type="button"
-                            onClick={() => { setDeletedByFilter(''); setCommittedFilter(''); }}
-                            className="btn btn-secondary btn-sm"
+                            onClick={() => load(true)}
+                            disabled={refreshing}
+                            className="btn btn-secondary btn-sm inline-flex items-center gap-1.5"
                         >
-                            Reset
+                            {refreshing ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+                            Refresh
                         </button>
-                    )}
-                </form>
+                    }
+                />
             </div>
 
+            <form
+                onSubmit={e => {
+                    e.preventDefault();
+                    setCommittedFilter(deletedByFilter.trim());
+                }}
+                className="flex flex-wrap items-end gap-3"
+            >
+                <div className="flex min-w-72 flex-col gap-1.5">
+                    <label htmlFor="deletion-log-actor" className="srv-label">Deleted by (admin UUID)</label>
+                    <input
+                        id="deletion-log-actor"
+                        type="text"
+                        value={deletedByFilter}
+                        onChange={e => setDeletedByFilter(e.target.value)}
+                        placeholder="00000000-0000-0000-0000-000000000000"
+                        className="input-mono w-full"
+                    />
+                </div>
+                <button type="submit" className="btn btn-primary btn-sm">Filter</button>
+                {committedFilter && (
+                    <button
+                        type="button"
+                        onClick={() => { setDeletedByFilter(''); setCommittedFilter(''); }}
+                        className="btn btn-secondary btn-sm"
+                    >
+                        Reset
+                    </button>
+                )}
+            </form>
+
             {error && (
-                <p className="text-sm text-(--error-light)">{error}</p>
+                <EmptyState tone="error" icon={<ShieldAlert size={20} />} title="The deletion log could not be loaded" description={error} />
             )}
 
-            {/* Table */}
-            <div className="card border border-(--base-03) overflow-hidden">
+            <div className="srv-surface overflow-hidden">
                 {loading ? (
-                    <div className="p-5 space-y-3">
+                    <div className="space-y-3 p-5">
                         <SkeletonHeader />
                         <SkeletonCard height="h-12" />
                         <SkeletonCard height="h-12" />
                         <SkeletonCard height="h-12" />
                     </div>
                 ) : rows.length === 0 ? (
-                    <div className="p-10 text-center text-sm text-(--base-06)">
-                        No deletions recorded{committedFilter ? ' (for this filter)' : ''}.
-                    </div>
+                    <EmptyState
+                        bare
+                        icon={<Trash2 size={20} />}
+                        title={`No deletions recorded${committedFilter ? ' for this filter' : ''}`}
+                    />
                 ) : (
-                    <div className="overflow-x-auto">
-                        <table className="w-full text-sm">
-                            <thead className="bg-(--base-02) text-(--base-06) text-[10px] uppercase tracking-[0.08em]">
-                                <tr>
-                                    <th className="text-left px-4 py-2 font-mono">Datum</th>
-                                    <th className="text-left px-4 py-2 font-mono">Ticket</th>
-                                    <th className="text-left px-4 py-2 font-mono">Subject</th>
-                                    <th className="text-left px-4 py-2 font-mono">Owner</th>
-                                    <th className="text-left px-4 py-2 font-mono">Deleted by</th>
-                                    <th className="text-left px-4 py-2 font-mono">IP</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {rows.map(r => (
-                                    <tr key={r.id} className="border-t border-(--base-03) hover:bg-(--base-03)/30">
-                                        <td className="px-4 py-2 text-(--base-07) whitespace-nowrap" title={r.deletedAt}>
-                                            {formatTimestamp(r.deletedAt)}
-                                        </td>
-                                        <td className="px-4 py-2 font-mono text-(--base-06)">#{r.ticketId}</td>
-                                        <td className="px-4 py-2 text-(--base-09) max-w-md truncate" title={r.ticketSubject}>
-                                            {r.ticketSubject}
-                                        </td>
-                                        <td className="px-4 py-2 font-mono text-(--base-08)">{r.ownerUsername}</td>
-                                        <td className="px-4 py-2 font-mono text-(--base-08)">{r.deletedByName}</td>
-                                        <td className="px-4 py-2 font-mono text-(--base-06) text-xs">{r.ipAddress || '—'}</td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    </div>
+                    <RowList label="Deleted tickets">
+                        {rows.map(r => (
+                            <Row
+                                key={r.id}
+                                title={<><span className="font-mono text-(--base-06)">#{r.ticketId}</span> <span title={r.ticketSubject}>{r.ticketSubject}</span></>}
+                                meta={<>Owner {r.ownerUsername} &middot; deleted by {r.deletedByName}{r.ipAddress ? <> &middot; <span className="font-mono">{r.ipAddress}</span></> : null}</>}
+                                trailing={<span className="font-mono" title={r.deletedAt}>{formatTimestamp(r.deletedAt)}</span>}
+                            />
+                        ))}
+                    </RowList>
                 )}
 
-                {/* Pagination footer */}
                 {!loading && total > PAGE_SIZE && (
-                    <div className="border-t border-(--base-03) px-4 py-3 flex items-center justify-between text-xs text-(--base-06)">
+                    <div className="flex items-center justify-between border-t border-(--base-03) px-4 py-3 text-xs text-(--base-06)">
                         <span>
-                            Showing {offset + 1}–{Math.min(offset + rows.length, total)} of {total}
+                            Showing {offset + 1}&ndash;{Math.min(offset + rows.length, total)} of {total}
                         </span>
                         <div className="flex gap-2">
                             <button
                                 type="button"
                                 onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
                                 disabled={offset === 0}
-                                className="btn btn-secondary btn-sm disabled:opacity-40"
+                                className="btn btn-secondary btn-sm"
                             >
                                 Previous
                             </button>
@@ -196,7 +172,7 @@ export default function TicketDeletionLogPage() {
                                 type="button"
                                 onClick={() => setOffset(offset + PAGE_SIZE)}
                                 disabled={offset + rows.length >= total}
-                                className="btn btn-secondary btn-sm disabled:opacity-40"
+                                className="btn btn-secondary btn-sm"
                             >
                                 Next
                             </button>

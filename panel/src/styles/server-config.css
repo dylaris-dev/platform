@@ -1,0 +1,147 @@
+/* Configuration tab (all sub-pages). Cards reuse .srv-surface from globals.css. */
+.srv-config-nav {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 24px;
+  padding: 4px;
+  width: fit-content;
+  max-width: 100%;
+  overflow-x: auto;
+  border-radius: var(--radius-lg);
+  background: var(--base-02);
+}
+.srv-config-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  color: var(--base-07);
+  transition: color 0.15s ease-out, background 0.15s ease-out;
+}
+.srv-config-link:hover { color: var(--base-09); background: var(--base-03); }
+.srv-config-link:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.srv-config-link[aria-current="page"] { color: var(--accent-light); background: var(--base-03); }
+
+.srv-config-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px 24px;
+}
+.srv-config-title {
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--base-09);
+}
+.srv-config-desc {
+  margin-top: 4px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--base-06);
+}
+.srv-config-card-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--base-09);
+}
+
+/* A settings row: label block left, control right. Hairlines only between rows. */
+.srv-config-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: center;
+  gap: 8px 32px;
+  padding: 14px 20px;
+  transition: background 0.15s ease-out;
+}
+.srv-config-row + .srv-config-row { border-top: 1px solid var(--base-03); }
+.srv-config-row:hover { background: color-mix(in srgb, var(--base-03) 40%, transparent); }
+@media (min-width: 640px) {
+  .srv-config-row { grid-template-columns: minmax(0, 1fr) 16rem; }
+}
+.srv-config-row[data-edited="true"] { box-shadow: inset 2px 0 0 var(--accent); }
+.srv-config-control { display: flex; align-items: center; justify-content: flex-end; gap: 12px; min-width: 0; }
+.srv-config-key {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 1px 8px;
+  border-radius: 9999px;
+  background: var(--base-03);
+  color: var(--base-06);
+}
+.srv-config-pill {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 1px 8px;
+  border-radius: 9999px;
+  background: var(--base-03);
+  color: var(--base-07);
+}
+.srv-config-pill[data-tone="warning"] { background: var(--warning-ghost); color: var(--warning-light); }
+
+.srv-config-side {
+  position: sticky;
+  top: 16px;
+  align-self: start;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.srv-config-side-link {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  text-align: left;
+  color: var(--base-07);
+  transition: color 0.15s ease-out, background 0.15s ease-out;
+}
+.srv-config-side-link:hover { color: var(--base-09); background: var(--base-02); }
+.srv-config-side-link:active { background: var(--base-03); }
+.srv-config-side-link:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+
+.srv-config-savebar {
+  position: sticky;
+  bottom: 16px;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: auto;
+  padding: 10px 12px 10px 20px;
+  border-radius: var(--radius-lg);
+  background: var(--base-03);
+  box-shadow: var(--shadow-xl);
+  font-size: 13px;
+  color: var(--base-08);
+  animation: srv-config-rise 0.16s ease-out;
+}
+@keyframes srv-config-rise { from { opacity: 0; transform: translateY(8px); } }
+
+.srv-config-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 16px 20px;
+  transition: background 0.15s ease-out;
+}
+.srv-config-item + .srv-config-item { border-top: 1px solid var(--base-03); }
+.srv-config-item:hover { background: color-mix(in srgb, var(--base-03) 40%, transparent); }
+
+@media (prefers-reduced-motion: reduce) {
+  .srv-config-link, .srv-config-row, .srv-config-side-link, .srv-config-item { transition: none; }
+  .srv-config-savebar { animation: none; }
+}

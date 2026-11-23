@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 
-import { Clock, Plus, Pencil, Trash2, Play, Square, X, RotateCcw, AlertTriangle, CheckCircle2, MessageSquare, RefreshCw, SkipForward } from 'lucide-react';
+import { Clock, Plus, Pencil, Trash2, MoreHorizontal, X, RotateCcw, AlertTriangle, CheckCircle2, MessageSquare, RefreshCw, SkipForward } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import { systemEvents } from '@/lib/systemEvents';
 import {
@@ -13,7 +13,13 @@ import { Skeleton, SkeletonText } from '@/components/Skeleton';
 import { useBusy } from '@/lib/useBusy';
 import { toast } from '@/components/ui/Toast';
 import { useRouteId } from '@/lib/routeParams';
-import ModalPanel from '@/components/ui/ModalPanel';
+import Menu from '@/components/ui/Menu';
+import Segmented from '@/components/ui/Segmented';
+import { confirmDialog } from '@/components/ui/ConfirmDialog';
+import { Input } from '@ui-sdk/react/input';
+import { Dialog, DialogBackdrop, DialogClose, DialogContent, DialogDescription, DialogTitle } from '@ui-sdk/react/dialog';
+import Select from '@/components/ui/Select';
+import Switch from '@/components/ui/Switch';
 import TimeZoneSelect from '@/components/ui/TimeZoneSelect';
 import { fmtDateTime, getServerTimezone, setServerTimezone } from '@/lib/time';
 
@@ -75,14 +81,13 @@ export default function ServerConfigScheduledPage() {
     const server = servers.find(s => s.id === serverId);
 
     const [tasks, setTasks] = useState<ScheduledTask[]>([]);
-    const [deletingTask, runDelete] = useBusy();
     const [loading, setLoading] = useState(true);
     const [editing, setEditing] = useState<EditingTask | null>(null);
-    const [deletePrompt, setDeletePrompt] = useState<ScheduledTask | null>(null);
     // The zone a new task starts in: the server's own, else its owner's.
     const [serverZone, setServerZone] = useState('UTC');
     const [ownZone, setOwnZone] = useState<string | null>(null);
     const [savingZone, runSaveZone] = useBusy();
+    const [deletingTask, runDelete] = useBusy();
     const loadZone = useCallback(async () => {
         if (!serverId) return;
         const r = await getServerTimezone(serverId);
@@ -186,11 +191,13 @@ export default function ServerConfigScheduledPage() {
         if (res.success) refresh(); else showToast(res.message || 'Toggle failed', false);
     };
 
-    const handleDelete = async () => {
-        if (!deletePrompt) return;
-        const res = await deleteScheduledTask(serverId, deletePrompt.id);
+    const handleDelete = async (t: ScheduledTask) => {
+        if (!(await confirmDialog({
+            title: 'Delete scheduled task?',
+            message: `${t.name || TASK_TYPE_LABEL[t.taskType]} will stop firing. Audit log is preserved.`,
+        }))) return;
+        const res = await deleteScheduledTask(serverId, t.id);
         if (res.success) {
-            setDeletePrompt(null);
             showToast('Task deleted.', true);
             refresh();
         } else {
@@ -201,35 +208,30 @@ export default function ServerConfigScheduledPage() {
     if (!server) return null;
 
     return (
-        <div className="max-w-3xl space-y-4">
-            <header className="flex items-center gap-3 justify-between">
-                <div className="flex items-start gap-3">
-                    <div className="w-9 h-9 rounded-md bg-(--accent-ghost) flex items-center justify-center shrink-0">
-                        <Clock size={16} className="text-(--accent-light)" />
-                    </div>
-                    <div>
-                        <h2 className="text-base font-display font-semibold text-(--base-09)">Scheduled Tasks</h2>
-                        <p className="text-xs text-(--base-06) mt-0.5">
-                            Cron jobs that fire against this server, each in its own time zone.
-                            Restart tasks re-launch the container; broadcasts run
-                            <code className="font-mono mx-1">say &lt;message&gt;</code> in the server console.
-                        </p>
-                    </div>
+        <div className="flex flex-col gap-6">
+            <div className="srv-config-head">
+                <div className="min-w-0">
+                    <h1 className="srv-config-title">Scheduled tasks</h1>
+                    <p className="srv-config-desc max-w-2xl">
+                        Cron jobs that fire against this server, each in its own time zone.
+                        Restart tasks re-launch the container; broadcasts run
+                        <code className="srv-num mx-1 text-(--base-08)">say &lt;message&gt;</code> in the server console.
+                    </p>
                 </div>
-                <button onClick={openCreate} className="btn btn-primary btn-sm">
-                    <Plus size={13} />
-                    New Task
+                <button type="button" onClick={openCreate} className="btn btn-primary btn-sm">
+                    <Plus size={14} />
+                    New task
                 </button>
-            </header>
+            </div>
 
-            <section className="card p-4 flex flex-col sm:flex-row sm:items-center gap-3" aria-label="Server time zone">
+            <section className="srv-surface flex flex-col gap-3 p-5 sm:flex-row sm:items-center" aria-label="Server time zone">
                 <div className="min-w-0 flex-1">
                     <label htmlFor="server-tz" className="text-sm font-medium text-(--base-09)">Server time zone</label>
-                    <p className="text-xs text-(--base-06) mt-0.5">
+                    <p className="mt-1 text-xs text-(--base-06)">
                         The console&apos;s timestamps (from the next start) and the zone new tasks start in.
                     </p>
                 </div>
-                <div className="sm:w-64 shrink-0">
+                <div className="shrink-0 sm:w-64">
                     {ownZone === null ? (
                         <Skeleton className="h-9 w-full rounded-md" />
                     ) : (
@@ -245,116 +247,101 @@ export default function ServerConfigScheduledPage() {
             </section>
 
             {loading ? (
-                <div className="space-y-2">
+                <div className="srv-surface overflow-hidden" aria-busy="true" aria-label="Loading scheduled tasks">
                     {Array.from({ length: 3 }).map((_, i) => (
-                        <article key={i} className="card p-3 flex items-start gap-3">
-                            <Skeleton className="w-9 h-9 rounded-md shrink-0" />
+                        <div key={i} className="srv-config-item">
+                            <Skeleton className="h-9 w-9 shrink-0 rounded-md" />
                             <div className="min-w-0 flex-1 space-y-2">
-                                <div className="flex items-center gap-2">
-                                    <SkeletonText width="w-32" className="h-3.5" />
-                                    <Skeleton className="w-12 h-3 rounded-sm" />
-                                </div>
-                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-x-4 gap-y-1">
-                                    <SkeletonText width="w-24" className="h-2.5" />
-                                    <SkeletonText width="w-28" className="h-2.5" />
-                                    <SkeletonText width="w-24" className="h-2.5" />
-                                </div>
+                                <SkeletonText width="w-40" className="h-3.5" />
+                                <SkeletonText width="w-64" className="h-2.5" />
                             </div>
-                            <div className="flex items-center gap-1 shrink-0">
-                                <Skeleton className="w-7 h-7 rounded-md" />
-                                <Skeleton className="w-7 h-7 rounded-md" />
-                                <Skeleton className="w-7 h-7 rounded-md" />
-                            </div>
-                        </article>
+                            <Skeleton className="h-6 w-10 shrink-0 rounded-full" />
+                        </div>
                     ))}
                 </div>
             ) : tasks.length === 0 ? (
-                <div className="card p-8 flex flex-col items-center text-center gap-2">
-                    <Clock size={28} className="text-(--base-05)" />
+                <div className="srv-surface flex flex-col items-center gap-2 px-6 py-14 text-center">
+                    <Clock size={32} className="text-(--base-05)" />
                     <p className="text-sm text-(--base-07)">No scheduled tasks yet.</p>
-                    <p className="text-xs text-(--base-06)">Common: daily restart at 04:00, hourly "10 min to restart" broadcast.</p>
+                    <p className="text-xs text-(--base-06)">Common: daily restart at 04:00, hourly &ldquo;10 min to restart&rdquo; broadcast.</p>
+                    <button type="button" onClick={openCreate} className="btn btn-secondary btn-sm mt-2">
+                        <Plus size={14} />
+                        New task
+                    </button>
                 </div>
             ) : (
-                <div className="space-y-2">
+                <ul className="srv-surface overflow-hidden">
                     {tasks.map(t => (
-                        <article key={t.id} className="card p-3 flex items-start gap-3">
-                            {/* Type icon */}
-                            <div className={`w-9 h-9 rounded-md flex items-center justify-center shrink-0 ${
-                                t.taskType === 'restart' ? 'bg-(--warning-ghost) text-(--warning-light)' : 'bg-(--accent-ghost) text-(--accent-light)'
+                        <li key={t.id} className="srv-config-item">
+                            <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-md ${
+                                t.taskType === 'restart' ? 'bg-(--warning-ghost) text-(--warning-light)' : 'bg-(--base-03) text-(--base-07)'
                             }`}>
                                 {t.taskType === 'restart' ? <RotateCcw size={16} /> : <MessageSquare size={16} />}
                             </div>
-                            <div className="min-w-0 flex-1">
-                                <div className="flex items-center gap-2 flex-wrap">
-                                    <span className="font-medium text-sm text-(--base-09)">{t.name || TASK_TYPE_LABEL[t.taskType]}</span>
-                                    <span className="mono-label bg-(--base-03) px-1.5 rounded-sm text-(--base-07)">{t.taskType}</span>
-                                    {!t.enabled && (
-                                        <span className="mono-label bg-(--base-03) px-1.5 rounded-sm text-(--base-06)">disabled</span>
-                                    )}
+                            <div className={`min-w-0 flex-1 ${t.enabled ? '' : 'opacity-60'}`}>
+                                <div className="flex flex-wrap items-center gap-2">
+                                    <span className="text-sm font-medium text-(--base-09)">{t.name || TASK_TYPE_LABEL[t.taskType]}</span>
+                                    <span className="srv-config-pill">{t.taskType}</span>
                                     {t.lastStatus === 'error' && (
-                                        <span className="mono-label bg-(--error-ghost) px-1.5 rounded-sm text-(--error-light) flex items-center gap-1" title={t.lastError || ''}>
-                                            <AlertTriangle size={9} />
-                                            error
+                                        <span className="srv-config-pill inline-flex items-center gap-1 bg-(--error-ghost) text-(--error-light)" title={t.lastError || ''}>
+                                            <AlertTriangle size={12} />
+                                            Error
                                         </span>
                                     )}
                                     {t.lastStatus === 'skipped' && (
-                                        <span className="mono-label bg-(--base-03) px-1.5 rounded-sm text-(--base-07) flex items-center gap-1" title={t.lastError || ''}>
-                                            <SkipForward size={9} />
-                                            skipped
+                                        <span className="srv-config-pill inline-flex items-center gap-1" title={t.lastError || ''}>
+                                            <SkipForward size={12} />
+                                            Skipped
                                         </span>
                                     )}
                                     {t.lastStatus === 'ok' && (
-                                        <span className="mono-label bg-(--success-ghost) px-1.5 rounded-sm text-(--success-light) flex items-center gap-1">
-                                            <CheckCircle2 size={9} />
-                                            last ok
+                                        <span className="srv-config-pill inline-flex items-center gap-1 bg-(--success-ghost) text-(--success-light)">
+                                            <CheckCircle2 size={12} />
+                                            Last run ok
                                         </span>
                                     )}
                                 </div>
-                                <div className="mt-1 grid grid-cols-1 sm:grid-cols-3 gap-x-4 gap-y-0.5 text-xs">
-                                    <div>
-                                        <span className="text-(--base-06)">Schedule</span>{' '}
-                                        <code className="font-mono text-(--base-08)">{t.scheduleCron}</code>
-                                        <span className="text-(--base-05)"> {t.timezone || 'UTC'}</span>
+                                <dl className="mt-2 grid grid-cols-1 gap-x-6 gap-y-1 text-xs sm:grid-cols-[auto_auto_auto] sm:justify-start">
+                                    <div className="flex gap-2">
+                                        <dt className="text-(--base-06)">Schedule</dt>
+                                        <dd><code className="srv-num text-(--base-08)">{t.scheduleCron}</code> <span className="text-(--base-05)">{t.timezone || 'UTC'}</span></dd>
                                     </div>
-                                    <div>
-                                        <span className="text-(--base-06)">Next</span>{' '}
-                                        <span className="text-(--base-08)">{formatDate(t.nextRun)}</span>
-                                        {t.nextRun && (
-                                            <span className="text-(--base-05)"> ({relativeFromNow(t.nextRun)})</span>
-                                        )}
+                                    <div className="flex gap-2">
+                                        <dt className="text-(--base-06)">Next run</dt>
+                                        <dd className="text-(--base-08)">
+                                            {formatDate(t.nextRun)}
+                                            {t.nextRun && <span className="text-(--base-05)"> ({relativeFromNow(t.nextRun)})</span>}
+                                        </dd>
                                     </div>
-                                    <div>
-                                        <span className="text-(--base-06)">Last</span>{' '}
-                                        <span className="text-(--base-08)">{formatDate(t.lastRun)}</span>
+                                    <div className="flex gap-2">
+                                        <dt className="text-(--base-06)">Last run</dt>
+                                        <dd className="text-(--base-08)">{formatDate(t.lastRun)}</dd>
                                     </div>
-                                </div>
+                                </dl>
                                 {t.taskType === 'say' && t.payload && (
-                                    <div className="mt-1 text-xs text-(--base-07) font-mono">
-                                        &ldquo;{t.payload}&rdquo;
-                                    </div>
+                                    <p className="srv-num mt-2 text-xs text-(--base-07)">&ldquo;{t.payload}&rdquo;</p>
                                 )}
                             </div>
-                            <div className="flex items-center gap-1 shrink-0">
-                                <button
-                                    onClick={() => handleToggleEnabled(t)}
-                                    className="btn btn-secondary btn-sm"
-                                    title={t.enabled ? 'Disable task' : 'Enable task'}
-                                >
-                                    {t.enabled ? <Square size={12} /> : <Play size={12} />}
-                                </button>
-                                <button onClick={() => openEdit(t)} className="btn btn-secondary btn-sm" title="Edit task">
-                                    <Pencil size={12} />
-                                </button>
-                                <button onClick={() => setDeletePrompt(t)} className="btn btn-secondary btn-sm" title="Delete task">
-                                    <Trash2 size={12} className="text-(--error-light)" />
-                                </button>
+                            <div className="flex shrink-0 items-center gap-2">
+                                <Switch checked={t.enabled} onChange={() => handleToggleEnabled(t)} ariaLabel={`${t.enabled ? 'Disable' : 'Enable'} ${t.name || TASK_TYPE_LABEL[t.taskType]}`} />
+                                <Menu
+                                    trigger={
+                                        <button type="button" aria-label={`Actions for ${t.name || TASK_TYPE_LABEL[t.taskType]}`} className="btn btn-ghost btn-icon btn-sm">
+                                            <MoreHorizontal size={16} />
+                                        </button>
+                                    }
+                                    items={[
+                                        { label: 'Edit', icon: <Pencil size={14} />, onSelect: () => openEdit(t) },
+                                        { type: 'separator' },
+                                        { label: 'Delete', icon: <Trash2 size={14} />, danger: true, disabled: deletingTask, onSelect: () => runDelete(() => handleDelete(t)) },
+                                    ]}
+                                />
                             </div>
-                        </article>
+                        </li>
                     ))}
-                </div>
+                </ul>
             )}
 
-            {/* Create/Edit modal */}
             {editing && (
                 <TaskEditor
                     editing={editing}
@@ -363,31 +350,6 @@ export default function ServerConfigScheduledPage() {
                     onClose={() => setEditing(null)}
                 />
             )}
-
-            {/* Delete confirmation */}
-            {deletePrompt && (
-                <div className="modal-overlay animate-fade-in" onClick={() => setDeletePrompt(null)}>
-                    <ModalPanel onClose={() => setDeletePrompt(null)} className="modal-panel max-w-sm" onClick={e => e.stopPropagation()}>
-                        <div className="modal-header">
-                            <h3 className="modal-title flex items-center gap-2 text-(--error-light)">
-                                <AlertTriangle size={20} />
-                                Delete scheduled task?
-                            </h3>
-                        </div>
-                        <div className="modal-body">
-                            <p className="text-sm text-(--base-07)">
-                                <span className="font-semibold text-(--base-09)">{deletePrompt.name || TASK_TYPE_LABEL[deletePrompt.taskType]}</span>
-                                {' '}will stop firing. Audit log is preserved.
-                            </p>
-                        </div>
-                        <div className="modal-footer">
-                            <button onClick={() => setDeletePrompt(null)} className="btn btn-secondary">Cancel</button>
-                            <button onClick={() => runDelete(handleDelete)} disabled={deletingTask} className="btn btn-danger disabled:opacity-40">Delete</button>
-                        </div>
-                    </ModalPanel>
-                </div>
-            )}
-
         </div>
     );
 }
@@ -426,44 +388,33 @@ function TaskEditor({ editing, setEditing, onSave, onClose }: TaskEditorProps) {
     }, [activeCron, editing.timezone]);
 
     return (
-        <div className="modal-overlay animate-fade-in" onClick={onClose}>
-            <ModalPanel onClose={onClose} className="modal-panel w-full max-w-lg" onClick={e => e.stopPropagation()}>
-                <div className="modal-header">
-                    <h3 className="modal-title flex items-center gap-2">
-                        <Clock size={18} />
-                        {editing.isNew ? 'New scheduled task' : 'Edit scheduled task'}
-                    </h3>
-                    <button onClick={onClose} className="text-(--base-06) hover:text-(--base-09)" aria-label="Close">
-                        <X size={18} />
-                    </button>
+        <Dialog open onOpenChange={open => { if (!open) onClose(); }}>
+            <DialogBackdrop className="modal-overlay animate-fade-in" />
+            <DialogContent className="modal-panel fixed inset-0 z-50 m-auto flex h-fit max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-lg flex-col">
+                <div className="modal-header flex items-start justify-between gap-4">
+                    <div className="min-w-0">
+                        <DialogTitle className="modal-title">{editing.isNew ? 'New scheduled task' : 'Edit scheduled task'}</DialogTitle>
+                        <DialogDescription className="mt-1 text-xs text-(--base-06)">Runs on a cron schedule in the chosen time zone.</DialogDescription>
+                    </div>
+                    <DialogClose aria-label="Close" className="btn btn-ghost btn-icon btn-sm shrink-0">
+                        <X size={16} />
+                    </DialogClose>
                 </div>
-                <div className="modal-body space-y-4">
-                    {/* Task type */}
+                <div className="modal-body min-h-0 flex-1 space-y-5 overflow-y-auto">
                     <div>
-                        <label className="input-label">Task Type</label>
-                        <div className="grid grid-cols-2 gap-2 mt-1">
-                            {(['restart', 'say'] as ScheduledTaskType[]).map(t => (
-                                <button
-                                    key={t}
-                                    type="button"
-                                    onClick={() => setEditing({ ...editing, taskType: t })}
-                                    className={`flex items-center gap-2 px-3 py-2 rounded-md border text-sm transition-colors text-left ${
-                                        editing.taskType === t
-                                            ? 'border-(--accent) bg-(--accent-ghost) text-(--accent-light)'
-                                            : 'border-(--base-04) text-(--base-07) hover:bg-(--base-03)'
-                                    }`}
-                                >
-                                    {t === 'restart' ? <RotateCcw size={14} /> : <MessageSquare size={14} />}
-                                    {TASK_TYPE_LABEL[t]}
-                                </button>
-                            ))}
-                        </div>
+                        <span className="srv-label mb-1.5 block">Task type</span>
+                        <Segmented<ScheduledTaskType>
+                            ariaLabel="Task type"
+                            value={editing.taskType as ScheduledTaskType}
+                            onChange={t => setEditing({ ...editing, taskType: t })}
+                            options={(['restart', 'say'] as ScheduledTaskType[]).map(t => ({ id: t, label: TASK_TYPE_LABEL[t] }))}
+                        />
                     </div>
 
-                    {/* Name */}
                     <div>
-                        <label className="input-label">Name (optional)</label>
-                        <input
+                        <label htmlFor="task-name" className="srv-label mb-1.5 block">Name (optional)</label>
+                        <Input
+                            id="task-name"
                             type="text"
                             value={editing.name || ''}
                             onChange={e => setEditing({ ...editing, name: e.target.value })}
@@ -473,11 +424,11 @@ function TaskEditor({ editing, setEditing, onSave, onClose }: TaskEditorProps) {
                         />
                     </div>
 
-                    {/* Payload (only for say) */}
                     {editing.taskType === 'say' && (
                         <div>
-                            <label className="input-label">Broadcast message</label>
-                            <input
+                            <label htmlFor="task-payload" className="srv-label mb-1.5 block">Broadcast message</label>
+                            <Input
+                                id="task-payload"
                                 type="text"
                                 value={editing.payload || ''}
                                 onChange={e => setEditing({ ...editing, payload: e.target.value })}
@@ -485,14 +436,13 @@ function TaskEditor({ editing, setEditing, onSave, onClose }: TaskEditorProps) {
                                 className="input-field w-full"
                                 maxLength={256}
                             />
-                            <p className="text-xs text-(--base-06) mt-1">Sent via <code className="font-mono">say</code> — visible to all online players.</p>
+                            <p className="mt-1.5 text-xs text-(--base-06)">Sent via <code className="srv-num">say</code> &mdash; visible to all online players.</p>
                         </div>
                     )}
 
-                    {/* Schedule — preset OR custom */}
                     <div>
-                        <div className="flex items-center justify-between mb-1">
-                            <label className="input-label">Schedule</label>
+                        <div className="mb-1.5 flex items-center justify-between">
+                            <span className="srv-label">Schedule</span>
                             <button
                                 type="button"
                                 onClick={() => {
@@ -508,24 +458,22 @@ function TaskEditor({ editing, setEditing, onSave, onClose }: TaskEditorProps) {
                                         return next;
                                     });
                                 }}
-                                className="text-[10px] font-mono uppercase tracking-[0.08em] text-(--base-06) hover:text-(--accent-light)"
+                                className="rounded text-xs text-(--base-06) transition-colors hover:text-(--accent-light) focus-visible:outline-none focus-visible:[box-shadow:var(--focus-ring)]"
                             >
                                 {customMode ? 'Use preset' : 'Custom cron'}
                             </button>
                         </div>
                         {!customMode ? (
-                            <select
+                            <Select
+                                ariaLabel="Schedule preset"
                                 value={editing.presetCron || ''}
-                                onChange={e => setEditing({ ...editing, presetCron: e.target.value })}
-                                className="input-field w-full"
-                            >
-                                {CRON_PRESETS.map(p => (
-                                    <option key={p.cron} value={p.cron}>{p.label}</option>
-                                ))}
-                            </select>
+                                onChange={v => setEditing({ ...editing, presetCron: v })}
+                                options={CRON_PRESETS.map(p => ({ value: p.cron, label: p.label }))}
+                            />
                         ) : (
-                            <input
+                            <Input
                                 type="text"
+                                aria-label="Cron expression"
                                 value={editing.customCron || ''}
                                 onChange={e => setEditing({ ...editing, customCron: e.target.value })}
                                 placeholder="0 4 * * *"
@@ -535,53 +483,43 @@ function TaskEditor({ editing, setEditing, onSave, onClose }: TaskEditorProps) {
                             />
                         )}
 
-                        {/* Live preview of next run */}
-                        <div className="mt-1 text-xs flex items-center gap-1.5 min-h-[18px]">
-                            {previewLoading && <RefreshCw size={11} className="animate-spin text-(--base-05)" />}
+                        <div className="mt-1.5 flex min-h-[18px] items-center gap-1.5 text-xs">
+                            {previewLoading && <RefreshCw size={12} className="animate-spin text-(--base-05)" />}
                             {!previewLoading && preview?.valid && preview.nextRun && (
                                 <span className="text-(--base-06)">
-                                    Next run: <span className="text-(--accent-light) font-mono">{formatDate(preview.nextRun)}</span>
+                                    Next run: <span className="srv-num text-(--base-08)">{formatDate(preview.nextRun)}</span>
                                 </span>
                             )}
                             {!previewLoading && preview && !preview.valid && (
-                                <span className="text-(--error-light) flex items-center gap-1">
-                                    <AlertTriangle size={11} />
+                                <span className="flex items-center gap-1 text-(--error-light)">
+                                    <AlertTriangle size={12} />
                                     {preview.error || 'Invalid cron'}
                                 </span>
                             )}
                             {customMode && !preview && !previewLoading && (
-                                <span className="text-(--base-05) font-mono">format: min hour dom mon dow</span>
+                                <span className="srv-num text-(--base-05)">format: min hour dom mon dow</span>
                             )}
                         </div>
                     </div>
 
-                    {/* Time zone */}
                     <div>
-                        <label className="input-label" htmlFor="task-tz">Time zone</label>
+                        <label htmlFor="task-tz" className="srv-label mb-1.5 block">Time zone</label>
                         <TimeZoneSelect id="task-tz" value={editing.timezone || 'UTC'} onChange={tz => setEditing({ ...editing, timezone: tz })} />
-                        <p className="text-xs text-(--base-06) mt-1">The schedule above is read in this zone, daylight saving included.</p>
+                        <p className="mt-1.5 text-xs text-(--base-06)">The schedule above is read in this zone, daylight saving included.</p>
                     </div>
 
-                    {/* Enabled toggle */}
-                    <div className="flex items-center justify-between border-t border-(--base-03) pt-3">
+                    <div className="flex items-center justify-between gap-4 rounded-lg bg-(--base-03) px-4 py-3">
                         <div>
                             <div className="text-sm font-medium text-(--base-09)">Enabled</div>
                             <p className="text-xs text-(--base-06)">Disabled tasks stay in the list but don&apos;t fire.</p>
                         </div>
-                        <button
-                            type="button"
-                            role="switch"
-                            aria-checked={editing.enabled ?? true}
-                            onClick={() => setEditing({ ...editing, enabled: !(editing.enabled ?? true) })}
-                            className={`toggle-track ${(editing.enabled ?? true) ? 'toggle-track-on' : 'toggle-track-off'}`}
-                        >
-                            <span className={`toggle-knob ${(editing.enabled ?? true) ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
-                        </button>
+                        <Switch checked={editing.enabled ?? true} onChange={v => setEditing({ ...editing, enabled: v })} ariaLabel="Enabled" />
                     </div>
                 </div>
                 <div className="modal-footer">
-                    <button onClick={onClose} className="btn btn-secondary">Cancel</button>
+                    <DialogClose className="btn btn-secondary">Cancel</DialogClose>
                     <button
+                        type="button"
                         onClick={onSave}
                         className="btn btn-primary"
                         disabled={!!preview && !preview.valid}
@@ -589,7 +527,7 @@ function TaskEditor({ editing, setEditing, onSave, onClose }: TaskEditorProps) {
                         {editing.isNew ? 'Create task' : 'Save changes'}
                     </button>
                 </div>
-            </ModalPanel>
-        </div>
+            </DialogContent>
+        </Dialog>
     );
 }

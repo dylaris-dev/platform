@@ -7,6 +7,7 @@ import { useSettingsForm } from '@/lib/useSettingsForm';
 import SettingsPage from '@/components/settings/SettingsPage';
 import SettingsCard, { SettingsGroup } from '@/components/settings/SettingsCard';
 import { SwitchRow } from '@/components/ui/Switch';
+import RadioCards from '@/components/settings/RadioCards';
 
 const BLOCK_LEVELS: { value: MaintenanceState['blockLevel']; label: string; help: string }[] = [
     { value: 'off',          label: 'Off',              help: 'Feature off entirely. Banner hidden, no blocking.' },
@@ -141,31 +142,18 @@ export default function MaintenanceTab() {
                         </>
                     }
                 >
-                    <div className="grid grid-cols-1 gap-2" role="radiogroup" aria-label="Block level">
-                        {BLOCK_LEVELS.map(opt => (
-                            <label
-                                key={opt.value}
-                                className={`flex items-start gap-3 p-3 rounded-md border cursor-pointer transition-colors ${
-                                    state.blockLevel === opt.value
-                                        ? 'border-(--accent-border) bg-(--accent-ghost)'
-                                        : 'border-(--base-04) hover:bg-(--base-03)'
-                                }`}
-                            >
-                                <input
-                                    type="radio"
-                                    name="blockLevel"
-                                    value={opt.value}
-                                    checked={state.blockLevel === opt.value}
-                                    onChange={() => patch({ blockLevel: opt.value })}
-                                    className="mt-0.5 accent-(--accent)"
-                                />
-                                <div>
-                                    <p className="text-sm font-medium">{opt.label}</p>
-                                    <p className="text-xs text-(--base-06)">{opt.help}</p>
-                                </div>
-                            </label>
-                        ))}
-                    </div>
+                    <RadioCards
+                        className="grid grid-cols-1 gap-2"
+                        ariaLabel="Block level"
+                        value={state.blockLevel}
+                        onChange={blockLevel => patch({ blockLevel })}
+                        options={BLOCK_LEVELS.map(opt => ({ value: opt.value, label: opt.label, description: opt.help }))}
+                        cardClassName={checked => `flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+                            checked
+                                ? 'border-(--accent-border) bg-(--accent-ghost)'
+                                : 'border-transparent bg-(--base-03) hover:bg-(--base-04)'
+                        }`}
+                    />
                 </SettingsGroup>
             </SettingsCard>
 

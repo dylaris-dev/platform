@@ -12,6 +12,7 @@ import Select from '@/components/ui/Select';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import { toast } from '@/components/ui/Toast';
 import { SkeletonList } from '@/components/Skeleton';
+import PageHeader from '@/components/ui/PageHeader';
 import styles from '@/components/modpacks/workspace.module.css';
 
 const LICENSES = [
@@ -95,14 +96,14 @@ export default function PackModrinthPage() {
 
     if (loading) return <div className={styles.scroll}><SkeletonList rows={6} /></div>;
     if (!pack) return <p className="p-6 text-sm text-(--base-06)">Pack not found.</p>;
-    if (!pack.modrinthProjectId) return <div className={styles.scroll}><div className="max-w-2xl mx-auto card p-6 space-y-3 text-sm text-(--base-07)">
-        <h2 className="text-base font-medium text-(--base-09)">No Modrinth project yet</h2>
+    if (!pack.modrinthProjectId) return <div className={styles.scroll}><div className="max-w-2xl mx-auto srv-surface p-6 space-y-3 text-sm text-(--base-07)">
+        <h2 className="text-[15px] font-semibold text-(--base-09)">No Modrinth project yet</h2>
         <p>Publishing the first build creates this pack&apos;s Modrinth project. Its page, tags and review submission are managed here afterwards.</p>
         <Link href={`/modpacks/${pack.id}`} className="btn btn-secondary btn-sm">Back to builds</Link>
     </div></div>;
     if (!permissions.canEdit) return <p className="p-6 text-sm text-(--base-06)">Editing the Modrinth page needs edit access to this pack.</p>;
     if (busy === 'load' && !result) return <div className={styles.scroll}><SkeletonList rows={6} /></div>;
-    if (!result?.project || !form) return <div className={styles.scroll}><div role="alert" className="max-w-2xl mx-auto card p-5 text-sm space-y-3"><p>{error || 'Could not load the Modrinth project.'}</p><button className="btn btn-secondary btn-sm" onClick={() => void load()}><RefreshCw size={12} />Retry</button></div></div>;
+    if (!result?.project || !form) return <div className={styles.scroll}><div role="alert" className="max-w-2xl mx-auto srv-surface p-5 text-sm space-y-3"><p>{error || 'Could not load the Modrinth project.'}</p><button className="btn btn-secondary btn-sm" onClick={() => void load()}><RefreshCw size={12} />Retry</button></div></div>;
 
     const project = result.project;
     const nags = result.nags || [];
@@ -146,12 +147,9 @@ export default function PackModrinthPage() {
     return <div className={styles.scroll}>
         <div className="max-w-6xl mx-auto grid gap-5 lg:grid-cols-[minmax(0,1fr)_340px] items-start">
             <div className="space-y-5 min-w-0">
-                <header className="flex items-start justify-between gap-3 flex-wrap">
-                    <div><h2 className="text-lg font-medium text-(--base-09)">Modrinth page</h2><p className="text-xs text-(--base-06) mt-1">What players see on Modrinth. Changes are saved to Modrinth through the pack owner&apos;s token.</p></div>
-                    <div className="flex gap-2"><button className="btn btn-ghost btn-sm" disabled={!!busy} onClick={() => void load()}><RefreshCw size={12} className={busy === 'load' ? 'animate-spin' : ''} />Refresh</button><a href={pageUrl} target="_blank" rel="noopener noreferrer" className="btn btn-secondary btn-sm"><ExternalLink size={12} />Open on Modrinth</a></div>
-                </header>
+                <PageHeader as="h2" title="Modrinth page" description="What players see on Modrinth. Changes are saved to Modrinth through the pack owner's token." actions={<><button className="btn btn-ghost btn-sm" disabled={!!busy} onClick={() => void load()}><RefreshCw size={12} className={busy === 'load' ? 'animate-spin' : ''} />Refresh</button><a href={pageUrl} target="_blank" rel="noopener noreferrer" className="btn btn-secondary btn-sm"><ExternalLink size={12} />Open on Modrinth</a></>} />
 
-                <section className="card p-5 space-y-4" aria-label="Texts">
+                <section className="srv-surface p-5 space-y-4" aria-label="Texts">
                     <div><label htmlFor="mr-title" className="input-label">Name</label><input id="mr-title" className="input-field w-full" value={form.title} maxLength={64} onChange={e => set('title', e.target.value)} /></div>
                     <div>
                         <label htmlFor="mr-summary" className="input-label">Summary</label>
@@ -165,20 +163,20 @@ export default function PackModrinthPage() {
                     </div>
                 </section>
 
-                <section className="card p-5 space-y-3" aria-label="Tags">
+                <section className="srv-surface p-5 space-y-3" aria-label="Tags">
                     <h3 className="text-sm font-medium text-(--base-09)">Tags</h3>
                     <p className="text-xs text-(--base-06)">Pick the tags that describe the pack, up to 8. The Minecraft version and loader come from the uploaded builds.</p>
                     <div className="flex flex-wrap gap-1.5">{categories.length === 0 ? <p className="text-xs text-(--base-06)">Loading tags...</p> : categories.map(c => { const on = form.categories.includes(c.name); return <button key={c.name} type="button" aria-pressed={on} disabled={!on && form.categories.length >= 8} onClick={() => set('categories', on ? form.categories.filter(x => x !== c.name) : [...form.categories, c.name])} className={`btn btn-sm capitalize ${on ? 'bg-(--accent-ghost) border-(--accent-border) text-(--accent-light)' : 'btn-secondary'} disabled:opacity-40`}>{categoryLabel(c.name)}</button>; })}</div>
                 </section>
 
-                <section className="card p-5 grid gap-4 sm:grid-cols-2" aria-label="Links and license">
+                <section className="srv-surface p-5 grid gap-4 sm:grid-cols-2" aria-label="Links and license">
                     <h3 className="text-sm font-medium text-(--base-09) sm:col-span-2">Links, license and environment</h3>
                     {([['sourceUrl', 'Source code'], ['issuesUrl', 'Issue tracker'], ['wikiUrl', 'Wiki'], ['discordUrl', 'Discord invite']] as const).map(([key, label]) => <div key={key}><label htmlFor={`mr-${key}`} className="input-label">{label}</label><input id={`mr-${key}`} type="url" placeholder="https://" className="input-field w-full" value={form[key]} onChange={e => set(key, e.target.value)} /></div>)}
                     <div><label htmlFor="mr-license" className="input-label">License</label><Select id="mr-license" value={form.licenseId} onChange={value => set('licenseId', value)} options={licenseOptions} /></div>
                     <div><label htmlFor="mr-env" className="input-label">Environment</label><Select id="mr-env" value={form.environment} placeholder="Not set" onChange={value => set('environment', value)} options={ENVIRONMENTS} /><p className="text-xs text-(--base-06) mt-1">Applies to every uploaded version; new builds take it over.</p></div>
                 </section>
 
-                <div className="flex items-center justify-end gap-3 sticky bottom-0 py-3 border-t border-(--base-03) bg-(--base-00)">
+                <div className="flex items-center justify-end gap-3 sticky bottom-0 py-3 bg-(--base-00)">
                     {dirty && <span className="text-xs text-(--base-06)">Unsaved changes</span>}
                     <button className="btn btn-secondary btn-sm" disabled={!dirty || !!busy} onClick={() => saved && setForm(saved)}>Discard</button>
                     <button className="btn btn-primary btn-sm" disabled={!dirty || !!busy} onClick={() => void save()}>{busy === 'save' ? 'Saving...' : 'Save to Modrinth'}</button>
@@ -186,7 +184,7 @@ export default function PackModrinthPage() {
             </div>
 
             <aside className="space-y-5 lg:sticky lg:top-0" aria-label="Review">
-                <section className="card p-5 space-y-3">
+                <section className="srv-surface p-5 space-y-3">
                     <div className="flex items-center gap-3">
                         {project.icon_url ? <img src={project.icon_url} alt="" className="w-14 h-14 rounded-lg object-cover" /> : <div className="w-14 h-14 rounded-lg bg-(--base-03)" aria-hidden="true" />}
                         <div className="min-w-0"><p className="font-medium text-(--base-09) truncate">{project.title}</p><p className="text-xs text-(--base-06)">{MODRINTH_STATUS_LABEL[project.status] || project.status}</p></div>
@@ -196,9 +194,9 @@ export default function PackModrinthPage() {
                     <p className="text-[11px] text-(--base-06)">PNG, JPEG, WebP or GIF, square, at most 256 KB.</p>
                 </section>
 
-                {project.moderator_message && <section role="status" className="card p-5 space-y-2 border-(--warning)"><h3 className="text-sm font-medium text-(--warning-light)">Message from Modrinth&apos;s moderators</h3><p className="text-sm text-(--base-07) whitespace-pre-wrap">{project.moderator_message.message}</p>{project.moderator_message.body && <p className="text-xs text-(--base-06) whitespace-pre-wrap">{project.moderator_message.body}</p>}</section>}
+                {project.moderator_message && <section role="status" className="srv-surface p-5 space-y-2 border-(--warning)"><h3 className="text-sm font-medium text-(--warning-light)">Message from Modrinth&apos;s moderators</h3><p className="text-sm text-(--base-07) whitespace-pre-wrap">{project.moderator_message.message}</p>{project.moderator_message.body && <p className="text-xs text-(--base-06) whitespace-pre-wrap">{project.moderator_message.body}</p>}</section>}
 
-                <section className="card p-5 space-y-3" aria-label="Publishing checklist">
+                <section className="srv-surface p-5 space-y-3" aria-label="Publishing checklist">
                     <h3 className="text-sm font-medium text-(--base-09)">Publishing checklist</h3>
                     <p className="text-xs text-(--base-06)">Checked by Modrinth itself. Required items block the review.</p>
                     {nags.length === 0 && <p className="text-xs text-(--success-light) flex items-center gap-1.5"><CheckCircle2 size={13} />Nothing left to do.</p>}

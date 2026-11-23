@@ -1,0 +1,53 @@
+/* Setup tab: stepper, option rows and lists on top of the .srv-* card styles. */
+.srv-setup-steps { display: flex; align-items: center; gap: 8px; list-style: none; margin: 0; padding: 0; overflow-x: auto; }
+.srv-setup-step {
+  display: inline-flex; align-items: center; gap: 10px; height: 40px; padding: 0 12px 0 6px;
+  border-radius: 9999px; color: var(--base-06); font-size: 13px; font-weight: 500; white-space: nowrap;
+  transition: background 0.15s ease-out, color 0.15s ease-out;
+}
+button.srv-setup-step { cursor: pointer; }
+button.srv-setup-step:hover { background: var(--base-03); color: var(--base-09); }
+.srv-setup-step:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.srv-setup-step:disabled { cursor: not-allowed; opacity: 0.5; }
+.srv-setup-step[aria-current="step"] { color: var(--accent-light); }
+.srv-setup-step[data-done="true"] { color: var(--base-08); }
+.srv-setup-dot {
+  display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px;
+  border-radius: 9999px; background: var(--base-03); color: var(--base-07);
+  font-family: var(--font-mono); font-size: 12px; font-variant-numeric: tabular-nums;
+}
+.srv-setup-step[aria-current="step"] .srv-setup-dot { background: var(--accent); color: var(--base-00); }
+.srv-setup-step[data-done="true"] .srv-setup-dot { background: var(--accent-ghost); color: var(--accent-light); }
+.srv-setup-rule { flex: 1 1 16px; min-width: 16px; height: 1px; background: var(--base-03); }
+
+.srv-setup-option {
+  display: flex; align-items: center; gap: 12px; width: 100%; padding: 10px 12px; text-align: left;
+  border-radius: var(--radius-md); background: var(--base-03); color: var(--base-08);
+  transition: background 0.15s ease-out, color 0.15s ease-out;
+}
+button.srv-setup-option, a.srv-setup-option { cursor: pointer; }
+.srv-setup-option:hover:not(:disabled) { background: var(--base-04); }
+.srv-setup-option:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.srv-setup-option:disabled { opacity: 0.5; cursor: not-allowed; }
+.srv-setup-option[data-selected="true"] { background: var(--accent-ghost); color: var(--accent-light); }
+.srv-setup-option[data-recommended="true"] { box-shadow: inset 0 0 0 1px var(--success-border); }
+.srv-setup-selected {
+  display: flex; align-items: flex-start; gap: 12px; padding: 12px 14px;
+  border-radius: var(--radius-lg); background: var(--accent-ghost);
+}
+.srv-setup-list { background: var(--base-03); border-radius: var(--radius-md); padding: 4px; overflow-y: auto; }
+.srv-setup-item {
+  display: block; width: 100%; padding: 6px 10px; text-align: left; border-radius: 6px;
+  color: var(--base-07); transition: background 0.15s ease-out, color 0.15s ease-out;
+}
+.srv-setup-item:hover { background: var(--base-04); color: var(--base-09); }
+.srv-setup-item:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.srv-setup-item[data-selected="true"] { background: var(--accent-ghost); color: var(--accent-light); font-weight: 500; }
+.srv-setup-footer {
+  position: sticky; bottom: 0; display: flex; align-items: center; gap: 8px; padding: 16px 24px;
+  background: var(--base-02); border-top: 1px solid var(--base-03);
+}
+@media (prefers-reduced-motion: reduce) {
+  .srv-setup-step, .srv-setup-option, .srv-setup-item { transition: none; }
+}
+.srv-setup-card { background: var(--base-01); border-radius: var(--radius-lg); padding: 20px; }

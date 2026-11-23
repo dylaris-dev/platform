@@ -223,3 +223,13 @@ function baseModel(status: string, pending: PendingPower | null, now: number, g:
         announcement: silent ? label : BUSY[action],
     };
 }
+
+const SHOWN_FOR: Record<PowerAction, string> = { start: 'starting', stop: 'stopping', restart: 'restarting', kill: 'stopping' };
+
+// The status to show while this browser waits on a power action. Core keeps
+// reporting the old status until the node moves, so a fresh Start would read
+// "Stopped" next to a "Starting..." button. A stale wait shows Core's word.
+export function shownStatus(status: string, pending: PendingPower | null, now: number): string {
+    if (!pending || now - pending.since >= PENDING_TIMEOUT_MS) return status;
+    return SHOWN_FOR[pending.action];
+}

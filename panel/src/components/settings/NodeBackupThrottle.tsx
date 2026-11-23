@@ -12,6 +12,7 @@ import { SkeletonCard } from '@/components/Skeleton';
 import { toast } from '@/components/ui/Toast';
 import { formatBytes } from '@/lib/format';
 import { throttleChanged, withRateFloor } from '@/components/settings/nodeBackupThrottleHelpers';
+import Checkbox from '@/components/ui/Checkbox';
 
 /**
  * How one node's backups yield to players: the node's uplink, an optional
@@ -132,27 +133,16 @@ export default function NodeBackupThrottle({ nodeId, mine = false }: { nodeId: n
                             </Row>
 
                             <div className="space-y-2">
-                                <label className="flex items-start gap-2 text-xs text-(--base-08) cursor-pointer">
-                                    <input
-                                        type="checkbox"
-                                        checked={draft.spoolEnabled}
-                                        onChange={e => setDraft({
-                                            ...draft,
-                                            spoolEnabled: e.target.checked,
-                                            spoolMaxGB: e.target.checked && draft.spoolMaxGB < 1 ? 50 : draft.spoolMaxGB,
-                                        })}
-                                        className="checkbox mt-0.5"
-                                    />
-                                    <span>
-                                        <span className="block">Pack backups on this node first, then upload</span>
-                                        <span className="block text-(--base-06)">
-                                            The world saves again as soon as the archive is packed, and only the upload is
-                                            slowed down. This needs free disk space as large as the backup: a server larger
-                                            than the limit below, or a disk without that space plus 5 GB, is uploaded directly.
-                                            Only for backups to object storage.
-                                        </span>
-                                    </span>
-                                </label>
+                                <Checkbox
+                                    checked={draft.spoolEnabled}
+                                    onChange={c => setDraft({
+                                        ...draft,
+                                        spoolEnabled: c,
+                                        spoolMaxGB: c && draft.spoolMaxGB < 1 ? 50 : draft.spoolMaxGB,
+                                    })}
+                                    label="Pack backups on this node first, then upload"
+                                    hint="The world saves again as soon as the archive is packed, and only the upload is slowed down. This needs free disk space as large as the backup: a server larger than the limit below, or a disk without that space plus 5 GB, is uploaded directly. Only for backups to object storage."
+                                />
                                 {draft.spoolEnabled && (
                                     <div className="flex flex-wrap items-center justify-between gap-3 pl-6">
                                         <label htmlFor={`bt-spool-${nodeId}`} className="input-label">Largest backup to pack first</label>

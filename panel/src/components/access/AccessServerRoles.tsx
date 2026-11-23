@@ -11,6 +11,8 @@ import CapabilityPicker from '@/components/access/CapabilityPicker';
 import { SkeletonList } from '@/components/Skeleton';
 import { useBusy } from '@/lib/useBusy';
 import ModalPanel from '@/components/ui/ModalPanel';
+import EmptyState from '@/components/ui/EmptyState';
+import { RowList, Row } from '@/components/ui/RowList';
 
 // Advanced-mode owner UI: custom per-server capability bundles. Bundles
 // SERVER + OWNER scope capabilities only (matches the backend
@@ -82,46 +84,43 @@ export default function AccessServerRoles({ catalog, roles, loading, onRolesChan
     };
 
     return (
-        <section className="mb-4">
-            <div className="flex items-center gap-3 mb-2">
-                <h2 className="h-section">Server roles</h2>
-                <div className="ml-auto">
-                    <button onClick={openCreate} className="btn btn-primary btn-sm">
-                        <Plus size={12} />
-                        New role
-                    </button>
+        <section className="space-y-3">
+            <div className="flex flex-wrap items-end justify-between gap-3">
+                <div>
+                    <h2 className="text-[15px] font-semibold text-(--base-09)">Server roles</h2>
+                    <p className="mt-0.5 text-[13px] text-(--base-06)">Named capability bundles you can assign to friends in a grant.</p>
                 </div>
+                <button onClick={openCreate} className="btn btn-primary btn-sm">
+                    <Plus size={12} />
+                    New role
+                </button>
             </div>
 
             {loading ? (
                 <SkeletonList rows={2} />
             ) : roles.length === 0 ? (
-                <div className="card p-8 flex flex-col items-center text-center gap-2">
-                    <Shield size={28} className="text-(--base-05)" />
-                    <p className="text-sm text-(--base-07)">No server roles yet.</p>
-                </div>
+                <EmptyState icon={<Shield size={20} />} title="No server roles yet." />
             ) : (
-                <div className="space-y-2">
-                    {roles.map(role => (
-                        <article key={role.id} className="card p-3 flex items-center gap-3">
-                            <div className="min-w-0 flex-1">
-                                <div className="flex items-center gap-2 flex-wrap">
-                                    <span className="font-medium text-sm text-(--base-09)">{role.name}</span>
-                                    <span className="mono-label bg-(--base-03) text-(--base-07) px-1.5 rounded-sm">
-                                        {role.capabilities.length} capabilit{role.capabilities.length === 1 ? 'y' : 'ies'}
-                                    </span>
-                                </div>
-                            </div>
-                            <button onClick={() => openEdit(role)} className="btn btn-secondary btn-sm shrink-0">
-                                <Pencil size={12} />
-                                Edit
-                            </button>
-                            <button onClick={() => setDeleting(role)} className="btn btn-danger btn-sm shrink-0">
-                                <Trash2 size={12} />
-                                Delete
-                            </button>
-                        </article>
-                    ))}
+                <div className="srv-surface">
+                    <RowList label="Server roles">
+                        {roles.map(role => (
+                            <Row
+                                key={role.id}
+                                title={role.name}
+                                trailing={<span className="srv-num">{role.capabilities.length} capabilit{role.capabilities.length === 1 ? 'y' : 'ies'}</span>}
+                                actions={<>
+                                    <button onClick={() => openEdit(role)} className="btn btn-secondary btn-sm">
+                                        <Pencil size={12} />
+                                        Edit
+                                    </button>
+                                    <button onClick={() => setDeleting(role)} className="btn btn-danger btn-sm">
+                                        <Trash2 size={12} />
+                                        Delete
+                                    </button>
+                                </>}
+                            />
+                        ))}
+                    </RowList>
                 </div>
             )}
 
@@ -133,7 +132,7 @@ export default function AccessServerRoles({ catalog, roles, loading, onRolesChan
                                 <Shield size={16} />
                                 {editing ? `Edit ${editing.name}` : 'New server role'}
                             </h3>
-                            <button onClick={() => setShowEditor(false)} className="text-(--base-06)"><X size={16} /></button>
+                            <button onClick={() => setShowEditor(false)} aria-label="Close" className="btn btn-ghost btn-sm"><X size={16} /></button>
                         </div>
                         <div className="modal-body space-y-4">
                             <div>

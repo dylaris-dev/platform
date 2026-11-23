@@ -32,7 +32,7 @@
 /** Files allowed to say a zero means unlimited, and why. */
 export const ZERO_IS_UNLIMITED_ALLOWED: Record<string, string> = {
     'src/components/settings/BeamTab.tsx': 'the bandwidth throttle, where 0 B/s is not a policy',
-    'src/app/(authed)/servers/[id]/ServerShell.tsx': "Docker's cpu and disk limits",
+    'src/components/server/ServerSettingsDrawer.tsx': "Docker's cpu and disk limits",
     'src/components/CreateServerWizard.tsx': "Docker's cpu and disk limits",
     'src/lib/api/types.ts': "Docker's container pids cap",
     'src/components/settings/LimitField.tsx': 'describes the wording it replaced',

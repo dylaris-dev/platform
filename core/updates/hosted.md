@@ -11,6 +11,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.23
+
+### Features
+- The DYLARIS panel has a new look: calmer pages, lists as rows with an action menu per row, and menus, dialogs
+  and selects that work by keyboard. Nothing was removed and there is nothing to update on your side.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Pages that showed an empty list when loading failed now say it failed and offer Try again. Fixed on our side,
+  nothing to update.
+
 ## 2026.11.18
 
 ### Features

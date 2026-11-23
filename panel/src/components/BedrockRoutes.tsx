@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useId, useState } from 'react';
-import { Loader2 } from 'lucide-react';
+import { AlertTriangle, Loader2 } from 'lucide-react';
+import Callout from '@/components/server/Callout';
 import Segmented from '@/components/ui/Segmented';
 import { Badge } from '@/components/ui/Badge';
 import { toast } from '@/components/ui/Toast';
@@ -22,7 +23,7 @@ export function BedrockSummary({ bedrock }: { bedrock: ServerBedrock }) {
     const { gatewayProvider } = useAppData();
     if (gatewayProvider === 'remote') return <ManagedBedrockSummary bedrock={bedrock} link={link} />;
     return (
-        <div className="bg-(--base-02) rounded-md border border-(--base-03) px-3 py-2.5 space-y-1.5">
+        <div className="bg-(--base-02) rounded-lg px-4 py-3 space-y-1.5">
             <div className="text-sm font-medium text-(--base-09)">Bedrock players</div>
             <p className="text-xs text-(--base-06)">
                 Choose per route whether it takes Java, Bedrock or both. Bedrock players (phone, tablet, Windows) type
@@ -66,7 +67,7 @@ export function BedrockSummary({ bedrock }: { bedrock: ServerBedrock }) {
  */
 function ManagedBedrockSummary({ bedrock, link }: { bedrock: ServerBedrock; link: { label: string; href: string } }) {
     return (
-        <div className="bg-(--base-02) rounded-md border border-(--base-03) px-3 py-2.5 space-y-1.5">
+        <div className="bg-(--base-02) rounded-lg px-4 py-3 space-y-1.5">
             <div className="text-sm font-medium text-(--base-09)">Bedrock players</div>
             <p className="text-xs text-(--base-06)">
                 Bedrock players join through the managed gateway, on one address per server. On your own domain,
@@ -175,8 +176,8 @@ export function RouteEdition({ serverId, domain, bedrock, onChanged }: {
             {restartNote && (
                 <p className="text-xs text-(--warning-light)" role="status">Restart the server so it loads the new Bedrock key.</p>
             )}
-            {warning && <div className="alert alert-warning text-xs" role="status">{warning}</div>}
-            {error && <div className="alert alert-error text-xs" role="alert">{error}</div>}
+            {warning && <Callout tone="warning" icon={<AlertTriangle size={16} />} role="status">{warning}</Callout>}
+            {error && <Callout tone="error" icon={<AlertTriangle size={16} />} role="alert">{error}</Callout>}
         </div>
     );
 }

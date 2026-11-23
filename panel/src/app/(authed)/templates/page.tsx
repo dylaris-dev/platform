@@ -8,6 +8,11 @@ import { useAppData } from '@/lib/AppDataContext';
 import { listTemplates, type SkippedFile, type Template } from '@/lib/api/templates';
 import { formatTemplateSize, groupTemplates, templateCap } from '@/lib/templates';
 import { SkeletonCard } from '@/components/Skeleton';
+import PageHeader from '@/components/ui/PageHeader';
+import Section from '@/components/ui/Section';
+import EmptyState from '@/components/ui/EmptyState';
+import Callout from '@/components/server/Callout';
+import '@/styles/modpacks.css';
 import { Badge } from '@/components/ui/Badge';
 import NewTemplateDialog from '@/components/templates/NewTemplateDialog';
 import SkippedAlert from '@/components/templates/SkippedAlert';
@@ -64,23 +69,19 @@ export default function TemplatesPage() {
     ];
 
     return (
-        <main className="flex-1 min-h-0 overflow-y-auto p-5">
-            <header className="flex items-center gap-3 mb-4">
-                <LayoutTemplate size={20} className="text-(--accent-light)" />
-                <h1 className="text-base font-display font-semibold text-(--base-09)">Templates</h1>
-                <div className="ml-auto flex items-center gap-2">
+        <main className="flex-1 min-h-0 overflow-y-auto app-page space-y-6">
+            <PageHeader
+                title="Templates"
+                description="A template is a server folder you can start new servers from: configs, plugins and worlds included."
+                actions={<>
                     <button onClick={reload} className="btn btn-secondary btn-sm" disabled={loading} aria-label="Refresh">
-                        <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
+                        <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
                     </button>
                     <button onClick={() => setCreating(true)} className="btn btn-primary btn-sm">
                         <Plus size={13} /> New template
                     </button>
-                </div>
-            </header>
-
-            <p className="text-xs text-(--base-07) mb-4">
-                A template is a server folder you can start new servers from: configs, plugins and worlds included.
-            </p>
+                </>}
+            />
 
             {created && (
                 <SkippedAlert skipped={created.skipped} onDismiss={() => setCreated(null)}>
@@ -91,54 +92,44 @@ export default function TemplatesPage() {
             )}
 
             {suspended && (
-                <div className="alert alert-warning mb-4" role="status">
-                    <AlertTriangle size={14} className="shrink-0 mt-0.5" />
-                    <div className="text-xs">
-                        <p className="font-medium">Your templates are read-only</p>
-                        <p>{suspended} You can still open, download and delete them.</p>
-                    </div>
-                </div>
+                <Callout tone="warning" role="status" icon={<AlertTriangle size={14} />} title="Your templates are read-only">
+                    {suspended} You can still open, download and delete them.
+                </Callout>
             )}
 
             {error && (
-                <div className="card p-3 border border-(--error) bg-(--error)/10 mb-4 flex items-start gap-2" role="alert">
-                    <CircleAlert size={16} className="text-(--error-light) mt-0.5 shrink-0" />
-                    <div className="text-xs text-(--base-09) flex-1">{error}</div>
-                    <button onClick={reload} className="btn btn-secondary btn-sm">Retry</button>
-                </div>
+                <EmptyState tone="error" icon={<CircleAlert size={20} />} title={error} action={<button onClick={reload} className="btn btn-secondary btn-sm">Retry</button>} />
             )}
 
             {!groups ? (
                 !error && (
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3" aria-busy="true">
+                    <div className="mp-grid" aria-busy="true">
                         {Array.from({ length: 6 }).map((_, i) => <SkeletonCard key={i} height="h-28" />)}
                     </div>
                 )
             ) : (
-                <div className="space-y-6">
+                <div className="space-y-8">
                     {sections.map(({ key, title, empty }) => {
                         const items = groups[key];
                         if (items.length === 0 && !empty) return null;
                         return (
-                            <section key={key} aria-labelledby={`tpl-group-${key}`}>
-                                <h2 id={`tpl-group-${key}`} className="mono-label text-(--base-06) mb-2">
-                                    {title}
-                                    {key === 'mine' && maxPerUser !== null && !user?.isAdmin && (
-                                        <span className="ml-2 normal-case">{items.length} of {maxPerUser}</span>
-                                    )}
-                                </h2>
+                            <Section
+                                key={key}
+                                title={title}
+                                description={key === 'mine' && maxPerUser !== null && !user?.isAdmin ? `${items.length} of ${maxPerUser}` : undefined}
+                            >
                                 {items.length === 0 ? (
-                                    <div className="card p-8 flex flex-col items-center text-center gap-2">
-                                        <LayoutTemplate size={28} className="text-(--base-05)" />
-                                        <p className="text-sm text-(--base-07)">{empty}</p>
-                                        <button onClick={() => setCreating(true)} className="btn btn-primary btn-sm mt-2"><Plus size={13} /> New template</button>
-                                    </div>
+                                    <EmptyState
+                                        icon={<LayoutTemplate size={20} />}
+                                        title={empty}
+                                        action={<button onClick={() => setCreating(true)} className="btn btn-primary btn-sm"><Plus size={13} /> New template</button>}
+                                    />
                                 ) : (
-                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                                    <div className="mp-grid">
                                         {items.map((t) => <TemplateCard key={t.id} t={t} maxSize={maxSize} showOwner={key === 'shared'} storage={storageLabel(t.backupStorageId, own, !!featureFlags.hosted)} />)}
                                     </div>
                                 )}
-                            </section>
+                            </Section>
                         );
                     })}
                     <OwnerShares />
@@ -153,8 +144,8 @@ export default function TemplatesPage() {
 function TemplateCard({ t, maxSize, showOwner, storage }: { t: Template; maxSize: number | null; showOwner: boolean; storage: string }) {
     const version = [t.software, t.mcVersion, t.softwareVersion].filter(Boolean).join(' ');
     return (
-        <Link href={`/templates/${t.id}`} className="card p-4 hover:border-(--accent-border) focus-visible:border-(--accent-border) transition-colors group">
-            <div className="text-sm font-medium text-(--base-09) truncate group-hover:text-(--accent-light)">{t.name}</div>
+        <Link href={`/templates/${t.id}`} className="mp-card p-4 focus-visible:outline-none focus-visible:[box-shadow:var(--focus-ring)]">
+            <div className="text-sm font-medium text-(--base-09) truncate">{t.name}</div>
             <div className="text-xs text-(--base-06) truncate mt-0.5">{version || 'No software set'}</div>
             <div className="mt-3 flex items-center gap-2 flex-wrap">
                 <Badge variant="neutral">{t.kind === 'proxy' ? 'proxy' : 'server'}</Badge>

@@ -3,6 +3,8 @@
 import { useEffect, useState } from 'react';
 import { Clock } from 'lucide-react';
 import TimeZoneSelect from '@/components/ui/TimeZoneSelect';
+import Segmented from '@/components/ui/Segmented';
+import PageHeader from '@/components/ui/PageHeader';
 import { SkeletonCard } from '@/components/Skeleton';
 import { toast } from '@/components/ui/Toast';
 import { useBusy } from '@/lib/useBusy';
@@ -32,7 +34,7 @@ export default function AccountTimePage() {
 
     if (!prefs) {
         return (
-            <main className="flex-1 overflow-y-auto p-6 max-w-3xl" aria-busy="true">
+            <main className="flex-1 overflow-y-auto app-page" aria-busy="true">
                 <SkeletonCard />
             </main>
         );
@@ -52,47 +54,37 @@ export default function AccountTimePage() {
     });
 
     return (
-        <main className="flex-1 overflow-y-auto p-6 max-w-3xl animate-content-in">
-            <header className="flex items-center gap-3 mb-4">
-                <Clock size={20} className="text-(--accent-light)" />
-                <h1 className="text-base font-display font-semibold text-(--base-09)">Time &amp; date</h1>
-            </header>
+        <main className="flex-1 overflow-y-auto app-page space-y-6 animate-content-in">
+            <PageHeader
+                icon={<Clock size={16} />}
+                title="Time &amp; date"
+                description="The zone and clock the panel shows times in."
+            />
 
-            <div className="card p-5 space-y-5">
+            <div className="srv-surface p-5 space-y-6 max-w-3xl">
                 <div>
-                    <label className="input-label" htmlFor="account-tz">Time zone</label>
+                    <label className="srv-label mb-1.5 block" htmlFor="account-tz">Time zone</label>
                     <TimeZoneSelect id="account-tz" value={prefs.timezone} onChange={tz => setPrefs({ ...prefs, timezone: tz })} />
-                    <p className="text-xs text-(--base-06) mt-1">
+                    <p className="text-xs text-(--base-06) mt-1.5">
                         Your servers use it too, unless one sets its own under Configuration &rarr; Scheduled: for
                         the console&apos;s timestamps (from the next start) and as the zone of new scheduled tasks.
                     </p>
                 </div>
 
-                <fieldset>
-                    <legend className="input-label">Clock</legend>
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-1">
-                        {FORMATS.map(f => (
-                            <button
-                                key={f.value}
-                                type="button"
-                                aria-pressed={prefs.timeFormat === f.value}
-                                onClick={() => setPrefs({ ...prefs, timeFormat: f.value })}
-                                className={`px-3 py-2 rounded-md border text-sm text-left transition-colors focus-visible:outline-2 focus-visible:outline-(--accent) ${
-                                    prefs.timeFormat === f.value
-                                        ? 'border-(--accent) bg-(--accent-ghost) text-(--accent-light)'
-                                        : 'border-(--base-04) text-(--base-07) hover:bg-(--base-03)'
-                                }`}
-                            >
-                                {f.label}
-                            </button>
-                        ))}
-                    </div>
-                    <p className="text-xs text-(--base-06) mt-1">Automatic follows your browser&apos;s language.</p>
-                </fieldset>
+                <div>
+                    <span className="srv-label mb-1.5 block" id="account-clock-label">Clock</span>
+                    <Segmented<TimeFormat>
+                        ariaLabel="Clock format"
+                        value={prefs.timeFormat}
+                        onChange={v => setPrefs({ ...prefs, timeFormat: v })}
+                        options={FORMATS.map(f => ({ id: f.value, label: f.label }))}
+                    />
+                    <p className="text-xs text-(--base-06) mt-1.5">Automatic follows your browser&apos;s language.</p>
+                </div>
 
-                <div className="flex items-center justify-between gap-3 border-t border-(--base-03) pt-4">
+                <div className="flex items-center justify-between gap-3 pt-4 border-t border-(--base-03)">
                     <p className="text-xs text-(--base-06)">
-                        Now: <span className="font-mono text-(--base-08)">{sample}</span>
+                        Now: <span className="font-mono tabular-nums text-(--base-08)">{sample}</span>
                     </p>
                     <button onClick={save} disabled={!dirty || saving} className="btn btn-primary btn-sm disabled:opacity-40">
                         {saving ? 'Saving...' : 'Save'}

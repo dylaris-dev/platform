@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import OtpInput from '@/components/ui/OtpInput';
 import Link from 'next/link';
 import { setupTOTPWithToken, verifyTOTPWithToken } from '@/lib/api/auth';
 import { ShieldCheck, CircleCheck, Copy, Loader2, ArrowLeft } from 'lucide-react';
@@ -150,17 +151,8 @@ export default function ForcedSetup2FAPage() {
 
                     <form onSubmit={handleVerify} className="space-y-3 mt-2">
                         <div className="flex flex-col gap-[5px] text-left">
-                            <label className="input-label">6-digit code from your app</label>
-                            <input
-                                type="text"
-                                value={code}
-                                onChange={e => setCode(e.target.value)}
-                                placeholder="123 456"
-                                autoComplete="one-time-code"
-                                inputMode="numeric"
-                                className="input-field input-mono w-full text-center tracking-widest text-lg"
-                                required
-                            />
+                            <label htmlFor="setup-2fa-code" className="srv-label">6-digit code from your app</label>
+                            <OtpInput id="setup-2fa-code" value={code} onChange={setCode} />
                         </div>
                         <button
                             type="submit"
@@ -185,8 +177,8 @@ export default function ForcedSetup2FAPage() {
 
 function Shell({ children }: { children: React.ReactNode }) {
     return (
-        <div className="min-h-screen flex items-center justify-center p-4 bg-(--background)">
-            <div className="card w-full max-w-md p-8 text-center space-y-4">{children}</div>
+        <div className="app-auth">
+            <div className="app-auth-card text-center space-y-4">{children}</div>
         </div>
     );
 }

@@ -59,4 +59,12 @@ describe('a destructive one-click action asks first', () => {
         const dialog = readFileSync(join(__dirname, 'ConfirmDialog.tsx'), 'utf8');
         expect(dialog).toMatch(/if \(!publish\)[\s\S]{0,200}Promise\.resolve\(false\)/);
     });
+
+    it('only the confirm button resolves true, never Escape, Cancel or the backdrop', () => {
+        // The Alert Dialog reports how it closed through returnValue; anything
+        // but the one button carrying value="confirm" must read as a refusal.
+        const dialog = readFileSync(join(__dirname, 'ConfirmDialog.tsx'), 'utf8');
+        expect(dialog).toMatch(/onOpenChange=\{\(open, details\) => \{ if \(!open\) close\(details\.returnValue === 'confirm'\); \}\}/);
+        expect(dialog.match(/value="confirm"/g)).toHaveLength(1);
+    });
 });

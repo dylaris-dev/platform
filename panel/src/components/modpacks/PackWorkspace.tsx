@@ -21,7 +21,9 @@ import HelpTourButton from '@/components/help/HelpTourButton';
 import { ModrinthWatchDialog } from '@/components/mods/ModrinthLibrary';
 import ProjectIcon, { useProjectMetadata } from '@/components/modpacks/ProjectIcon';
 import ModalPanel from '@/components/ui/ModalPanel';
+import Callout from '@/components/server/Callout';
 import styles from './workspace.module.css';
+import '@/styles/modpacks.css';
 
 type Workspace = { pack: Pack | null; builds: PackBuild[]; permissions: PackPermissions; loading: boolean; refresh: () => Promise<void>; detailsRoot: HTMLDivElement | null };
 const WorkspaceContext = createContext<Workspace | null>(null);
@@ -112,7 +114,7 @@ export default function PackWorkspace({ children }: { children: ReactNode }) {
                     const matches = group.packs.filter(p => !search.trim() || `${p.internalName} ${p.summary}`.toLowerCase().includes(search.trim().toLowerCase()));
                     const open = !!search.trim() || !folded[group.key];
                     return <section key={group.key} aria-label={group.label} className="mb-4">
-                        {!collapsed && <button onClick={() => setFolded(previous => ({ ...previous, [group.key]: !previous[group.key] }))} aria-expanded={open} className="flex items-center gap-2 w-full px-1 py-2 text-[11px] uppercase tracking-wider text-(--base-06)">{open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}<span className="flex-1 text-left">{group.label}</span><span>{matches.length}</span></button>}
+                        {!collapsed && <button onClick={() => setFolded(previous => ({ ...previous, [group.key]: !previous[group.key] }))} aria-expanded={open} className="srv-label flex items-center gap-2 w-full px-2 py-2 hover:text-(--base-09)">{open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}<span className="flex-1 text-left">{group.label}</span><span>{matches.length}</span></button>}
                         {(collapsed || open) && matches.map(p => { const current = currentPackBuild(summaries[p.id] || [],p.recommendedBuildId); return <Link key={p.id} href={`/modpacks/${p.id}`} title={p.internalName} className={`${styles.packLink} ${collapsed ? '!p-1 justify-center' : ''}`} aria-current={packId === p.id ? 'page' : undefined}>
                             <ProjectIcon name={p.internalName} url={metadata.projects[p.modrinthProjectId]?.icon_url} />
                             {!collapsed && <span className="min-w-0"><span className="text-sm font-medium text-(--base-09) block truncate">{p.internalName}</span><span className={`text-[11px] block mt-1 ${current?.id === p.recommendedBuildId ? 'text-(--accent-light)' : current?.channel === 'release' ? 'text-(--success-light)' : 'text-(--base-06)'}`}>{current ? `${current.versionString} · ${packBuildStatus(current, summaries[p.id] || [], p.recommendedBuildId)}` : 'No builds'}</span></span>}
@@ -126,7 +128,7 @@ export default function PackWorkspace({ children }: { children: ReactNode }) {
                 {packId > 0 && <>
                     <header className={styles.heading}>
                         <ProjectIcon name={pack?.internalName || 'Modpack'} url={metadata.projects[pack?.modrinthProjectId || '']?.icon_url} className="w-11 h-11" />
-                        <div className="min-w-0 flex-1"><p className="mono-label text-(--base-06)">Modpack workspace</p><h1 className="font-display text-lg font-semibold text-(--base-09) truncate">{loading ? 'Loading pack...' : pack?.internalName || 'Pack not found'}</h1>{autoSync.phase !== 'idle' && <p role="status" className={`text-[11px] ${autoSync.phase === 'failed' ? 'text-(--warning-light)' : 'text-(--accent-light)'}`}>{autoSync.phase === 'running' ? `Importing new Modrinth versions (${autoSync.done + 1} of ${autoSync.total})...` : autoSync.phase === 'done' ? `Imported ${autoSync.imported} new Modrinth version${autoSync.imported === 1 ? '' : 's'}.` : `Modrinth sync stopped at ${autoSync.message}`}</p>}<p className="text-xs text-(--base-06) truncate">{pack?.summary || 'Build, manage and share your modpack.'}</p></div>
+                        <div className="min-w-0 flex-1"><h1 className="font-display text-[22px] font-bold leading-tight text-(--base-09) truncate">{loading ? 'Loading pack...' : pack?.internalName || 'Pack not found'}</h1>{autoSync.phase !== 'idle' && <p role="status" className={`text-[11px] ${autoSync.phase === 'failed' ? 'text-(--warning-light)' : 'text-(--accent-light)'}`}>{autoSync.phase === 'running' ? `Importing new Modrinth versions (${autoSync.done + 1} of ${autoSync.total})...` : autoSync.phase === 'done' ? `Imported ${autoSync.imported} new Modrinth version${autoSync.imported === 1 ? '' : 's'}.` : `Modrinth sync stopped at ${autoSync.message}`}</p>}<p className="text-xs text-(--base-06) truncate">{pack?.summary || 'Build, manage and share your modpack.'}</p></div>
                         <div className={styles.tools}>
                             {(buildId > 0 || creating || modrinthSelected) && <Link href={`/modpacks/${packId}`} className="btn btn-secondary btn-sm"><Layers size={13}/>All builds</Link>}
                             <button onClick={async () => { setRefreshing(true); try { await refresh(); } finally { setRefreshing(false); } }} disabled={refreshing} className="btn btn-ghost btn-sm"><RefreshCw size={13} className={refreshing ? 'animate-spin' : ''} />{refreshing ? 'Refreshing...' : 'Refresh'}</button>
@@ -136,12 +138,10 @@ export default function PackWorkspace({ children }: { children: ReactNode }) {
                             {pack && (buildId > 0 || creating || allBuilds) && <button onClick={() => setDetailsOpen(value => !value)} aria-expanded={detailsOpen} aria-controls="pack-details" className={`btn btn-secondary btn-sm ${styles.detailsToggle}`}><PanelRight size={14} />{buildId || creating ? 'Build details' : 'Pack details'}</button>}
                         </div>
                     </header>
-                    {permissions.tokenInvalid && <div role="status" className="flex items-start gap-2 px-5 py-3 border-b border-(--base-03) bg-(--warning)/10 text-xs text-(--base-09)">
-                        <CircleAlert size={15} className="text-(--warning) mt-0.5 shrink-0" />
-                        <p className="flex-1">Modrinth no longer accepts your token, so this pack is read only. Renew the token to work on it again, or clear the packs you no longer have access to from your list.</p>
+                    {permissions.tokenInvalid && <div className="px-5 pt-3"><Callout tone="warning" role="status" icon={<CircleAlert size={15} />} actions={<>
                         <Link href="/account/modrinth" className="btn btn-primary btn-sm">Renew token</Link>
                         <button onClick={clearLapsed} disabled={clearing} className="btn btn-secondary btn-sm disabled:opacity-40">{clearing ? 'Clearing...' : 'Clear'}</button>
-                    </div>}
+                    </>}>Modrinth no longer accepts your token, so this pack is read only. Renew the token to work on it again, or clear the packs you no longer have access to from your list.</Callout></div>}
                     {/* Pack-level settings live on the pack overview; inside a build the content needs the height. */}
                     {pack && (allBuilds || alertsSelected) && <div className={styles.packToolbar} aria-label="Pack actions">
                         {builds.length > 0 && <div className={styles.recommendation}><PackRecommendation pack={pack} builds={builds} canEdit={permissions.canEdit && featureFlags.modpacks} onChanged={refresh} /></div>}
@@ -154,12 +154,12 @@ export default function PackWorkspace({ children }: { children: ReactNode }) {
                         </div>
                     </div>}
                 </>}
-                {packId > 0 && !featureFlags.modpacks && <p className="text-xs text-(--warning-light) px-5 py-3 border-b border-(--base-03)">Modpack authoring is disabled. Existing builds remain readable and downloadable.</p>}
+                {packId > 0 && !featureFlags.modpacks && <div className="px-5 pt-3"><Callout tone="warning" icon={<CircleAlert size={15} />}>Modpack authoring is disabled. Existing builds remain readable and downloadable.</Callout></div>}
                 <div className={styles.columns}>
                     
                     <div className={styles.content} key={`${packId}:${buildId}:${creating}`}>{children}</div>
                     {pack && detailsOpen && <button className={styles.detailsBackdrop} onClick={() => setDetailsOpen(false)} aria-label="Close details" />}
-                    {pack && (buildId > 0 || creating || allBuilds) && <aside id="pack-details" className={`${styles.details} ${detailsOpen ? styles.detailsOpen : ''}`} aria-label={buildId || creating ? 'Build details' : 'Pack details'}><button onClick={() => setDetailsOpen(false)} className={`btn btn-ghost btn-sm ${styles.detailsClose}`}><X size={14} />Close details</button><div ref={setDetailsRoot} className="flex flex-col shrink-0">{allBuilds && <><p className="mono-label text-(--base-06) mb-4">Pack details</p><dl className={styles.metadata}><div><dt>Builds</dt><dd>{builds.length}</dd></div><div><dt>Latest version</dt><dd>{currentPackBuild(builds,pack.recommendedBuildId)?.versionString || 'None'}</dd></div><div><dt>Modrinth</dt><dd>{pack.modrinthProjectId ? 'Linked' : 'Not linked'}</dd></div></dl></>}</div></aside>}
+                    {pack && (buildId > 0 || creating || allBuilds) && <aside id="pack-details" className={`${styles.details} ${detailsOpen ? styles.detailsOpen : ''}`} aria-label={buildId || creating ? 'Build details' : 'Pack details'}><button onClick={() => setDetailsOpen(false)} className={`btn btn-ghost btn-sm ${styles.detailsClose}`}><X size={14} />Close details</button><div ref={setDetailsRoot} className="flex flex-col shrink-0">{allBuilds && <><p className="srv-label mb-3">Pack details</p><dl className={styles.metadata}><div><dt>Builds</dt><dd>{builds.length}</dd></div><div><dt>Latest version</dt><dd>{currentPackBuild(builds,pack.recommendedBuildId)?.versionString || 'None'}</dd></div><div><dt>Modrinth</dt><dd>{pack.modrinthProjectId ? 'Linked' : 'Not linked'}</dd></div></dl></>}</div></aside>}
                 </div>
             </div>
         </div>

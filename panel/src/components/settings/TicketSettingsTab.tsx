@@ -97,7 +97,7 @@ export default function TicketSettingsTab() {
                     title="Attachment quotas (MB)"
                     description="Switch an axis to No limit to leave it uncapped, or set 0 to forbid attachments on that axis entirely. The file quota gates a single upload, the ticket quota caps the total per ticket, and the user quota caps the total one user has stored across all their tickets."
                 >
-                    <div className="grid grid-cols-3 gap-3">
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                         <div className="flex flex-col gap-[5px]">
                             <label className="input-label" htmlFor="ticket-quota-file">Per file</label>
                             <LimitField
@@ -164,10 +164,10 @@ export default function TicketSettingsTab() {
                     />
                     <Link
                         href="/settings/tickets/deletion-log"
-                        className="text-xs text-(--accent-light) hover:underline inline-flex items-center gap-1"
+                        className="btn btn-secondary btn-sm inline-flex items-center gap-1.5"
                     >
-                        <Trash2 size={11} /> View deletion log
-                        <ArrowRight size={11} />
+                        <Trash2 size={13} /> View deletion log
+                        <ArrowRight size={13} />
                     </Link>
                 </SettingsGroup>
             </SettingsCard>

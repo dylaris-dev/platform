@@ -1,6 +1,7 @@
 "use client";
 
 import { ArrowUp, ArrowDown } from 'lucide-react';
+import Tooltip from '@/components/ui/Tooltip';
 import Sparkline from '@/components/infra/Sparkline';
 import {
     formatBitsPerSec, utilTone, barWidthPct,
@@ -69,7 +70,7 @@ export default function BandwidthHostRow({
     onSelectComponent?: (c: GatewayComponentView) => void;
 }) {
     return (
-        <div className={`card flex items-stretch gap-5 px-4 py-6 flex-wrap ${active ? 'ring-1 ring-(--accent)' : ''}`}>
+        <div className={`srv-surface flex items-stretch gap-5 p-5 flex-wrap ${active ? 'ring-1 ring-(--accent)' : ''}`}>
             {/* A FIXED width, not a minimum. With min-w the rail was as wide as
                 its content, so a host with no cap (and therefore no bars) got a
                 narrower rail and every chart in that row started further left.
@@ -77,7 +78,7 @@ export default function BandwidthHostRow({
                 which is the one thing this layout exists for. */}
             <button
                 onClick={onSelectHost}
-                className="flex flex-col gap-2.5 text-left w-64 shrink-0 self-center"
+                className="flex flex-col gap-2.5 text-left w-64 shrink-0 self-center rounded-md focus-visible:outline-none focus-visible:[box-shadow:var(--focus-ring)]"
                 aria-pressed={active}
             >
                 <div className="flex items-center gap-2 flex-wrap">
@@ -85,7 +86,7 @@ export default function BandwidthHostRow({
                         {host.host || 'no host reported'}
                     </span>
                     {host.capMismatch && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-(--warning-ghost) text-(--warning-light) border border-(--warning-border)">
+                        <span className="srv-chip bg-(--warning-ghost)! text-(--warning-light)!">
                             cap mismatch
                         </span>
                     )}
@@ -96,14 +97,15 @@ export default function BandwidthHostRow({
                     them against a single shared bar would have been wrong in
                     the direction that hides a problem - a saturated downlink
                     reading as comfortable because the uplink was quiet. */}
-                <div
-                    className="text-xs font-mono text-(--base-05)"
-                    title={host.capKnown
+                <Tooltip
+                    content={host.capKnown
                         ? `BANDWIDTH_MBIT is ${host.budgetMbit} Mbit/s. Ethernet is full duplex, so that is the ceiling for EACH direction, not for the two together.`
                         : 'No BANDWIDTH_MBIT set on this host, so there is nothing to measure against.'}
                 >
-                    {host.capKnown ? `${(host.budgetMbit / 1000).toFixed(1)} Gbit/s each way` : 'no cap set'}
-                </div>
+                    <div className="srv-num text-xs text-(--base-06)">
+                        {host.capKnown ? `${(host.budgetMbit / 1000).toFixed(1)} Gbit/s each way` : 'no cap set'}
+                    </div>
+                </Tooltip>
                 <DirBlock dir="tx" bps={host.txBps} pct={host.utilPct} known={host.capKnown} />
                 <DirBlock dir="rx" bps={host.rxBps} pct={host.utilPctRx} known={host.capKnown} />
             </button>
@@ -117,9 +119,9 @@ export default function BandwidthHostRow({
                 {kinds.map(k => (
                     <div key={k.key} className="flex flex-col gap-2 flex-1 min-w-72">
                         {(cells[k.key] ?? []).length === 0 ? (
-                            <div className="flex-1 rounded-md border border-dashed border-(--base-03) flex flex-col items-center justify-center gap-0.5" style={{ minHeight: CHART_H + 38 }}>
-                                <span className="mono-label text-(--base-05)">{k.label}</span>
-                                <span className="text-[11px] font-mono text-(--base-05)">not on this host</span>
+                            <div className="flex-1 rounded-lg border border-dashed border-(--base-04) flex flex-col items-center justify-center gap-0.5" style={{ minHeight: CHART_H + 38 }}>
+                                <span className="srv-label">{k.label}</span>
+                                <span className="text-xs text-(--base-06)">not on this host</span>
                             </div>
                         ) : (
                             (cells[k.key] ?? []).map(c => (
@@ -153,20 +155,17 @@ function ServiceBox({ label, comp, values, scaleBps, range, onSelect }: {
     return (
         <button
             onClick={onSelect}
-            className="rounded-md border border-(--base-03) bg-(--base-02) px-3 py-2 flex flex-col gap-1.5 text-left flex-1 transition-colors hover:border-(--base-04)"
+            className="rounded-lg bg-(--base-03) px-3 py-2 flex flex-col gap-1.5 text-left flex-1 transition-colors hover:bg-(--base-04) focus-visible:outline-none focus-visible:[box-shadow:var(--focus-ring)]"
         >
-            <div className="flex items-center gap-2 mono-label text-(--base-06)">
+            <div className="srv-label flex items-center gap-2">
                 {label}
                 {/* The instance id, and it is not decoration: a host can run two
                     edges, and then this is the only thing telling the two boxes
                     apart. It is the same string the logs, the Gateway tab and
                     the Redis keys use, which is what makes it worth the width. */}
-                <span
-                    className="text-(--base-05) truncate"
-                    title={`${label} id "${comp.id}" - the same name in the logs and on the Gateway tab`}
-                >
-                    {comp.id}
-                </span>
+                <Tooltip content={`${label} id "${comp.id}": the same name in the logs and on the Gateway tab`}>
+                    <span className="srv-num text-(--base-07) truncate">{comp.id}</span>
+                </Tooltip>
             </div>
             {/* ONE line across the whole box at the middle, chart and numbers
                 alike. It is what makes the mirrored chart readable without a
@@ -190,12 +189,7 @@ function ServiceBox({ label, comp, values, scaleBps, range, onSelect }: {
                     Without a cap there is no 100% to draw, so the frame goes
                     dashed and the scale falls back to the busiest series on the
                     screen. A solid frame there would claim a limit nobody set. */}
-                <div
-                    className="flex-1 min-w-0 relative"
-                    title={comp.capKnown
-                        ? `Full height is the ${comp.capMbit} Mbit/s cap, in each direction. This service shares that link with anything else on the host - the totals on the left are what the host is using.`
-                        : 'No cap configured for this service, so the chart is scaled to the busiest series on screen and the frame is not a limit.'}
-                >
+                <div className="flex-1 min-w-0 relative">
                     <DirChart
                         values={values}
                         scaleBps={comp.capKnown ? comp.capMbit * 1_000_000 : scaleBps}
@@ -208,18 +202,18 @@ function ServiceBox({ label, comp, values, scaleBps, range, onSelect }: {
                         thing the line exists to make exact. */}
                     <div
                         className={`absolute inset-0 rounded border pointer-events-none ${
-                            comp.capKnown ? 'border-(--base-04)' : 'border-dashed border-(--base-03)'
+                            comp.capKnown ? 'border-(--base-05)' : 'border-dashed border-(--base-04)'
                         }`}
                         aria-hidden
                     />
-                    <span className="absolute right-1.5 top-0.5 text-[9px] font-mono text-(--base-05) leading-none pointer-events-none">
+                    <span className="absolute right-1.5 top-1 srv-num text-[10px] text-(--base-06) leading-none pointer-events-none">
                         {comp.capKnown ? `${formatBitsPerSec(comp.capMbit * 1_000_000)} cap` : 'no cap'}
                     </span>
                     {/* In the chart, not only in the control above it. The
                         window is what every height on the screen is relative
                         to, and a reader who scrolled past the switcher has no
                         way back to it except to scroll up and trust memory. */}
-                    <span className="absolute left-1.5 bottom-0.5 text-[9px] font-mono text-(--base-05) leading-none pointer-events-none">
+                    <span className="absolute left-1.5 bottom-1 srv-num text-[10px] text-(--base-06) leading-none pointer-events-none">
                         last {range}
                     </span>
                 </div>
@@ -253,17 +247,20 @@ function Rate({ dir, bps, className = '', tinted }: {
 }) {
     const up = dir === 'tx';
     return (
-        <span
-            className={`inline-flex items-center gap-1 font-mono tabular-nums ${className}`}
-            style={tinted ? { color: DIR_COLOR[dir] } : undefined}
-            title={up
+        <Tooltip
+            content={up
                 ? 'tx / out: what this host sends OUT. For an edge that is what its players download.'
                 : 'rx / in: what this host takes IN. For an edge that is what its players upload.'}
         >
-            {up ? <ArrowUp size={11} className="shrink-0" /> : <ArrowDown size={11} className="shrink-0" />}
-            <span className="text-(--base-05)">{up ? 'tx/out' : 'rx/in'}</span>
-            {formatBitsPerSec(bps)}
-        </span>
+            <span
+                className={`inline-flex items-center gap-1 srv-num ${className}`}
+                style={tinted ? { color: DIR_COLOR[dir] } : undefined}
+            >
+                {up ? <ArrowUp size={14} className="shrink-0" aria-hidden="true" /> : <ArrowDown size={14} className="shrink-0" aria-hidden="true" />}
+                <span className="text-(--base-06)">{up ? 'tx/out' : 'rx/in'}</span>
+                {formatBitsPerSec(bps)}
+            </span>
+        </Tooltip>
     );
 }
 
@@ -285,18 +282,18 @@ function DirBlock({ dir, bps, pct, known }: { dir: 'tx' | 'rx'; bps: number; pct
             <Rate dir={dir} bps={bps} className="text-xs text-(--base-08)" />
             {known ? (
                 <div className="flex items-center gap-2">
-                    <span className="flex-1 h-2 rounded-full bg-(--base-03) overflow-hidden">
+                    <span className="flex-1 h-1.5 rounded-full bg-(--base-03) overflow-hidden">
                         <span
                             className={`block h-full rounded-full transition-all duration-500 ${toneBar[utilTone(pct)]}`}
                             style={{ width: `${barWidthPct(pct)}%` }}
                         />
                     </span>
-                    <span className="text-xs font-mono tabular-nums text-(--base-07) w-9 text-right">
+                    <span className="srv-num text-xs text-(--base-07) w-9 text-right">
                         {pct.toFixed(0)}%
                     </span>
                 </div>
             ) : (
-                <span className="text-[11px] font-mono text-(--base-05)">no cap to measure against</span>
+                <span className="text-xs text-(--base-06)">no cap to measure against</span>
             )}
         </div>
     );

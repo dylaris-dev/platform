@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState } from 'react';
 import { CircleAlert, CircleCheck, Copy, X } from 'lucide-react';
-import { advanceToastClock, toastDuration, toastOpacity } from './toastTiming';
+import { Toast, ToastClose, ToastRegion, toast as sdkToast } from '@ui-sdk/react/toast';
+import { toastDuration } from './toastTiming';
 
 /**
  * One toast host for the whole panel.
@@ -18,6 +19,9 @@ import { advanceToastClock, toastDuration, toastOpacity } from './toastTiming';
  * having to own state and render a node. Fails SILENT rather than closed - a
  * missing host costs a message, and refusing the action the message describes
  * would be the worse trade.
+ *
+ * Lifetime, pause on hover or focus, announcements, swipe and stacking come from
+ * the UI SDK ToastRegion; this file only keeps the call signature and the card.
  */
 
 export interface ToastOptions {
@@ -27,45 +31,18 @@ export interface ToastOptions {
     durationMs?: number;
 }
 
-interface ToastItem extends Required<ToastOptions> {
-    id: number;
-    message: string;
-}
-
-let publish: ((t: ToastItem) => void) | null = null;
-let nextId = 1;
-
 /**
  * toast shows a message. The second argument is the ok flag rather than an
  * options object because that is the signature the ~31 call sites already used
  * (`showToast(msg, ok = true)`), so migrating them is a rename.
  */
 export function toast(message: string, ok: boolean = true, opts: ToastOptions = {}): void {
-    if (!publish) {
-        // Not an error worth throwing: the message is the least important part
-        // of whatever just succeeded.
-        console.warn('toast() called with no <ToastRoot/> mounted:', message);
-        return;
-    }
-    publish({
-        id: nextId++,
-        message,
-        ok: opts.ok ?? ok,
-        durationMs: toastDuration(opts.ok ?? ok, opts.durationMs),
-    });
+    const isOk = opts.ok ?? ok;
+    sdkToast(message, { type: isOk ? 'success' : 'error', duration: toastDuration(isOk, opts.durationMs) });
 }
 
 /** Mount once, above every screen that can report something. */
 export function ToastRoot() {
-    const [items, setItems] = useState<ToastItem[]>([]);
-
-    useEffect(() => {
-        publish = (t: ToastItem) => setItems((prev) => [...prev, t]);
-        return () => {
-            publish = null;
-        };
-    }, []);
-
     // Inside the Beam desktop app the shell puts its settings button on the
     // bottom edge of every page (beam/app/launcher.go), right where this
     // stack and the download card sit. Marking the document lets globals.css
@@ -79,59 +56,18 @@ export function ToastRoot() {
     }, []);
 
     return (
-        // Always mounted, even when empty: a live region has to exist in the DOM
-        // BEFORE the mutation for assistive tech to announce it reliably. It
-        // renders nothing and is pointer-events:none while empty.
-        //
-        // polite, not assertive: these announce a completed action, and
-        // interrupting a screen reader mid-sentence for "Saved" is worse than
-        // waiting for the pause.
-        <div className="toast-container" role="status" aria-live="polite">
-            {items.map((item) => (
-                <ToastCard
-                    key={item.id}
-                    item={item}
-                    onDismiss={() => setItems((prev) => prev.filter((i) => i.id !== item.id))}
-                />
-            ))}
-        </div>
+        <ToastRegion className="toast-container" maxVisible={8} shortcut={null}>
+            {(item) => <ToastCard message={String(item.title ?? '')} ok={item.type !== 'error'} duration={item.duration} />}
+        </ToastRegion>
     );
 }
 
-function ToastCard({ item, onDismiss }: { item: ToastItem; onDismiss: () => void }) {
-    const flags = useRef({ hovered: false, focused: false });
-    const clock = useRef({ elapsed: 0, at: performance.now(), paused: false });
-    const [elapsed, setElapsed] = useState(0);
-    const [paused, setPaused] = useState(false);
-    const [leaving, setLeaving] = useState(false);
+function ToastCard({ message, ok, duration }: { message: string; ok: boolean; duration?: number }) {
     const [copied, setCopied] = useState(false);
     const [copyError, setCopyError] = useState(false);
-    const dismiss = useRef(onDismiss);
-    dismiss.current = onDismiss;
-    const pause = (kind: 'hovered' | 'focused', value: boolean) => {
-        flags.current[kind] = value;
-        const next = flags.current.hovered || flags.current.focused;
-        clock.current = advanceToastClock(clock.current, performance.now(), item.durationMs, next);
-        setElapsed(clock.current.elapsed);
-        setPaused(next);
-    };
-    useEffect(() => {
-        const timer = setInterval(() => {
-            clock.current = advanceToastClock(clock.current, performance.now(), item.durationMs);
-            setElapsed(clock.current.elapsed);
-        }, 40);
-        return () => clearInterval(timer);
-    }, [item.durationMs]);
-    const expired = elapsed >= item.durationMs;
-    useEffect(() => {
-        if (!expired || paused) { setLeaving(false); return; }
-        setLeaving(true);
-        const timer = setTimeout(() => dismiss.current(), 200);
-        return () => clearTimeout(timer);
-    }, [expired, paused]);
     const copy = async () => {
         try {
-            await navigator.clipboard.writeText(item.message);
+            await navigator.clipboard.writeText(message);
             setCopied(true);
             setCopyError(false);
         } catch {
@@ -140,20 +76,7 @@ function ToastCard({ item, onDismiss }: { item: ToastItem; onDismiss: () => void
     };
 
     return (
-        <div
-            className="toast toast-dismissable toast-copyable"
-            data-duration-ms={item.durationMs}
-            data-elapsed-ms={Math.round(elapsed)}
-            style={{ opacity: paused ? 1 : leaving ? 0 : toastOpacity(elapsed, item.durationMs) }}
-            onMouseEnter={() => pause('hovered', true)}
-            onMouseLeave={() => pause('hovered', false)}
-            onFocusCapture={(event) => {
-                if ((event.target as HTMLElement).matches(':focus-visible')) pause('focused', true);
-            }}
-            onBlurCapture={(event) => {
-                if (!event.currentTarget.contains(event.relatedTarget)) pause('focused', false);
-            }}
-        >
+        <Toast className="toast toast-dismissable toast-copyable">
             <svg className="toast-timer" aria-hidden="true">
                 <rect
                     x="1"
@@ -163,8 +86,8 @@ function ToastCard({ item, onDismiss }: { item: ToastItem; onDismiss: () => void
                     rx="12"
                     pathLength="1"
                     style={{
-                        strokeDashoffset: elapsed / item.durationMs,
-                        stroke: item.ok ? 'var(--success-light)' : 'var(--error-light)',
+                        animationDuration: `${duration ?? 0}ms`,
+                        stroke: ok ? 'var(--success-light)' : 'var(--error-light)',
                     }}
                 />
             </svg>
@@ -174,14 +97,14 @@ function ToastCard({ item, onDismiss }: { item: ToastItem; onDismiss: () => void
                 className="flex items-center gap-2.5 min-w-0 flex-1 text-left"
                 title="Click to copy message"
             >
-                <div className={`toast-bar ${item.ok ? 'bg-(--success-light)' : 'bg-(--error-light)'}`} />
-                {item.ok ? (
+                <div className={`toast-bar ${ok ? 'bg-(--success-light)' : 'bg-(--error-light)'}`} />
+                {ok ? (
                     <CircleCheck size={14} className="text-(--success-light) shrink-0" />
                 ) : (
                     <CircleAlert size={14} className="text-(--error-light) shrink-0" />
                 )}
                 <span className="min-w-0">
-                    <span className="text-sm text-(--base-09) block break-words">{item.message}</span>
+                    <span className="text-sm text-(--base-09) block break-words">{message}</span>
                     <span className="text-[10px] text-(--base-06) block mt-1">
                         {copyError
                             ? 'Copy unavailable. Select and copy the message manually.'
@@ -192,14 +115,9 @@ function ToastCard({ item, onDismiss }: { item: ToastItem; onDismiss: () => void
                     </span>
                 </span>
             </button>
-            <button
-                type="button"
-                onClick={onDismiss}
-                className="btn btn-ghost btn-sm shrink-0"
-                aria-label="Dismiss message"
-            >
+            <ToastClose className="btn btn-ghost btn-sm shrink-0" aria-label="Dismiss message">
                 <X size={13} />
-            </button>
-        </div>
+            </ToastClose>
+        </Toast>
     );
 }

@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 
-import { LayoutGrid, Plus, Pencil, Trash2, Play, Square, ExternalLink, AlertTriangle, X, Link2, Copy, RotateCw, Clock, Lock } from 'lucide-react';
+import { LayoutGrid, Plus, Pencil, Trash2, MoreHorizontal, ExternalLink, AlertTriangle, X, Link2, Copy, RotateCw, Clock, Lock } from 'lucide-react';
 import { systemEvents } from '@/lib/systemEvents';
 import {
     listServerTabs, createServerTab, updateServerTab, deleteServerTab,
@@ -19,7 +19,16 @@ import { SkeletonList } from '@/components/Skeleton';
 import { useBusy } from '@/lib/useBusy';
 import { toast } from '@/components/ui/Toast';
 import { useRouteId } from '@/lib/routeParams';
-import ModalPanel from '@/components/ui/ModalPanel';
+import Menu from '@/components/ui/Menu';
+import Segmented from '@/components/ui/Segmented';
+import Tooltip from '@/components/ui/Tooltip';
+import NumberField from '@/components/ui/NumberField';
+import Callout from '@/components/server/Callout';
+import { confirmDialog } from '@/components/ui/ConfirmDialog';
+import { Input } from '@ui-sdk/react/input';
+import { Dialog, DialogBackdrop, DialogClose, DialogContent, DialogDescription, DialogTitle } from '@ui-sdk/react/dialog';
+import Select from '@/components/ui/Select';
+import Switch from '@/components/ui/Switch';
 import { fmtDateTime } from '@/lib/time';
 
 // Custom Tabs management.
@@ -70,9 +79,7 @@ export default function ServerConfigTabsPage() {
     const [loading, setLoading] = useState(true);
     const [loadError, setLoadError] = useState<string | null>(null);
     const [savingTab, runSave] = useBusy();
-    const [deletingTab, runDelete] = useBusy();
     const [editing, setEditing] = useState<EditingTab | null>(null);
-    const [deletePrompt, setDeletePrompt] = useState<ServerTab | null>(null);
     const [iconQuery, setIconQuery] = useState('');
 
     const showToast = (msg: string, ok = true) => toast(msg, ok);
@@ -208,11 +215,10 @@ export default function ServerConfigTabsPage() {
         if (res.success) refresh(); else showToast(res.message || 'Toggle failed', false);
     };
 
-    const handleDelete = async () => {
-        if (!deletePrompt) return;
-        const res = await deleteServerTab(serverId, deletePrompt.id);
+    const handleDelete = async (t: ServerTab) => {
+        if (!(await confirmDialog({ title: 'Delete tab?', message: `Remove ${t.name} from the nav.` }))) return;
+        const res = await deleteServerTab(serverId, t.id);
         if (res.success) {
-            setDeletePrompt(null);
             showToast('Tab deleted.', true);
             refresh();
         } else {
@@ -263,139 +269,148 @@ export default function ServerConfigTabsPage() {
     const editingSurfaceHasPage = editingMode === 'proxied' && (editing?.surface === 'page' || editing?.surface === 'both');
 
     return (
-        <div className="max-w-3xl space-y-4">
-            <header className="flex items-center gap-3 justify-between">
-                <div className="flex items-start gap-3">
-                    <div className="w-9 h-9 rounded-md bg-(--accent-ghost) flex items-center justify-center shrink-0">
-                        <LayoutGrid size={16} className="text-(--accent-light)" />
-                    </div>
-                    <div>
-                        <h2 className="text-base font-display font-semibold text-(--base-09)">Custom Tabs</h2>
-                        <p className="text-xs text-(--base-06) mt-0.5">
-                            Direct tabs render a browser-reachable URL. Proxied tabs stream your
-                            server container&apos;s web UI (BlueMap, squaremap, Dynmap) through
-                            Dylaris - no public port needed.
-                        </p>
-                    </div>
+        <div className="flex flex-col gap-6">
+            <div className="srv-config-head">
+                <div className="min-w-0">
+                    <h1 className="srv-config-title">Custom tabs</h1>
+                    <p className="srv-config-desc max-w-2xl">
+                        Direct tabs render a browser-reachable URL. Proxied tabs stream your
+                        server container&apos;s web UI (BlueMap, squaremap, Dynmap) through
+                        Dylaris - no public port needed.
+                    </p>
                 </div>
-                <button onClick={openCreate} className="btn btn-primary btn-sm">
-                    <Plus size={13} />
-                    New Tab
+                <button type="button" onClick={openCreate} className="btn btn-primary btn-sm">
+                    <Plus size={14} />
+                    New tab
                 </button>
-            </header>
+            </div>
 
             {loading ? (
-                <SkeletonList rows={3} />
+                <div className="srv-surface overflow-hidden" aria-busy="true" aria-label="Loading tabs">
+                    <SkeletonList rows={3} />
+                </div>
             ) : loadError ? (
-                <div className="card p-8 flex flex-col items-center text-center gap-2">
-                    <AlertTriangle size={28} className="text-(--warning-light)" />
-                    <p className="text-sm text-(--base-07)">{loadError}</p>
-                    <button type="button" onClick={refresh} className="btn btn-secondary btn-sm mt-1">
-                        Try again
+                <Callout
+                    tone="error"
+                    role="alert"
+                    icon={<AlertTriangle size={16} />}
+                    title="Could not load tabs"
+                    actions={<button type="button" onClick={refresh} className="btn btn-secondary btn-sm">Try again</button>}
+                >
+                    {loadError}
+                </Callout>
+            ) : tabs.length === 0 ? (
+                <div className="srv-surface flex flex-col items-center gap-2 px-6 py-14 text-center">
+                    <LayoutGrid size={32} className="text-(--base-05)" />
+                    <p className="text-sm text-(--base-07)">No custom tabs yet.</p>
+                    <button type="button" onClick={openCreate} className="btn btn-secondary btn-sm mt-2">
+                        <Plus size={14} />
+                        New tab
                     </button>
                 </div>
-            ) : tabs.length === 0 ? (
-                <div className="card p-8 flex flex-col items-center text-center gap-2">
-                    <LayoutGrid size={28} className="text-(--base-05)" />
-                    <p className="text-sm text-(--base-07)">No custom tabs yet.</p>
-                </div>
             ) : (
-                <div className="space-y-2">
+                <ul className="srv-surface overflow-hidden">
                     {tabs.map(t => (
-                        <article key={t.id} className="card p-3 space-y-2">
-                            <div className="flex items-center gap-3">
-                                <div className={`w-9 h-9 rounded-md flex items-center justify-center shrink-0 ${
-                                    t.enabled ? 'bg-(--accent-ghost) text-(--accent-light)' : 'bg-(--base-03) text-(--base-06)'
+                        <li key={t.id} className="srv-config-item flex-col gap-3">
+                            <div className="flex w-full items-center gap-4">
+                                <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-(--base-03) ${
+                                    t.enabled ? 'text-(--base-08)' : 'text-(--base-05)'
                                 }`}>
                                     <DynamicIcon name={t.icon} size={16} />
                                 </div>
-                                <div className="min-w-0 flex-1">
-                                    <div className="flex items-center gap-2 flex-wrap">
-                                        <span className="font-medium text-sm text-(--base-09)">{t.name}</span>
-                                        {!t.enabled && (
-                                            <span className="mono-label bg-(--base-03) px-1.5 rounded-sm text-(--base-06)">disabled</span>
-                                        )}
-                                        <span className="mono-label bg-(--base-03) px-1.5 rounded-sm text-(--base-07)">{t.mode}</span>
-                                        {t.mode === 'proxied' && (
-                                            <span className="mono-label bg-(--base-03) px-1.5 rounded-sm text-(--base-07)">{t.surface}</span>
-                                        )}
+                                <div className={`min-w-0 flex-1 ${t.enabled ? '' : 'opacity-60'}`}>
+                                    <div className="flex flex-wrap items-center gap-2">
+                                        <span className="text-sm font-medium text-(--base-09)">{t.name}</span>
+                                        <span className="srv-config-pill">{t.mode}</span>
+                                        {t.mode === 'proxied' && <span className="srv-config-pill">{t.surface}</span>}
                                         {t.mode === 'proxied' && t.visibility === 'public' && (
-                                            <span className="mono-label bg-(--warning-ghost) px-1.5 rounded-sm text-(--warning-light)">public</span>
+                                            <span className="srv-config-pill" data-tone="warning">Public</span>
                                         )}
                                     </div>
                                     {t.mode === 'direct' ? (
                                         <a href={t.url} target="_blank" rel="noopener noreferrer"
-                                            className="text-xs text-(--accent-light) font-mono truncate inline-flex items-center gap-1 mt-0.5">
-                                            {t.url}<ExternalLink size={9} />
+                                            className="srv-num mt-1 inline-flex max-w-full items-center gap-1 text-xs text-(--accent-light) hover:underline">
+                                            <span className="truncate">{t.url}</span><ExternalLink size={12} className="shrink-0" />
                                         </a>
                                     ) : (
-                                        <span className="text-xs text-(--base-06) font-mono">
+                                        <span className="srv-num mt-1 block text-xs text-(--base-06)">
                                             container :{t.targetPort}{t.targetPath}
-                                            {t.subServerName && (
-                                                <span className="ml-1 text-(--base-06)">
-                                                    &middot; only on {t.subServerName}
-                                                </span>
-                                            )}
+                                            {t.subServerName && <> &middot; only on {t.subServerName}</>}
                                         </span>
                                     )}
                                 </div>
-                                <div className="flex items-center gap-1 shrink-0">
-                                    <button onClick={() => handleToggleEnabled(t)} className="btn btn-secondary btn-sm"
-                                        aria-label={`${t.enabled ? 'Disable' : 'Enable'} tab ${t.name}`} title={`${t.enabled ? 'Disable' : 'Enable'} tab ${t.name}`}>
-                                        {t.enabled ? <Square size={12} /> : <Play size={12} />}
-                                    </button>
-                                    <button onClick={() => openEdit(t)} className="btn btn-secondary btn-sm"
-                                        aria-label={`Edit tab ${t.name}`} title={`Edit tab ${t.name}`}>
-                                        <Pencil size={12} />
-                                    </button>
-                                    <button onClick={() => setDeletePrompt(t)} className="btn btn-secondary btn-sm"
-                                        aria-label={`Delete tab ${t.name}`} title={`Delete tab ${t.name}`}>
-                                        <Trash2 size={12} className="text-(--error-light)" />
-                                    </button>
+                                <div className="flex shrink-0 items-center gap-2">
+                                    <Switch
+                                        checked={t.enabled}
+                                        onChange={() => handleToggleEnabled(t)}
+                                        ariaLabel={`${t.enabled ? 'Disable' : 'Enable'} tab ${t.name}`}
+                                    />
+                                    <Menu
+                                        trigger={
+                                            <button type="button" aria-label={`Actions for tab ${t.name}`} className="btn btn-ghost btn-icon btn-sm">
+                                                <MoreHorizontal size={16} />
+                                            </button>
+                                        }
+                                        items={[
+                                            { label: 'Edit', icon: <Pencil size={14} />, onSelect: () => openEdit(t) },
+                                            { type: 'separator' },
+                                            { label: 'Delete', icon: <Trash2 size={14} />, danger: true, onSelect: () => handleDelete(t) },
+                                        ]}
+                                    />
                                 </div>
                             </div>
 
                             {/* Share link row for proxied page tabs */}
                             {t.mode === 'proxied' && (t.surface === 'page' || t.surface === 'both') && (
-                                <div className="flex flex-col gap-1.5 border-t border-(--base-03) pt-2">
-                                    <div className="flex items-center gap-2 flex-wrap">
-                                        <Link2 size={12} className="text-(--base-06) shrink-0" />
+                                <div className="flex w-full flex-col gap-2 rounded-lg bg-(--base-03) p-3">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                        <Link2 size={14} className="shrink-0 text-(--base-06)" />
                                         {t.shareToken ? (
                                             <>
-                                                <code className={`text-xs font-mono truncate max-w-[240px] ${
-                                                    shareLinkExpired(t.shareExpiresAt) ? 'text-(--base-06) line-through' : 'text-(--accent-light)'
+                                                <code className={`srv-num max-w-[240px] truncate text-xs ${
+                                                    shareLinkExpired(t.shareExpiresAt) ? 'text-(--base-06) line-through' : 'text-(--base-08)'
                                                 }`}>
                                                     {shareLinkUrl(t.shareToken, coreInfo?.tabProxyHostSuffix)}
                                                 </code>
-                                                <button onClick={() => handleCopy(t.shareToken)} className="btn btn-secondary btn-sm" title="Copy link">
-                                                    <Copy size={11} />
-                                                </button>
-                                                <button onClick={() => handleRotate(t)} className="btn btn-secondary btn-sm" title="Rotate (invalidates the old link)">
-                                                    <RotateCw size={11} />
-                                                </button>
-                                                <button
-                                                    onClick={() => { setSlugFor(slugFor === t.id ? null : t.id); setSlugDraft(''); }}
-                                                    className="btn btn-secondary btn-sm"
-                                                    title="Choose your own link"
-                                                    aria-expanded={slugFor === t.id}
-                                                >
-                                                    <Pencil size={11} />
-                                                </button>
-                                                <button onClick={() => handleRevoke(t)} className="btn btn-secondary btn-sm" title="Revoke link">
-                                                    <Trash2 size={11} className="text-(--error-light)" />
-                                                </button>
+                                                <Tooltip content="Copy link">
+                                                    <button type="button" onClick={() => handleCopy(t.shareToken)} aria-label="Copy link" className="btn btn-ghost btn-icon btn-sm">
+                                                        <Copy size={14} />
+                                                    </button>
+                                                </Tooltip>
+                                                <Tooltip content="Rotate (invalidates the old link)">
+                                                    <button type="button" onClick={() => handleRotate(t)} aria-label="Rotate link" className="btn btn-ghost btn-icon btn-sm">
+                                                        <RotateCw size={14} />
+                                                    </button>
+                                                </Tooltip>
+                                                <Tooltip content="Choose your own link">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => { setSlugFor(slugFor === t.id ? null : t.id); setSlugDraft(''); }}
+                                                        className="btn btn-ghost btn-icon btn-sm"
+                                                        aria-label="Choose your own link"
+                                                        aria-expanded={slugFor === t.id}
+                                                    >
+                                                        <Pencil size={14} />
+                                                    </button>
+                                                </Tooltip>
+                                                <Tooltip content="Revoke link">
+                                                    <button type="button" onClick={() => handleRevoke(t)} aria-label="Revoke link" className="btn btn-ghost btn-icon btn-sm">
+                                                        <Trash2 size={14} className="text-(--error-light)" />
+                                                    </button>
+                                                </Tooltip>
                                             </>
                                         ) : (
                                             <>
-                                                <button onClick={() => handleRotate(t)} className="btn btn-secondary btn-sm">
-                                                    <Link2 size={11} /> Generate share link
+                                                <button type="button" onClick={() => handleRotate(t)} className="btn btn-secondary btn-sm">
+                                                    <Link2 size={14} /> Generate share link
                                                 </button>
                                                 <button
+                                                    type="button"
                                                     onClick={() => { setSlugFor(slugFor === t.id ? null : t.id); setSlugDraft(''); }}
-                                                    className="btn btn-secondary btn-sm"
+                                                    className="btn btn-ghost btn-sm"
                                                     aria-expanded={slugFor === t.id}
                                                 >
-                                                    <Pencil size={11} /> Choose my own
+                                                    <Pencil size={14} /> Choose my own
                                                 </button>
                                             </>
                                         )}
@@ -405,11 +420,11 @@ export default function ServerConfigTabsPage() {
                                         stops working, or that it already has. */}
                                     {slugFor === t.id && (
                                         <form
-                                            className="flex items-center gap-2 flex-wrap"
+                                            className="flex flex-wrap items-center gap-2"
                                             onSubmit={e => { e.preventDefault(); handleRotate(t, slugDraft); }}
                                         >
-                                            <span className="text-xs text-(--base-06) font-mono">/c/</span>
-                                            <input
+                                            <span className="srv-num text-xs text-(--base-06)">/c/</span>
+                                            <Input
                                                 autoFocus
                                                 value={slugDraft}
                                                 onChange={e => setSlugDraft(e.target.value.toLowerCase())}
@@ -417,7 +432,7 @@ export default function ServerConfigTabsPage() {
                                                 minLength={4}
                                                 maxLength={40}
                                                 pattern="[a-z0-9]+(-[a-z0-9]+)*"
-                                                className="input-field input-mono text-xs w-56"
+                                                className="input-field input-mono w-56 text-xs"
                                                 aria-label="Custom share link"
                                             />
                                             <button type="submit" className="btn btn-primary btn-sm" disabled={slugDraft.trim().length < 4}>
@@ -437,10 +452,11 @@ export default function ServerConfigTabsPage() {
                                         access; to anyone else it says "This page is private". Said
                                         here, because a link reads as something to hand out. */}
                                     {t.shareToken && t.visibility !== 'public' && (
-                                        <span className="inline-flex items-center gap-2 flex-wrap text-xs text-(--base-06)">
-                                            <Lock size={11} className="shrink-0" aria-hidden="true" />
+                                        <span className="inline-flex flex-wrap items-center gap-2 text-xs text-(--base-06)">
+                                            <Lock size={14} className="shrink-0" aria-hidden="true" />
                                             Private: this link opens only for signed-in members with access to the server.
                                             <button
+                                                type="button"
                                                 onClick={async () => {
                                                     const res = await updateServerTab(serverId, t.id, { visibility: 'public' });
                                                     if (res.success) { showToast('The tab is public; anyone with the link can open it.', true); refresh(); }
@@ -453,64 +469,59 @@ export default function ServerConfigTabsPage() {
                                         </span>
                                     )}
                                     {t.shareToken && t.shareExpiresAt && (
-                                        <span className={`inline-flex items-center gap-1 text-xs ${
+                                        <span className={`inline-flex items-center gap-1.5 text-xs ${
                                             shareLinkExpired(t.shareExpiresAt) ? 'text-(--warning-light)' : 'text-(--base-06)'
                                         }`}>
-                                            <Clock size={11} className="shrink-0" />
+                                            <Clock size={14} className="shrink-0" />
                                             {shareLinkExpired(t.shareExpiresAt)
                                                 ? `Expired ${fmtDateTime(t.shareExpiresAt)} - rotate to hand out a working one`
                                                 : `Expires ${fmtDateTime(t.shareExpiresAt)}`}
                                         </span>
                                     )}
                                     {t.shareToken && !coreInfo?.tabProxyAvailable && (
-                                        <span className="inline-flex items-start gap-1 text-xs text-(--warning-light)">
-                                            <AlertTriangle size={11} className="mt-0.5 shrink-0" />
+                                        <span className="inline-flex items-start gap-1.5 text-xs text-(--warning-light)">
+                                            <AlertTriangle size={14} className="mt-0.5 shrink-0" />
                                             Share links need a proxy host on Core (TAB_PROXY_HOST_SUFFIX).
                                             Until an admin sets that up this link answers &quot;not valid&quot;.
                                         </span>
                                     )}
                                 </div>
                             )}
-                        </article>
+                        </li>
                     ))}
-                </div>
+                </ul>
             )}
 
-            {/* Editor */}
             {editing && (
-                <div className="modal-overlay animate-fade-in" onClick={() => setEditing(null)}>
-                    <ModalPanel onClose={() => setEditing(null)} className="modal-panel max-w-lg" onClick={e => e.stopPropagation()}>
-                        <div className="modal-header">
-                            <h3 className="modal-title flex items-center gap-2">
-                                <LayoutGrid size={16} />
-                                {editing.isNew ? 'New tab' : 'Edit tab'}
-                            </h3>
-                            <button onClick={() => setEditing(null)} aria-label="Close" title="Close" className="text-(--base-06)"><X size={16} /></button>
+                <Dialog open onOpenChange={open => { if (!open) setEditing(null); }}>
+                    <DialogBackdrop className="modal-overlay animate-fade-in" />
+                    <DialogContent className="modal-panel fixed inset-0 z-50 m-auto flex h-fit max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-lg flex-col">
+                        <div className="modal-header flex items-start justify-between gap-4">
+                            <div className="min-w-0">
+                                <DialogTitle className="modal-title">{editing.isNew ? 'New tab' : 'Edit tab'}</DialogTitle>
+                                <DialogDescription className="mt-1 text-xs text-(--base-06)">A page shown in the server navigation.</DialogDescription>
+                            </div>
+                            <DialogClose aria-label="Close" className="btn btn-ghost btn-icon btn-sm shrink-0">
+                                <X size={16} />
+                            </DialogClose>
                         </div>
-                        <div className="modal-body space-y-4">
+                        <div className="modal-body min-h-0 flex-1 space-y-5 overflow-y-auto">
                             <div>
-                                <label className="input-label">Name</label>
-                                <input type="text" value={editing.name || ''}
+                                <label htmlFor="tab-name" className="srv-label mb-1.5 block">Name</label>
+                                <Input id="tab-name" type="text" value={editing.name || ''}
                                     onChange={e => setEditing({ ...editing, name: e.target.value })}
                                     className="input-field w-full" placeholder="Map" maxLength={64} />
                             </div>
 
                             <div>
-                                <label className="input-label">Mode</label>
-                                <div className="grid grid-cols-2 gap-2 mt-1">
-                                    {(['direct', 'proxied'] as const).map(m => (
-                                        <button key={m} type="button"
-                                            onClick={() => setEditing({ ...editing, mode: m })}
-                                            className={`px-3 py-2 rounded-md text-sm border transition-colors ${
-                                                editingMode === m
-                                                    ? 'bg-(--accent-ghost) text-(--accent-light) border-(--accent)'
-                                                    : 'bg-(--base-02) border-(--base-04) text-(--base-07) hover:bg-(--base-03)'
-                                            }`}>
-                                            {m === 'direct' ? 'Direct URL' : 'Proxied (via Dylaris)'}
-                                        </button>
-                                    ))}
-                                </div>
-                                <p className="text-xs text-(--base-06) mt-1.5 leading-snug">
+                                <span className="srv-label mb-1.5 block">Mode</span>
+                                <Segmented
+                                    ariaLabel="Mode"
+                                    value={editingMode}
+                                    onChange={m => setEditing({ ...editing, mode: m as 'direct' | 'proxied' })}
+                                    options={[{ id: 'direct', label: 'Direct URL' }, { id: 'proxied', label: 'Proxied (via Dylaris)' }]}
+                                />
+                                <p className="mt-1.5 text-xs leading-snug text-(--base-06)">
                                     {editingMode === 'proxied'
                                         ? 'Dylaris fetches the page from the server container and streams it to the browser. Nothing has to be exposed, and it works on every routing mode.'
                                         : 'The browser fetches the URL itself, so it has to be reachable from wherever the player is. Dylaris does not serve it.'}
@@ -519,13 +530,13 @@ export default function ServerConfigTabsPage() {
 
                             {editingMode === 'direct' ? (
                                 <div>
-                                    <label className="input-label">URL</label>
-                                    <input type="url" value={editing.url || ''}
+                                    <label htmlFor="tab-url" className="srv-label mb-1.5 block">URL</label>
+                                    <Input id="tab-url" type="url" value={editing.url || ''}
                                         onChange={e => setEditing({ ...editing, url: e.target.value })}
                                         className="input-field input-mono w-full" placeholder="https://map.example.com" />
-                                    <p className="text-xs text-(--base-06) mt-1">Must be reachable from the user&apos;s browser.</p>
+                                    <p className="mt-1.5 text-xs text-(--base-06)">Must be reachable from the user&apos;s browser.</p>
                                     {gatewayEnabled && (
-                                        <p className="text-xs text-(--warning-light) mt-1 leading-snug">
+                                        <p className="mt-1.5 text-xs leading-snug text-(--warning-light)">
                                             The Dylaris edge carries Minecraft traffic only — it serves no web
                                             pages. This has to be an address you publish yourself. For something
                                             running inside the server container, use Proxied instead.
@@ -540,46 +551,48 @@ export default function ServerConfigTabsPage() {
                                     <div className="flex flex-wrap items-center gap-1.5">
                                         <span className="text-xs text-(--base-06)">Web map preset:</span>
                                         {MAP_PRESETS.map(p => (
-                                            <button
-                                                key={p.name}
-                                                type="button"
-                                                onClick={() => setEditing({ ...editing, targetPort: p.port, targetPath: '/', name: editing.name || p.name, icon: 'map' })}
-                                                className="btn btn-secondary btn-sm"
-                                                title={`${p.name} serves its map on port ${p.port}`}
-                                            >
-                                                {p.name} <span className="font-mono text-(--base-06)">:{p.port}</span>
-                                            </button>
+                                            <Tooltip key={p.name} content={`${p.name} serves its map on port ${p.port}`}>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setEditing({ ...editing, targetPort: p.port, targetPath: '/', name: editing.name || p.name, icon: 'map' })}
+                                                    className="btn btn-secondary btn-sm"
+                                                >
+                                                    {p.name} <span className="srv-num text-(--base-06)">:{p.port}</span>
+                                                </button>
+                                            </Tooltip>
                                         ))}
                                     </div>
                                     <div className="grid grid-cols-2 gap-3">
+                                        <NumberField
+                                            label="Container port"
+                                            value={editing.targetPort ?? 8100}
+                                            onChange={v => setEditing({ ...editing, targetPort: v })}
+                                            min={1}
+                                            max={65535}
+                                            placeholder="8100"
+                                        />
                                         <div>
-                                            <label className="input-label">Container port</label>
-                                            <input type="number" min={1} max={65535} value={editing.targetPort ?? 8100}
-                                                onChange={e => setEditing({ ...editing, targetPort: Number(e.target.value) })}
-                                                className="input-field w-full" placeholder="8100" />
-                                        </div>
-                                        <div>
-                                            <label className="input-label">Base path</label>
-                                            <input type="text" value={editing.targetPath || '/'}
+                                            <label htmlFor="tab-path" className="srv-label mb-1.5 block">Base path</label>
+                                            <Input id="tab-path" type="text" value={editing.targetPath || '/'}
                                                 onChange={e => setEditing({ ...editing, targetPath: e.target.value })}
                                                 className="input-field input-mono w-full" placeholder="/" />
                                         </div>
                                     </div>
                                     <div>
-                                        <label className="input-label" htmlFor="tab-subserver">Sub-server</label>
-                                        <select
+                                        <label className="srv-label mb-1.5 block" htmlFor="tab-subserver">Sub-server</label>
+                                        <Select
                                             id="tab-subserver"
                                             value={editing.subServerName || ''}
-                                            onChange={e => setEditing({ ...editing, subServerName: e.target.value })}
-                                            className="input-field w-full mt-1"
-                                        >
-                                            <option value="">Every sub-server</option>
-                                            {subServers.map(n => <option key={n} value={n}>{n}</option>)}
-                                            {editing.subServerName && !subServers.includes(editing.subServerName) && (
-                                                <option value={editing.subServerName}>{editing.subServerName} (not found)</option>
-                                            )}
-                                        </select>
-                                        <p className="mt-1 text-xs text-(--base-06)">
+                                            onChange={v => setEditing({ ...editing, subServerName: v })}
+                                            options={[
+                                                { value: '', label: 'Every sub-server' },
+                                                ...subServers.map(n => ({ value: n, label: n })),
+                                                ...(editing.subServerName && !subServers.includes(editing.subServerName)
+                                                    ? [{ value: editing.subServerName, label: `${editing.subServerName} (not found)` }]
+                                                    : []),
+                                            ]}
+                                        />
+                                        <p className="mt-1.5 text-xs text-(--base-06)">
                                             The tab points at a port inside the container, and the container runs
                                             whichever sub-server is started. Pin it if only one of them serves
                                             that port - the tab then stays hidden while another is running,
@@ -587,37 +600,27 @@ export default function ServerConfigTabsPage() {
                                         </p>
                                     </div>
                                     <div>
-                                        <label className="input-label">Surface</label>
-                                        <div className="grid grid-cols-3 gap-2 mt-1">
-                                            {(['tab', 'page', 'both'] as const).map(s => (
-                                                <button key={s} type="button"
-                                                    onClick={() => setEditing({ ...editing, surface: s })}
-                                                    className={`px-2 py-1.5 rounded-md text-xs border transition-colors ${
-                                                        (editing.surface || 'tab') === s
-                                                            ? 'bg-(--accent-ghost) text-(--accent-light) border-(--accent)'
-                                                            : 'bg-(--base-02) border-(--base-04) text-(--base-07) hover:bg-(--base-03)'
-                                                    }`}>{s}</button>
-                                            ))}
-                                        </div>
-                                        <p className="text-xs text-(--base-06) mt-1">tab = in-dashboard, page = standalone share link, both = either.</p>
+                                        <span className="srv-label mb-1.5 block">Surface</span>
+                                        <Segmented
+                                            ariaLabel="Surface"
+                                            value={editing.surface || 'tab'}
+                                            onChange={s => setEditing({ ...editing, surface: s as 'tab' | 'page' | 'both' })}
+                                            options={[{ id: 'tab', label: 'tab' }, { id: 'page', label: 'page' }, { id: 'both', label: 'both' }]}
+                                        />
+                                        <p className="mt-1.5 text-xs text-(--base-06)">tab = in-dashboard, page = standalone share link, both = either.</p>
                                     </div>
                                     {editingSurfaceHasPage && (
                                         <div>
-                                            <label className="input-label">Visibility</label>
-                                            <div className="grid grid-cols-2 gap-2 mt-1">
-                                                {(['private', 'public'] as const).map(v => (
-                                                    <button key={v} type="button"
-                                                        onClick={() => setEditing({ ...editing, visibility: v })}
-                                                        className={`px-3 py-2 rounded-md text-sm border transition-colors ${
-                                                            (editing.visibility || 'private') === v
-                                                                ? 'bg-(--accent-ghost) text-(--accent-light) border-(--accent)'
-                                                                : 'bg-(--base-02) border-(--base-04) text-(--base-07) hover:bg-(--base-03)'
-                                                        }`}>{v}</button>
-                                                ))}
-                                            </div>
+                                            <span className="srv-label mb-1.5 block">Visibility</span>
+                                            <Segmented
+                                                ariaLabel="Visibility"
+                                                value={editing.visibility || 'private'}
+                                                onChange={v => setEditing({ ...editing, visibility: v as 'private' | 'public' })}
+                                                options={[{ id: 'private', label: 'private' }, { id: 'public', label: 'public' }]}
+                                            />
                                             {(editing.visibility || 'private') === 'public' && (
-                                                <p className="flex items-start gap-1.5 text-xs text-(--warning-light) mt-2">
-                                                    <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+                                                <p className="mt-2 flex items-start gap-1.5 text-xs text-(--warning-light)">
+                                                    <AlertTriangle size={14} className="mt-0.5 shrink-0" />
                                                     <span>Anyone with the share link can view this page - no login required.</span>
                                                 </p>
                                             )}
@@ -625,17 +628,17 @@ export default function ServerConfigTabsPage() {
                                     )}
                                     {editingSurfaceHasPage && (
                                         <div>
-                                            <div className="flex items-baseline justify-between gap-2">
-                                                <label className="input-label" htmlFor="tab-share-expiry">Link expires (optional)</label>
+                                            <div className="mb-1.5 flex items-baseline justify-between gap-2">
+                                                <label className="srv-label" htmlFor="tab-share-expiry">Link expires (optional)</label>
                                                 {editing.shareExpiresAt && (
                                                     <button type="button"
                                                         onClick={() => setEditing({ ...editing, shareExpiresAt: null })}
-                                                        className="text-xs text-(--base-06) hover:text-(--base-08) transition-colors">
+                                                        className="rounded text-xs text-(--base-06) transition-colors hover:text-(--base-08) focus-visible:outline-none focus-visible:[box-shadow:var(--focus-ring)]">
                                                         Clear
                                                     </button>
                                                 )}
                                             </div>
-                                            <input
+                                            <Input
                                                 id="tab-share-expiry"
                                                 type="datetime-local"
                                                 value={editing.shareExpiresAt ? toLocalInput(editing.shareExpiresAt) : ''}
@@ -644,9 +647,9 @@ export default function ServerConfigTabsPage() {
                                                     shareExpiresAt: e.target.value ? fromLocalInput(e.target.value) : null,
                                                 })}
                                                 style={{ colorScheme: 'dark' }}
-                                                className="input-field datetime-field w-full mt-1"
+                                                className="input-field datetime-field w-full"
                                             />
-                                            <p className="text-xs text-(--base-06) mt-1">
+                                            <p className="mt-1.5 text-xs text-(--base-06)">
                                                 {editing.shareExpiresAt
                                                     ? 'After this the link stops working. The tab itself stays.'
                                                     : 'Empty means the link never expires.'}
@@ -655,7 +658,7 @@ export default function ServerConfigTabsPage() {
                                     )}
                                     {editingSurfaceHasPage && !coreInfo?.tabProxyAvailable && (
                                         <p className="flex items-start gap-1.5 text-xs text-(--warning-light)">
-                                            <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+                                            <AlertTriangle size={14} className="mt-0.5 shrink-0" />
                                             <span>
                                                 Share links are switched off on this platform: they need their own
                                                 origin (TAB_PROXY_PORT + TAB_PROXY_ORIGIN on Core) so a container
@@ -668,30 +671,32 @@ export default function ServerConfigTabsPage() {
                             )}
 
                             <div>
-                                <div className="flex items-baseline justify-between gap-2">
-                                    <label className="input-label" htmlFor="tab-icon-search">Icon</label>
-                                    <span className="text-xs text-(--base-06)">
+                                <div className="mb-1.5 flex items-baseline justify-between gap-2">
+                                    <label className="srv-label" htmlFor="tab-icon-search">Icon</label>
+                                    <span className="srv-num text-xs text-(--base-06)">
                                         {availableIcons.length} available
                                     </span>
                                 </div>
-                                <input
+                                <Input
                                     id="tab-icon-search"
                                     type="search"
                                     value={iconQuery}
                                     onChange={e => setIconQuery(e.target.value)}
                                     placeholder="Search icons…"
-                                    className="input-field w-full mt-1"
+                                    className="input-field w-full"
                                 />
-                                <div className="grid grid-cols-8 gap-1 mt-2 max-h-44 overflow-y-auto p-1 rounded-md border border-(--base-04) bg-(--base-01)">
+                                <div className="mt-2 grid max-h-44 grid-cols-8 gap-1 overflow-y-auto rounded-lg bg-(--base-01) p-1.5">
                                     {availableIcons.map(icon => (
-                                        <button key={icon} type="button" title={icon}
+                                        // Native title, not Tooltip: the grid holds every icon name, and a
+                                        // tooltip instance per cell would be hundreds of popup roots.
+                                        <button key={icon} type="button" title={icon} aria-label={icon} aria-pressed={editing.icon === icon}
                                             onClick={() => setEditing({ ...editing, icon })}
-                                            className={`w-9 h-9 rounded-md flex items-center justify-center transition-colors ${
+                                            className={`flex h-9 w-9 items-center justify-center rounded-md transition-colors focus-visible:outline-none focus-visible:[box-shadow:var(--focus-ring)] ${
                                                 editing.icon === icon
-                                                    ? 'bg-(--accent-ghost) text-(--accent-light) border border-(--accent)'
-                                                    : 'bg-(--base-02) border border-(--base-04) text-(--base-07) hover:bg-(--base-03)'
+                                                    ? 'bg-(--accent-ghost) text-(--accent-light)'
+                                                    : 'text-(--base-07) hover:bg-(--base-03) hover:text-(--base-09)'
                                             }`}>
-                                            <DynamicIcon name={icon} size={14} />
+                                            <DynamicIcon name={icon} size={16} />
                                         </button>
                                     ))}
                                     {availableIcons.length === 0 && (
@@ -705,63 +710,31 @@ export default function ServerConfigTabsPage() {
                             </div>
 
                             {editingMode === 'direct' && (
-                                <div className="flex items-center justify-between border-t border-(--base-03) pt-3">
+                                <div className="flex items-center justify-between gap-4 rounded-lg bg-(--base-03) px-4 py-3">
                                     <div>
                                         <div className="text-sm font-medium text-(--base-09)">Open in panel</div>
-                                        <p className="text-xs text-(--base-06)">Off -&gt; clicking the tab opens the URL in a new browser window.</p>
+                                        <p className="text-xs text-(--base-06)">Off: clicking the tab opens the URL in a new browser window.</p>
                                     </div>
-                                    <button type="button" role="switch" aria-checked={editing.openInPanel ?? true} aria-label="Open in panel"
-                                        onClick={() => setEditing({ ...editing, openInPanel: !(editing.openInPanel ?? true) })}
-                                        className={`toggle-track ${(editing.openInPanel ?? true) ? 'toggle-track-on' : 'toggle-track-off'}`}>
-                                        <span className={`toggle-knob ${(editing.openInPanel ?? true) ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
-                                    </button>
+                                    <Switch checked={editing.openInPanel ?? true} onChange={v => setEditing({ ...editing, openInPanel: v })} ariaLabel="Open in panel" />
                                 </div>
                             )}
-                            <div className="flex items-center justify-between border-t border-(--base-03) pt-3">
+                            <div className="flex items-center justify-between gap-4 rounded-lg bg-(--base-03) px-4 py-3">
                                 <div>
                                     <div className="text-sm font-medium text-(--base-09)">Enabled</div>
                                     <p className="text-xs text-(--base-06)">Disabled tabs disappear from the nav strip.</p>
                                 </div>
-                                <button type="button" role="switch" aria-checked={editing.enabled ?? true} aria-label="Enabled"
-                                    onClick={() => setEditing({ ...editing, enabled: !(editing.enabled ?? true) })}
-                                    className={`toggle-track ${(editing.enabled ?? true) ? 'toggle-track-on' : 'toggle-track-off'}`}>
-                                    <span className={`toggle-knob ${(editing.enabled ?? true) ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
-                                </button>
+                                <Switch checked={editing.enabled ?? true} onChange={v => setEditing({ ...editing, enabled: v })} ariaLabel="Enabled" />
                             </div>
                         </div>
                         <div className="modal-footer">
-                            <button onClick={() => setEditing(null)} className="btn btn-secondary">Cancel</button>
-                            <button onClick={() => runSave(handleSave)} disabled={savingTab} className="btn btn-primary disabled:opacity-40">
+                            <DialogClose className="btn btn-secondary">Cancel</DialogClose>
+                            <button type="button" onClick={() => runSave(handleSave)} disabled={savingTab} className="btn btn-primary disabled:opacity-40">
                                 {editing.isNew ? 'Create' : 'Save'}
                             </button>
                         </div>
-                    </ModalPanel>
-                </div>
+                    </DialogContent>
+                </Dialog>
             )}
-
-            {/* Delete confirm */}
-            {deletePrompt && (
-                <div className="modal-overlay animate-fade-in" onClick={() => setDeletePrompt(null)}>
-                    <ModalPanel onClose={() => setDeletePrompt(null)} className="modal-panel max-w-sm" onClick={e => e.stopPropagation()}>
-                        <div className="modal-header">
-                            <h3 className="modal-title flex items-center gap-2 text-(--error-light)">
-                                <AlertTriangle size={18} />
-                                Delete tab?
-                            </h3>
-                        </div>
-                        <div className="modal-body">
-                            <p className="text-sm text-(--base-07)">
-                                Remove <span className="font-semibold text-(--base-09)">{deletePrompt.name}</span> from the nav.
-                            </p>
-                        </div>
-                        <div className="modal-footer">
-                            <button onClick={() => setDeletePrompt(null)} className="btn btn-secondary">Cancel</button>
-                            <button onClick={() => runDelete(handleDelete)} disabled={deletingTab} className="btn btn-danger disabled:opacity-40">Delete</button>
-                        </div>
-                    </ModalPanel>
-                </div>
-            )}
-
         </div>
     );
 }
