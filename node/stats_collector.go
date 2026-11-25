@@ -999,7 +999,7 @@ func duDiskUsage(ctx context.Context, rdb *redis.Client, uuid string) *DiskUsage
 	if dir == "" {
 		return nil
 	}
-	total := dirSize(dir)
+	total := serverDiskBytes(dir, backupShareQuota())
 	if total < 0 {
 		return nil
 	}
@@ -1027,6 +1027,21 @@ func duDiskUsage(ctx context.Context, rdb *redis.Client, uuid string) *DiskUsage
 		// diskFallbackInterval, minutes apart.
 		SubServers: scanSubServerSizes(dir),
 	}
+}
+
+// serverDiskBytes is what the server at dir holds against its own disk limit,
+// -1 when dir cannot be read. The node-local backup folder is a separate
+// budget unless share says Core folds it into the server's quota, as the
+// quota path charges it (QuotaProvider.TagBackupDir).
+func serverDiskBytes(dir string, share bool) int64 {
+	total := dirSize(dir)
+	if total < 0 || share {
+		return total
+	}
+	if b := dirSize(filepath.Join(dir, backupDirName)); b > 0 {
+		total = max(total-b, 0)
+	}
+	return total
 }
 
 // scanSubServerSizes measures each sub-server directory under a server root.

@@ -36,6 +36,8 @@ type transferFakeStore struct {
 	restores map[int]*models.BackupRestore
 	storage  *models.BackupStorage
 	updates  []reapUpdate
+	// shareQuota is backup.share_quota_with_server.
+	shareQuota bool
 	// setUploadHook runs inside SetBackupRunUpload before the condition is
 	// evaluated, for tests that need to line up concurrent callers.
 	setUploadHook func()

@@ -53,6 +53,16 @@ func (qs *QuotaSet) AssignQuota(uuid string) error {
 	return qp.AssignQuota(uuid)
 }
 
+// TagBackupDir sets the project of the server's backup folder on its own
+// filesystem; see QuotaProvider.TagBackupDir.
+func (qs *QuotaSet) TagBackupDir(uuid string) error {
+	qp := qs.forServer(uuid)
+	if qp == nil {
+		return nil
+	}
+	return qp.TagBackupDir(uuid)
+}
+
 // SetLimit enforces the server's disk limit on its own filesystem.
 func (qs *QuotaSet) SetLimit(uuid string, limitMB int64) error {
 	qp := qs.forServer(uuid)

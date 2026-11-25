@@ -224,7 +224,36 @@ func (qp *QuotaProvider) AssignQuota(uuid string) error {
 	if err := tagProjectTree(serverPath, pid); err != nil {
 		return fmt.Errorf("quota: project setup (%s): %w", qp.fsType, err)
 	}
+	// Logged, not returned: the server's own tree is counted either way.
+	if err := qp.TagBackupDir(uuid); err != nil {
+		log.Printf("%v", err)
+	}
+	return nil
+}
 
+// TagBackupDir charges the server's node-local backup folder to the server's
+// project only while Core shares the server's quota with backups. Otherwise
+// it is a separate budget, held by Core's per-server backup quota: charged to
+// the server, the archives filled its disk limit, the kernel refused its world
+// saves and the disk guard stopped it. Archives an older node tagged come off
+// here too, so the first backup after the update frees them.
+//
+// The folder is a flat list of archives, so the walk is short.
+func (qp *QuotaProvider) TagBackupDir(uuid string) error {
+	if !qp.available {
+		return nil
+	}
+	var pid uint32
+	if backupShareQuota() {
+		pid = projectID(uuid)
+	}
+	dir := filepath.Join(qp.basePath, uuid, backupDirName)
+	if _, err := os.Lstat(dir); os.IsNotExist(err) {
+		return nil
+	}
+	if err := setProjectTree(dir, "", pid); err != nil {
+		return fmt.Errorf("quota: backup folder project (%s): %w", qp.fsType, err)
+	}
 	return nil
 }
 

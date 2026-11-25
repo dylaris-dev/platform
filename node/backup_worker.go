@@ -63,6 +63,47 @@ type BackupRunCommand struct {
 	// UploadCapMbit is the storage's own cap on what this run sends it, players
 	// or not. 0 (an older Core, or no cap) is none.
 	UploadCapMbit int64 `json:"uploadCapMbit"`
+	// ShareQuotaWithServer is Core's backup.share_quota_with_server: the
+	// node-local backup folder counts toward the server's own disk limit.
+	// false (an older Core, or the setting off) is a separate budget.
+	ShareQuotaWithServer bool `json:"shareQuotaWithServer"`
+}
+
+// backupShareQuotaMem holds the last ShareQuotaWithServer seen. One value for
+// the node: the setting is platform-wide.
+var backupShareQuotaMem atomic.Bool
+
+func backupShareQuotaPath() string { return filepath.Join(nodeSecretDir, "backup_share_quota") }
+
+// setBackupShareQuota records the share mode, on disk as well, so a restart
+// does not count the archives differently until the next backup arrives.
+func setBackupShareQuota(on bool) {
+	backupShareQuotaMem.Store(on)
+	if nodeSecretDir == "" {
+		return
+	}
+	var err error
+	if on {
+		err = os.WriteFile(backupShareQuotaPath(), nil, 0o600)
+	} else if err = os.Remove(backupShareQuotaPath()); os.IsNotExist(err) {
+		err = nil
+	}
+	if err != nil {
+		log.Printf("backup: share-quota mode not persisted: %v", err)
+	}
+}
+
+// backupShareQuota reports whether node-local archives count toward their
+// server's disk limit.
+func backupShareQuota() bool {
+	if backupShareQuotaMem.Load() {
+		return true
+	}
+	if nodeSecretDir == "" {
+		return false
+	}
+	_, err := os.Stat(backupShareQuotaPath())
+	return err == nil
 }
 
 // manifestEntryName is where the archive description lives inside the archive.
@@ -640,6 +681,7 @@ func (g *worldSaveGuard) watchCrashRestarts(rdb *redis.Client) (stop func()) {
 }
 
 func RunBackup(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *DockerManager, cmd BackupRunCommand) {
+	setBackupShareQuota(cmd.ShareQuotaWithServer)
 	// Not while the server moves off this node: the move's cleanup deletes the
 	// tree a node-local archive lands in, and the writer hold below fails a
 	// staging move. Checked before that hold so a refusal counts as no write.
@@ -1230,6 +1272,13 @@ func uploadBackup(ctx context.Context, sm *StorageManager, serverUUID string, in
 			return fmt.Errorf("create node-local backup dir: %w", err)
 		}
 		defer root.Close()
+		// Before the archive is created: a new folder inherits the server's
+		// project, and so does a file written into it.
+		if globalQuotaSet != nil {
+			if err := globalQuotaSet.TagBackupDir(serverUUID); err != nil {
+				log.Printf("%v", err)
+			}
+		}
 		full := nodeLocalArchiveName(key)
 		// The write side of the same problem openArchive describes: this
 		// directory is inside the tenant's own bind mount, so O_CREATE|O_TRUNC

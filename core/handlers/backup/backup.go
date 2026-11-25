@@ -1366,6 +1366,11 @@ func (h *BackupHandler) startBackupRun(ctx context.Context, job *models.BackupJo
 	if objectStorage {
 		payload["upload"] = services.BackupUploadMultipart
 	}
+	// Platform-wide, so sent on every run, not only node-local ones: the node
+	// keeps the last value for its disk accounting. An older node ignores it.
+	if services.ShareBackupQuotaWithServer(h.d.Store) {
+		payload["shareQuotaWithServer"] = true
+	}
 	// The storage's own cap, applied by the node to every byte it sends there,
 	// players or not. An older node ignores the field.
 	if storage.UploadCapMbit != nil {

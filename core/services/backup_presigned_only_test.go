@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/netip"
 	"strings"
 	"testing"
@@ -98,6 +99,8 @@ func (f *transferFakeStore) GetSetting(key string) (string, error) {
 		return "s3", nil
 	case SettingBackupDefaultUserQuota:
 		return f.quotaGB, nil
+	case "backup.share_quota_with_server":
+		return fmt.Sprintf("%t", f.shareQuota), nil
 	}
 	return "", nil
 }
@@ -380,6 +383,37 @@ func TestDispatch_ATenantBucketAsksTheNodeToGuardItsTransfers(t *testing.T) {
 			// only; an unguarded one has nothing to widen.
 			if _, got := cmd["allowPrivate"]; got != tc.want {
 				t.Fatalf("allowPrivate present = %v, want %v: %s", got, tc.want, cmds[0])
+			}
+		})
+	}
+}
+
+// B06: the node counts its node-local backup folder toward the server's disk
+// limit only when the platform shares the quota, so every run tells it. Sent
+// on any storage: the setting is platform-wide and the node keeps the last
+// value. Absent means a separate budget, as an older Core implies.
+func TestDispatch_TellsTheNodeWhetherBackupsShareTheServerQuota(t *testing.T) {
+	for _, share := range []bool{false, true} {
+		t.Run(fmt.Sprintf("share=%t", share), func(t *testing.T) {
+			st := newTransferFakeStore()
+			st.storage = ownedConnectionStorage()
+			st.shareQuota = share
+			st.servers[100].UUID = "srv-uuid"
+			rdb := heartbeatRedis(t, map[string]string{"node-hosting": presignedMultipartSince})
+			b := transferScheduler(st, &fakeMultipartStorage{}, rdb)
+			if err := b.dispatch(context.Background(), models.BackupJob{ID: 10, ServerID: 100, Schedule: "every 1d"}); err != nil {
+				t.Fatalf("dispatch: %v", err)
+			}
+			cmds := dispatchedCommands(t, rdb, "node-hosting")
+			if len(cmds) != 1 {
+				t.Fatalf("commands = %d, want 1", len(cmds))
+			}
+			var cmd map[string]interface{}
+			if err := json.Unmarshal([]byte(cmds[0]), &cmd); err != nil {
+				t.Fatal(err)
+			}
+			if got := cmd["shareQuotaWithServer"] == true; got != share {
+				t.Fatalf("shareQuotaWithServer = %v, want %v: %s", cmd["shareQuotaWithServer"], share, cmds[0])
 			}
 		})
 	}

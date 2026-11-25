@@ -53,7 +53,7 @@ func TestWalkProjectTreeNeverLeavesTheTree(t *testing.T) {
 			aIno := inodeOf(t, filepath.Join(tree, "a"))
 			outIno := map[uint64]string{inodeOf(t, outside): "victim", inodeOf(t, filepath.Join(outside, "save.dat")): "victim/save.dat"}
 			seen := map[uint64]bool{}
-			err := walkProjectTree(tree, func(fd int, dir bool) error {
+			err := walkProjectTree(tree, "", func(fd int, dir bool) error {
 				var st syscall.Stat_t
 				if err := syscall.Fstat(fd, &st); err != nil {
 					return err
@@ -123,7 +123,7 @@ func TestWalkProjectTreeStopsAtTheDepthCap(t *testing.T) {
 				}
 			}
 			visits := 0
-			err := walkProjectTree(root, func(int, bool) error { visits++; return nil })
+			err := walkProjectTree(root, "", func(int, bool) error { visits++; return nil })
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("err = %v, want error %v", err, tc.wantErr)
 			}
@@ -131,5 +131,68 @@ func TestWalkProjectTreeStopsAtTheDepthCap(t *testing.T) {
 				t.Fatalf("visited %d entries, want %d", visits, tc.wantVisits)
 			}
 		})
+	}
+}
+
+// B06: the server's tag walk leaves its node-local backup folder alone, so the
+// archives are not charged to the server's project; TagBackupDir decides that
+// folder on its own. Only the top-level folder: a tenant's own directory of
+// that name deeper in the tree is theirs and counts.
+func TestTagWalkSkipsTheBackupFolder(t *testing.T) {
+	root := t.TempDir()
+	backups := filepath.Join(root, backupDirName)
+	nested := filepath.Join(root, "world", backupDirName)
+	for _, d := range []string{backups, nested} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(d, "run-1.tar.gz"), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	seen := map[uint64]bool{}
+	if err := walkProjectTree(root, backupDirName, func(fd int, _ bool) error {
+		var st syscall.Stat_t
+		if err := syscall.Fstat(fd, &st); err != nil {
+			return err
+		}
+		seen[st.Ino] = true
+		return nil
+	}); err != nil {
+		t.Fatalf("walk: %v", err)
+	}
+	for _, tc := range []struct {
+		path string
+		want bool
+	}{
+		{backups, false},
+		{filepath.Join(backups, "run-1.tar.gz"), false},
+		{nested, true},
+		{filepath.Join(nested, "run-1.tar.gz"), true},
+	} {
+		if got := seen[inodeOf(t, tc.path)]; got != tc.want {
+			t.Errorf("%s visited = %v, want %v", tc.path, got, tc.want)
+		}
+	}
+}
+
+// pid 0 untags: without clearing inheritance, the next archive written into
+// the folder took the project back.
+func TestProjectAttrs(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		in   fsxattr
+		pid  uint32
+		dir  bool
+		want fsxattr
+	}{
+		{"tag a directory", fsxattr{}, 7, true, fsxattr{projid: 7, xflags: fsXflagProjinherit}},
+		{"tag a file", fsxattr{}, 7, false, fsxattr{projid: 7}},
+		{"untag a directory", fsxattr{projid: 7, xflags: fsXflagProjinherit | 1}, 0, true, fsxattr{xflags: 1}},
+		{"untag a file", fsxattr{projid: 7}, 0, false, fsxattr{}},
+	} {
+		if got := projectAttrs(tc.in, tc.pid, tc.dir); got != tc.want {
+			t.Errorf("%s: got %+v, want %+v", tc.name, got, tc.want)
+		}
 	}
 }

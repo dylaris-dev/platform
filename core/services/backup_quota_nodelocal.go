@@ -71,6 +71,15 @@ func NodeLocalBackupQuotaExceeded(st store.Store, reg *nodegrpc.Registry, srv *m
 	})
 }
 
+// ShareBackupQuotaWithServer reports backup.share_quota_with_server: the
+// node-local backup folder is folded into the server's own disk quota. Every
+// backup_run carries it, so the node counts the folder the same way; a node
+// told nothing (an older Core) keeps it a separate budget.
+func ShareBackupQuotaWithServer(st store.Store) bool {
+	v, _ := st.GetSetting("backup.share_quota_with_server")
+	return v == "true"
+}
+
 // nodeLocalBackupQuotaExceeded is the decision itself, with the node round-trip
 // behind `usage` so the boundary case (used == quota refuses, one byte under
 // does not) is testable without a live gRPC mesh. usage returns ok=false when
@@ -90,7 +99,7 @@ func nodeLocalBackupQuotaExceeded(st store.Store, srv *models.Server, storage *m
 	}
 	// "Folded into the server's main disk quota" - a different budget, not this
 	// one. Enforcing here too would charge the same bytes twice.
-	if v, _ := st.GetSetting("backup.share_quota_with_server"); v == "true" {
+	if ShareBackupQuotaWithServer(st) {
 		return false, 0, 0
 	}
 

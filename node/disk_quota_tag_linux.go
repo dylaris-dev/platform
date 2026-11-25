@@ -31,17 +31,24 @@ type fsxattr struct {
 
 // tagProjectTree sets project id pid on root and everything under it, and
 // project inheritance on every directory, so new files are charged to it too.
+//
+// The node-local backup folder at the top is left out: it is charged by
+// setProjectTree on its own (QuotaProvider.TagBackupDir), to the server only
+// while Core shares the server's quota with backups.
 func tagProjectTree(root string, pid uint32) error {
-	return walkProjectTree(root, func(fd int, dir bool) error {
+	return setProjectTree(root, backupDirName, pid)
+}
+
+// setProjectTree sets project id pid on root and everything under it except
+// the entry skip directly below root. pid 0 is no project: inheritance comes
+// off as well, so new files stay uncharged.
+func setProjectTree(root, skip string, pid uint32) error {
+	return walkProjectTree(root, skip, func(fd int, dir bool) error {
 		var fa fsxattr
 		if err := fsxattrIoctl(fd, fsIocFsgetxattr, &fa); err != nil {
 			return fmt.Errorf("get attributes: %w", err)
 		}
-		want := fa
-		want.projid = pid
-		if dir {
-			want.xflags |= fsXflagProjinherit
-		}
+		want := projectAttrs(fa, pid, dir)
 		if want == fa {
 			return nil
 		}
@@ -52,6 +59,20 @@ func tagProjectTree(root string, pid uint32) error {
 	})
 }
 
+// projectAttrs is fa with project pid, inherited by a directory's new entries
+// unless pid is 0.
+func projectAttrs(fa fsxattr, pid uint32, dir bool) fsxattr {
+	fa.projid = pid
+	if dir {
+		if pid != 0 {
+			fa.xflags |= fsXflagProjinherit
+		} else {
+			fa.xflags &^= fsXflagProjinherit
+		}
+	}
+	return fa
+}
+
 func fsxattrIoctl(fd int, req uintptr, fa *fsxattr) error {
 	if _, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd), req, uintptr(unsafe.Pointer(fa))); errno != 0 {
 		return errno
@@ -60,7 +81,8 @@ func fsxattrIoctl(fd int, req uintptr, fa *fsxattr) error {
 }
 
 // walkProjectTree calls visit with an open fd for root and for every
-// directory and regular file below it, on root's filesystem.
+// directory and regular file below it, on root's filesystem, except the
+// entry named skip directly below root and everything in it.
 //
 // The tree belongs to a tenant whose server is running, and the walk runs as
 // root. Every entry is opened relative to its parent's fd with O_NOFOLLOW and
@@ -72,7 +94,7 @@ func fsxattrIoctl(fd int, req uintptr, fa *fsxattr) error {
 //
 // Like chattr -R, an entry that fails is skipped and the walk goes on; the
 // first failure and the count come back as the error.
-func walkProjectTree(root string, visit func(fd int, dir bool) error) error {
+func walkProjectTree(root, skip string, visit func(fd int, dir bool) error) error {
 	fd, err := unix.Open(root, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return fmt.Errorf("open %s: %w", root, err)
@@ -82,7 +104,7 @@ func walkProjectTree(root string, visit func(fd int, dir bool) error) error {
 		unix.Close(fd)
 		return fmt.Errorf("stat %s: %w", root, err)
 	}
-	w := &treeWalk{visit: visit, dev: st.Dev, root: root}
+	w := &treeWalk{visit: visit, dev: st.Dev, root: root, skip: skip}
 	w.dir(fd, ".", 0)
 	if w.failed > 0 {
 		return fmt.Errorf("%d entries not tagged, first: %w", w.failed, w.first)
@@ -103,6 +125,7 @@ type treeWalk struct {
 	visit  func(fd int, dir bool) error
 	dev    uint64
 	root   string
+	skip   string
 	failed int
 	first  error
 }
@@ -130,6 +153,9 @@ func (w *treeWalk) dir(dfd int, name string, depth int) {
 }
 
 func (w *treeWalk) entry(dfd int, name string, depth int) {
+	if depth == 1 && name == w.skip {
+		return
+	}
 	// O_PATH opens nothing: a symlink yields the link itself and a device is
 	// not handed to its driver. The real open below goes through this fd, so
 	// it reaches the inode just typed, whatever happens to the name meanwhile.

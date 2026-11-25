@@ -917,7 +917,7 @@ var serverDiskHeadroom = func(dir string) (uuid string, left int64, ok bool) {
 		return "", 0, false
 	}
 	less := streamedBefore(uuid)
-	return uuid, limit - less(dirSize(serverDir)), true
+	return uuid, limit - less(serverDiskBytes(serverDir, backupShareQuota())), true
 }
 
 // serverOfDir names the server directory, among the storage paths, that holds
