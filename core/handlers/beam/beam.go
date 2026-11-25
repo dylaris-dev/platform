@@ -3,6 +3,7 @@ package beam
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -34,6 +35,7 @@ import (
 	"dylaris-core/services/beamaccess"
 	"dylaris-core/services/demo"
 	"dylaris-core/services/redisacl"
+	"dylaris-core/store"
 )
 
 type BeamHandler struct {
@@ -259,7 +261,16 @@ func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 	// The operator's off switch. It used to be read only by the panel and by
 	// GetBeamConfig, so a disabled Beam kept minting tickets and the node, which
 	// never sees this setting, honoured them.
-	if v, _ := h.d.Store.GetSetting("beam.enabled"); v == "false" {
+	// Fail closed: an unreadable snapshot (a 2s load timeout during a DB
+	// stall) read as "" and minted while Beam was off. Only a key that was
+	// never saved means the default "enabled".
+	v, err := h.d.Store.GetSetting("beam.enabled")
+	if err != nil && !errors.Is(err, sql.ErrNoRows) && !errors.Is(err, store.ErrSettingNull) {
+		log.Printf("[beam] ticket refused: beam.enabled unreadable: %v", err)
+		httpx.SendJSONError(w, "Beam settings are temporarily unavailable, try again", http.StatusServiceUnavailable)
+		return
+	}
+	if v == "false" {
 		httpx.SendJSONError(w, "Beam is disabled", http.StatusForbidden)
 		return
 	}

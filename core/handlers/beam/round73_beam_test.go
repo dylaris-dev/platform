@@ -3,6 +3,7 @@ package beam
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http/httptest"
 	"testing"
@@ -48,6 +49,39 @@ func TestBeamTicketHonoursTheOffSwitch(t *testing.T) {
 		h := newBeamAccessHandler(beamTicketStore(t, map[string]string{"beam.enabled": c.enabled}))
 		if got := mintBeamTicket(t, h, "owner-id"); got != c.want {
 			t.Errorf("beam.enabled=%q: status %d, want %d", c.enabled, got, c.want)
+		}
+	}
+}
+
+type beamEnabledErrStore struct {
+	*beamAccessFakeStore
+	err error
+}
+
+func (s *beamEnabledErrStore) GetSetting(key string) (string, error) {
+	if key == "beam.enabled" {
+		return "", s.err
+	}
+	return s.beamAccessFakeStore.GetSetting(key)
+}
+
+// An unreadable settings snapshot read as "" and minted while Beam was off.
+// Only a key that was never saved means the default "enabled".
+func TestBeamTicketOffSwitchFailsClosed(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		err  error
+		want int
+	}{
+		{"never saved", sql.ErrNoRows, 200},
+		{"null row", store.ErrSettingNull, 200},
+		{"snapshot unreadable", context.DeadlineExceeded, 503},
+	} {
+		base := beamTicketStore(t, nil)
+		h := newBeamAccessHandler(base)
+		h.d.Store = &beamEnabledErrStore{base, c.err}
+		if got := mintBeamTicket(t, h, "owner-id"); got != c.want {
+			t.Errorf("%s: status %d, want %d", c.name, got, c.want)
 		}
 	}
 }
