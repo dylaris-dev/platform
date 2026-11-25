@@ -565,3 +565,37 @@ func dropSubServerStash(serverPath, sub string) {
 	defer root.Close()
 	dropStash(root, "."+sub+".oldjars")
 }
+
+// recoverStashesAtBoot puts back (or, for a sub-server that is gone, drops)
+// every stash under roots, once, before the command consumer starts. A stash
+// only survives a dead process, so nothing of this one can be using it. Left
+// to the next setup of that sub-server, one whose redelivery was refused
+// stayed until much later and then went back over everything changed since.
+func recoverStashesAtBoot(roots []string) {
+	for _, base := range roots {
+		// Storage another node also uses: a stash there may be its live setup.
+		if sharedWithAnotherNode(base) {
+			continue
+		}
+		servers, err := os.ReadDir(base)
+		if err != nil {
+			continue
+		}
+		for _, srv := range servers {
+			if !srv.IsDir() || strings.HasPrefix(srv.Name(), ".") {
+				continue
+			}
+			serverPath := filepath.Join(base, srv.Name())
+			entries, err := os.ReadDir(serverPath)
+			if err != nil {
+				continue
+			}
+			for _, e := range entries {
+				sub := strings.TrimSuffix(strings.TrimPrefix(e.Name(), "."), ".oldjars")
+				if e.IsDir() && sub != "" && "."+sub+".oldjars" == e.Name() {
+					recoverStrandedStash(serverPath, sub)
+				}
+			}
+		}
+	}
+}

@@ -473,3 +473,43 @@ func TestStashBeforeSetupRefusesOverAStrandedStash(t *testing.T) {
 		})
 	}
 }
+
+// A setup refused on redelivery left its stash, and recoverStrandedStash only
+// ran at the next setup of that sub-server, putting the dead attempt's copies
+// over everything changed since. Every stash is now recovered once at boot,
+// and the stash of a sub-server that no longer exists is dropped.
+func TestRecoverStashesAtBoot(t *testing.T) {
+	base := t.TempDir()
+	serverPath := filepath.Join(base, "11111111-2222-3333-4444-555555555555")
+	sub := filepath.Join(serverPath, "main")
+	writeTestFile(t, filepath.Join(sub, "server-old.jar"), "old jar")
+	writeTestFile(t, filepath.Join(sub, "world", "level.dat"), "world")
+	dead, err := stashServerJars(serverPath, "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, filepath.Join(sub, "server-new.jar"), "new jar")
+	dead.root.Close()
+	// The stash of a sub-server deleted or renamed away since.
+	writeTestFile(t, filepath.Join(serverPath, ".gone.oldjars", "gone", "old.jar"), "orphan")
+
+	recoverStashesAtBoot([]string{base})
+
+	for rel, want := range map[string]string{
+		"main/server-old.jar":        "old jar",
+		"main/server-new.jar":        "<missing>",
+		"main/world/level.dat":       "world",
+		".main.oldjars/.complete":    "<missing>",
+		".gone.oldjars/gone/old.jar": "<missing>",
+		"gone/old.jar":               "<missing>",
+	} {
+		if got := readTestFile(filepath.Join(serverPath, filepath.FromSlash(rel))); got != want {
+			t.Errorf("%s = %q, want %q", rel, got, want)
+		}
+	}
+	for _, d := range []string{".main.oldjars", ".gone.oldjars", "gone"} {
+		if _, err := os.Lstat(filepath.Join(serverPath, d)); !os.IsNotExist(err) {
+			t.Errorf("%s still there (err %v)", d, err)
+		}
+	}
+}

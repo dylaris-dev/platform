@@ -507,6 +507,10 @@ func main() {
 	// Before the consumer: a restore the queue redelivers after a restart must
 	// not budget its disk around the stage its killed run left behind.
 	runRestoreCleanup(storageMgr)
+	// After the restore cleanup, which puts back a sub-server a killed swap
+	// left only in its stash: one missing here would have its jar stash
+	// dropped. Before the consumer, so a redelivered setup finds none.
+	recoverStashesAtBoot(storageRoots(storageMgr))
 	// Before the consumer too: a spooled backup redelivered at boot read no
 	// policy and no spool dir and uploaded from the live tree, and clearing
 	// the spool after it started could delete the file it was writing.
