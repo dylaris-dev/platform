@@ -372,7 +372,7 @@ func (h *ServerModsHandler) VersionUpdate(w http.ResponseWriter, r *http.Request
 	if refuseInstallInPowerTransition(w, r, srv) {
 		return
 	}
-	if refuseWhileSwitchPending(w, r, h.d.Redis, srv) {
+	if refuseWhileSwitchPending(w, r, h.d.Store, h.d.Redis, srv) {
 		return
 	}
 	loader := strings.ToLower(strings.TrimSpace(req.Loader))
@@ -911,7 +911,7 @@ func (h *ServerModsHandler) CopySubServer(w http.ResponseWriter, r *http.Request
 		httpx.SendJSONError(w, "The server is "+srv.Status+". Copy it once it has stopped: its world files are being written", http.StatusConflict)
 		return
 	}
-	if refuseWhileSwitchPending(w, r, h.d.Redis, srv) {
+	if refuseWhileSwitchPending(w, r, h.d.Store, h.d.Redis, srv) {
 		return
 	}
 	// A row still installing would be cloned with its attempt id, and the node

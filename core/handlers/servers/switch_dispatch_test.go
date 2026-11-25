@@ -180,3 +180,34 @@ func TestSwitchSubServerDispatchFailureKeepsThePendingUndoRecord(t *testing.T) {
 		})
 	}
 }
+
+// R45-01: a node older than switchUndoForgetSince lands a switch without
+// deleting its record, so the record gets the short TTL it had before and does
+// not hold the server for a day.
+func TestSwitchSubServerUndoRecordTTLFollowsTheNodeRelease(t *testing.T) {
+	for _, tc := range []struct {
+		name, release string
+		max           time.Duration
+	}{
+		{"node forgets the record on landing", switchUndoForgetSince, services.SwitchUndoTTL},
+		{"no heartbeat", "", services.SwitchUndoTTL},
+		{"node older than that", "2026.11.23", services.SwitchUndoShortTTL},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, fs, rdb := newInstallTest(t)
+			fs.server.Status = "offline"
+			h.d.Store = &switchDispatchStore{installFakeStore: fs}
+			ctx := context.Background()
+			if tc.release != "" {
+				hb, _ := json.Marshal(services.NodeHeartbeat{ReleaseVersion: tc.release})
+				rdb.Set(ctx, "dylaris:discovery:node-lib", hb, time.Hour)
+			}
+			if rec := switchTo(h, "lobby"); rec.Code >= 300 {
+				t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+			}
+			if ttl := rdb.TTL(ctx, services.SwitchUndoKey("srv-uuid")).Val(); ttl <= tc.max-time.Minute || ttl > tc.max {
+				t.Errorf("undo record TTL = %v, want %v", ttl, tc.max)
+			}
+		})
+	}
+}

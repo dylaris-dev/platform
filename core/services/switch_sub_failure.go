@@ -43,6 +43,12 @@ func SwitchUndoKey(serverUUID string) string {
 // that is never delivered.
 const SwitchUndoTTL = 24 * time.Hour
 
+// SwitchUndoShortTTL is the record's lifetime for a node release that neither
+// deletes it on landing nor reports a refusal: only the adoption hold reads it
+// then, and the full TTL kept setup, reinstall, version move and copy refused
+// for a day after every switch that landed.
+const SwitchUndoShortTTL = 10 * time.Minute
+
 // SwitchUndo is the state a switch to Target is about to overwrite.
 type SwitchUndo struct {
 	Target           string `json:"target"`
@@ -100,28 +106,29 @@ func SwitchPending(ctx context.Context, rdb *redis.Client, serverUUID string) bo
 // chained over a pending one, and returns what puts the key back if the
 // dispatch fails: the record it replaced, with its remaining TTL. Deleting the
 // key instead dropped a pending switch's record, and that switch's refusal was
-// then put back with no run intent.
-func WriteSwitchUndo(ctx context.Context, rdb *redis.Client, serverUUID string, next SwitchUndo) (rollback func(context.Context)) {
+// then put back with no run intent. ttl is SwitchUndoTTL, or SwitchUndoShortTTL
+// for a node that does not end the record.
+func WriteSwitchUndo(ctx context.Context, rdb *redis.Client, serverUUID string, next SwitchUndo, ttl time.Duration) (rollback func(context.Context)) {
 	if rdb == nil {
 		return func(context.Context) {}
 	}
 	key := SwitchUndoKey(serverUUID)
 	prev, perr := rdb.Get(ctx, key).Result()
-	ttl := rdb.PTTL(ctx, key).Val()
+	prevTTL := rdb.PTTL(ctx, key).Val()
 	rec, err := json.Marshal(ChainSwitchUndo(ctx, rdb, serverUUID, next))
 	if err != nil {
 		return func(context.Context) {}
 	}
-	rdb.Set(ctx, key, rec, SwitchUndoTTL)
+	rdb.Set(ctx, key, rec, ttl)
 	return func(ctx context.Context) {
 		if perr != nil {
 			rdb.Del(ctx, key)
 			return
 		}
-		if ttl < 0 {
-			ttl = 0 // no expiry
+		if prevTTL < 0 {
+			prevTTL = 0 // no expiry
 		}
-		rdb.Set(ctx, key, prev, ttl)
+		rdb.Set(ctx, key, prev, prevTTL)
 	}
 }
 

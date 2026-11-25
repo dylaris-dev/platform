@@ -3095,12 +3095,21 @@ func refuseSwitch(ctx context.Context, rdb *redis.Client, dm *DockerManager, uui
 // active_sub_server back: Core writes it before dispatching. Same shape as
 // reportCopyFailed, under the prefix the node's ACL already grants; an older
 // Core ignores the key until it expires.
+//
+// The report lives at least as long as Core's switch_undo record: one that
+// expired unread (Core down for longer than five minutes) left that record
+// pending until its own TTL, and Core refused setup, reinstall, version move
+// and copy meanwhile. An older Core writes no record, so five minutes as before.
 func reportSwitchFailed(ctx context.Context, rdb *redis.Client, uuid, target, previous, reason string) {
 	b, err := json.Marshal(map[string]string{"target": target, "previous": previous, "reason": reason})
 	if err != nil {
 		return
 	}
-	rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:switch_failed", uuid), b, 5*time.Minute)
+	ttl := 5 * time.Minute
+	if undo := rdb.PTTL(ctx, switchUndoKey(uuid)).Val(); undo > ttl {
+		ttl = undo
+	}
+	rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:switch_failed", uuid), b, ttl)
 }
 
 // reportRefusedStatus is the status write of a setup or reinstall refused

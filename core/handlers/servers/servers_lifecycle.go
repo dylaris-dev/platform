@@ -510,7 +510,7 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 	if refuseInstallInPowerTransition(w, r, srv) {
 		return
 	}
-	if refuseWhileSwitchPending(w, r, h.d.Redis, srv) {
+	if refuseWhileSwitchPending(w, r, h.d.Store, h.d.Redis, srv) {
 		return
 	}
 	// Before the cooldown below is claimed: a refusal here is answered by
@@ -1125,7 +1125,7 @@ func (h *ServerHandler) ReinstallServer(w http.ResponseWriter, r *http.Request) 
 	if refuseInstallInPowerTransition(w, r, srv) {
 		return
 	}
-	if refuseWhileSwitchPending(w, r, h.d.Redis, srv) {
+	if refuseWhileSwitchPending(w, r, h.d.Store, h.d.Redis, srv) {
 		return
 	}
 
@@ -1577,11 +1577,15 @@ func (h *ServerHandler) SwitchSubServer(w http.ResponseWriter, r *http.Request) 
 	// switch reports within moments, and the status watcher puts these columns
 	// back from this record. A write after the dispatch could land on top of
 	// that restore.
+	undoTTL := services.SwitchUndoTTL
+	if node != nil && nodeops.NodeReleaseOlderThan(r.Context(), h.d.Redis, node.Token, switchUndoForgetSince) {
+		undoTTL = services.SwitchUndoShortTTL
+	}
 	rollbackUndo := services.WriteSwitchUndo(r.Context(), h.d.Redis, srv.UUID, services.SwitchUndo{
 		Target: subName, Previous: srv.ActiveSubServer,
 		InstallerType: srv.InstallerType, MinecraftVersion: srv.MinecraftVersion, BuildNumber: srv.BuildNumber,
 		DesiredState: srv.DesiredState, At: time.Now().UnixNano(),
-	})
+	}, undoTTL)
 
 	if h.d.Queue != nil {
 		combinedJvmFlags := strings.TrimSpace(defaultJvmFlags + " " + strings.TrimSpace(srv.ExtraJvmFlags))
@@ -1736,15 +1740,25 @@ func refuseInstallInPowerTransition(w http.ResponseWriter, r *http.Request, srv 
 	return true
 }
 
+// switchUndoForgetSince is the node release that deletes Core's switch_undo
+// record once the switch lands (node/main.go forgetRecordFor) and reports a
+// refused one: the first platform release after 2026.11.23, which shipped
+// neither.
+const switchUndoForgetSince = "2026.11.23.2"
+
 // refuseWhileSwitchPending answers a setup, reinstall, version move or copy
 // sent while a sub-server switch is still on its way to the node, and reports
 // true. A switch writes no status, so the stopped check let these through,
 // and a setup that overtook a switch lost the run intent from before it: when
 // both then failed, the reconciler started a server its owner had stopped
 // (R42-02, R44-01). The switch record ends when the switch lands, when Core
-// reads its refusal, or after SwitchUndoTTL.
-func refuseWhileSwitchPending(w http.ResponseWriter, r *http.Request, rdb *redis.Client, srv *models.Server) bool {
+// reads its refusal, or after SwitchUndoTTL. An older node ends it with
+// neither, so its server is not refused: the record then outlives the switch.
+func refuseWhileSwitchPending(w http.ResponseWriter, r *http.Request, st store.Store, rdb *redis.Client, srv *models.Server) bool {
 	if !services.SwitchPending(r.Context(), rdb, srv.UUID) {
+		return false
+	}
+	if node, err := st.GetNodeByID(srv.NodeID); err == nil && nodeops.NodeReleaseOlderThan(r.Context(), rdb, node.Token, switchUndoForgetSince) {
 		return false
 	}
 	httpx.SendJSONErrorCode(w, "A sub-server switch is still being applied. Try again in a moment.", "switch_pending", http.StatusConflict)

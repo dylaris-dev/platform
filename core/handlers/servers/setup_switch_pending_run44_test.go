@@ -2,6 +2,7 @@ package servers
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -24,11 +25,15 @@ func TestInstallsWaitForAPendingSwitch(t *testing.T) {
 	for _, c := range []struct {
 		name    string
 		undo    string
+		release string // the node's heartbeat release, "" for none
 		refused bool
 	}{
-		{"switch pending", `{"target":"main","previous":"old","desiredState":"stopped"}`, true},
-		{"switch overtaken by an earlier setup", `{"target":"main","previous":"old","overtaken":true}`, false},
-		{"switch landed or refused", "", false},
+		{"switch pending", `{"target":"main","previous":"old","desiredState":"stopped"}`, "", true},
+		{"switch pending, node on the release that forgets it", `{"target":"main","previous":"old","desiredState":"stopped"}`, switchUndoForgetSince, true},
+		// R45-01: an older node lands the switch and never deletes the record.
+		{"switch pending, node older than that", `{"target":"main","previous":"old","desiredState":"stopped"}`, "2026.11.23", false},
+		{"switch overtaken by an earlier setup", `{"target":"main","previous":"old","overtaken":true}`, "", false},
+		{"switch landed or refused", "", "", false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			check := func(what string, rec *httptest.ResponseRecorder, queued int64) {
@@ -48,6 +53,12 @@ func TestInstallsWaitForAPendingSwitch(t *testing.T) {
 			pending := func(rdb *redis.Client, uuid string) {
 				if c.undo != "" {
 					rdb.Set(ctx, services.SwitchUndoKey(uuid), c.undo, time.Hour)
+				}
+				if c.release != "" {
+					hb, _ := json.Marshal(services.NodeHeartbeat{ReleaseVersion: c.release})
+					for _, token := range []string{"node-lib", "tok"} {
+						rdb.Set(ctx, "dylaris:discovery:"+token, hb, time.Hour)
+					}
 				}
 			}
 
