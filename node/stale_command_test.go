@@ -1,11 +1,15 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"os"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
 )
 
 // A power action queued while the node was away runs on its return only if it
@@ -89,8 +93,8 @@ func TestExpressCommands(t *testing.T) {
 // worker keeps the server stopped: the start that was queued first is dropped.
 func TestStartOvertakenByAStop(t *testing.T) {
 	uuid := "srv-overtaken"
-	noteStop(uuid, 1000)
-	noteStop(uuid, 900) // an older stop does not move the mark back
+	noteStop(uuid, 1000, 0)
+	noteStop(uuid, 900, 0) // an older stop does not move the mark back
 	tests := []struct {
 		action string
 		issued int64
@@ -105,18 +109,60 @@ func TestStartOvertakenByAStop(t *testing.T) {
 		{"update_resources", 1, false},
 	}
 	for _, tt := range tests {
-		if got := overtakenByStop(tt.action, uuid, tt.issued); got != tt.want {
+		if got := overtakenByStop(tt.action, uuid, tt.issued, 0); got != tt.want {
 			t.Errorf("%s issued %d: %v, want %v", tt.action, tt.issued, got, tt.want)
 		}
 	}
-	if overtakenByStop("start", "another-server", 1) {
+	if overtakenByStop("start", "another-server", 1, 0) {
 		t.Error("one server's stop dropped another server's start")
 	}
 	b, err := os.ReadFile("main.go")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(b), "} else if overtakenByStop(cmd.Action, cmd.Config.UUID, cmd.IssuedAt) {") {
+	if !strings.Contains(string(b), "} else if overtakenByStop(cmd.Action, cmd.Config.UUID, cmd.IssuedAt, cmd.IssuedAtMs) {") {
 		t.Error("processCommand no longer drops a start a stop has overtaken")
+	}
+}
+
+// A kill in the same second as a start or restart left the bring-up running:
+// the order was read from whole seconds. With milliseconds on both sides the
+// order is known; an older Core without them keeps the seconds rule.
+func TestStopOrderUsesMillisecondsWhenBothCarryThem(t *testing.T) {
+	tests := []struct {
+		name            string
+		stopS, stopMs   int64
+		startS, startMs int64
+		want            bool
+	}{
+		{"same second, kill later by ms", 2000, 2000400, 2000, 2000100, true},
+		{"same second, kill earlier by ms", 2000, 2000100, 2000, 2000400, false},
+		{"same millisecond", 2000, 2000100, 2000, 2000100, false},
+		{"old core stop, same second", 2000, 0, 2000, 2000100, false},
+		{"old core start, same second", 2000, 2000400, 2000, 0, false},
+		{"old core both, later second", 2001, 0, 2000, 0, true},
+		{"start without a stamp", 2000, 2000400, 0, 0, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			uuid := "srv-ms-" + tt.name
+			noteStop(uuid, tt.stopS, tt.stopMs)
+			t.Cleanup(func() { lastStopIssued.Delete(uuid) })
+			if got := overtakenByStop("start", uuid, tt.startS, tt.startMs); got != tt.want {
+				t.Errorf("overtakenByStop = %v, want %v", got, tt.want)
+			}
+			cmd := NodeCommand{Action: "restart", IssuedAt: tt.startS, IssuedAtMs: tt.startMs}
+			cmd.Config.UUID = uuid
+			if got := abandonedForStop(context.Background(), redis.NewClient(&redis.Options{Addr: miniredis.RunT(t).Addr()}), cmd); got != tt.want {
+				t.Errorf("abandonedForStop = %v, want %v", got, tt.want)
+			}
+		})
+	}
+	uuid := "srv-ms-monotonic"
+	t.Cleanup(func() { lastStopIssued.Delete(uuid) })
+	noteStop(uuid, 2000, 2000400)
+	noteStop(uuid, 2000, 2000100) // an older kill does not move the mark back
+	if !overtakenByStop("start", uuid, 2000, 2000300) {
+		t.Error("an older kill moved the millisecond mark back")
 	}
 }

@@ -69,44 +69,61 @@ func isKillCommand(payload []byte) bool {
 // begun was queued. Stop and kill run on workers of their own, so one can run
 // before a start that was queued earlier and is still waiting for a worker; the
 // start then brought the server back up against the user's last click.
-var lastStopIssued sync.Map // uuid -> int64
+var lastStopIssued sync.Map // uuid -> stopMark
+
+// stopMark keeps seconds and milliseconds as separate maxima: an older Core
+// stamps no milliseconds, and its seconds must not be compared against another
+// command's milliseconds.
+type stopMark struct{ s, ms int64 }
 
 // noteStop records a stop or kill that is being carried out.
-func noteStop(uuid string, issuedAt int64) {
+func noteStop(uuid string, issuedAt, issuedAtMs int64) {
 	if issuedAt == 0 {
 		return
 	}
 	for {
-		old, loaded := lastStopIssued.LoadOrStore(uuid, issuedAt)
-		if !loaded || old.(int64) >= issuedAt {
+		old, loaded := lastStopIssued.LoadOrStore(uuid, stopMark{issuedAt, issuedAtMs})
+		if !loaded {
 			return
 		}
-		if lastStopIssued.CompareAndSwap(uuid, old, issuedAt) {
+		o := old.(stopMark)
+		n := stopMark{max(o.s, issuedAt), max(o.ms, issuedAtMs)}
+		if n == o || lastStopIssued.CompareAndSwap(uuid, old, n) {
 			return
 		}
 	}
 }
 
 // overtakenByStop reports a start or restart queued before a stop or kill that
-// has already run. The same second is left alone: which came first cannot be
-// told. A switch is not dropped: Core has already committed its sub-server, so
-// it still switches and only the start is left out (abandonedForStop).
-func overtakenByStop(action, uuid string, issuedAt int64) bool {
+// has already run. A tie is left alone: which came first cannot be told. A
+// switch is not dropped: Core has already committed its sub-server, so it still
+// switches and only the start is left out (abandonedForStop).
+func overtakenByStop(action, uuid string, issuedAt, issuedAtMs int64) bool {
 	switch action {
 	case "start", "restart":
 	default:
 		return false
 	}
-	return stopNotedAfter(uuid, issuedAt)
+	return stopNotedAfter(uuid, issuedAt, issuedAtMs)
 }
 
 // stopNotedAfter reports a stop or kill begun that was queued after issuedAt.
-func stopNotedAfter(uuid string, issuedAt int64) bool {
+// Milliseconds decide when both sides carry them, so a kill pressed in the same
+// second as a start still abandons it; an older Core falls back to seconds, the
+// same rule as clearTombstoneForCreate.
+func stopNotedAfter(uuid string, issuedAt, issuedAtMs int64) bool {
 	if issuedAt == 0 {
 		return false
 	}
 	v, ok := lastStopIssued.Load(uuid)
-	return ok && v.(int64) > issuedAt
+	if !ok {
+		return false
+	}
+	m := v.(stopMark)
+	if issuedAtMs > 0 && m.ms > 0 {
+		return m.ms > issuedAtMs
+	}
+	return m.s > issuedAt
 }
 
 // errStartAbandoned is a bring-up that left its new container stopped because
@@ -119,7 +136,7 @@ var errStartAbandoned = errors.New("start abandoned: a stop or kill came in whil
 // and the action then started the server against the user's last click. The
 // server is reported stopped, which is what it is.
 func abandonedForStop(ctx context.Context, rdb *redis.Client, cmd NodeCommand) bool {
-	if !stopNotedAfter(cmd.Config.UUID, cmd.IssuedAt) {
+	if !stopNotedAfter(cmd.Config.UUID, cmd.IssuedAt, cmd.IssuedAtMs) {
 		return false
 	}
 	log.Printf("%s for %s abandoned: a stop or kill queued after it arrived while it ran", cmd.Action, cmd.Config.UUID)

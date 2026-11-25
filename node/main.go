@@ -1673,8 +1673,8 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 	}
 
 	if cmd.Action == "stop" || cmd.Action == "kill" {
-		noteStop(cmd.Config.UUID, cmd.IssuedAt)
-	} else if overtakenByStop(cmd.Action, cmd.Config.UUID, cmd.IssuedAt) {
+		noteStop(cmd.Config.UUID, cmd.IssuedAt, cmd.IssuedAtMs)
+	} else if overtakenByStop(cmd.Action, cmd.Config.UUID, cmd.IssuedAt, cmd.IssuedAtMs) {
 		log.Printf("%s for %s dropped: a stop queued after it has already run", cmd.Action, cmd.Config.UUID)
 		return
 	}
@@ -1688,7 +1688,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		defer release()
 		// Again after the wait: a stop that began while this waited for the
 		// lock is newer than it, and checked before the wait it did not exist.
-		if overtakenByStop(cmd.Action, cmd.Config.UUID, cmd.IssuedAt) {
+		if overtakenByStop(cmd.Action, cmd.Config.UUID, cmd.IssuedAt, cmd.IssuedAtMs) {
 			log.Printf("%s for %s dropped: a stop queued after it ran while it waited", cmd.Action, cmd.Config.UUID)
 			return
 		}
@@ -1696,7 +1696,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		// brings the container up: a kill does not wait for the lock.
 		if cmd.Action != "stop" {
 			defer startGuard(cmd.Config.UUID, func() bool {
-				if !stopNotedAfter(cmd.Config.UUID, cmd.IssuedAt) {
+				if !stopNotedAfter(cmd.Config.UUID, cmd.IssuedAt, cmd.IssuedAtMs) {
 					return false
 				}
 				log.Printf("%s for %s leaves the container stopped: a stop or kill queued after it came in while it ran", cmd.Action, cmd.Config.UUID)

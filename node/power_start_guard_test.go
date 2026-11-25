@@ -30,7 +30,7 @@ func TestAKillDuringTheRecreateLeavesTheServerStopped(t *testing.T) {
 			var pulls atomic.Int32
 			dm, d := newSharedDaemon(t, "node-a", false, func() {
 				if pulls.Add(1) == c.pullN {
-					noteStop(uuid, 2001) // the kill, on its express worker
+					noteStop(uuid, 2001, 0) // the kill, on its express worker
 				}
 			})
 			storage := NewStorageManager(t.TempDir(), rdb)

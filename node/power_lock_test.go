@@ -328,7 +328,7 @@ func TestAKillDuringAStartKeepsTheServerDown(t *testing.T) {
 		if abandonedForStop(ctx, rdb, cmd) {
 			t.Fatalf("%s abandoned with no stop or kill", action)
 		}
-		noteStop(uuid, 2001) // the kill, on its express worker
+		noteStop(uuid, 2001, 0) // the kill, on its express worker
 		if !abandonedForStop(ctx, rdb, cmd) {
 			t.Fatalf("%s went on after a newer kill", action)
 		}
@@ -377,8 +377,8 @@ func TestASwitchOvertakenByAStopStillSwitches(t *testing.T) {
 		}
 	}
 	uuid := "switch-overtaken"
-	noteStop(uuid, 3001)
-	if overtakenByStop("switch_server", uuid, 3000) {
+	noteStop(uuid, 3001, 0)
+	if overtakenByStop("switch_server", uuid, 3000, 0) {
 		t.Error("processCommand drops a switch a later stop overtook")
 	}
 }

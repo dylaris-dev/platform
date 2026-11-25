@@ -565,7 +565,7 @@ func TestReconcileRedisEnvLeavesAStoppedServerStopped(t *testing.T) {
 			}
 			var onPull func()
 			if tc.killDuringRun {
-				onPull = func() { noteStop(sharedDaemonUUID, time.Now().Unix()) }
+				onPull = func() { noteStop(sharedDaemonUUID, time.Now().Unix(), 0) }
 			}
 			dm, d := newSharedDaemon(t, "node-a", tc.running, onPull)
 			d.env = []string{"REDIS_ADDR=10.0.0.1:6379"}
