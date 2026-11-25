@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"dylaris-pkg/storageplacement"
@@ -1507,18 +1508,47 @@ func (sm *StorageManager) withdrawnLocked(serverUUID string) bool {
 // access from before the move still pass Core's own withdrawal for up to
 // sftpRecheckInterval. A later until extends the hold, an earlier one does not
 // shorten it.
-func (sm *StorageManager) holdStagedWithdrawal(serverUUID string, until time.Time) {
+//
+// Only while the move is alive here: no abort counted since the caller read
+// aborts (migrateAbortCount when its move began) and archive still in place.
+// Checked under the lock abortStagedWithdrawal counts under, so an abort
+// either sees the hold and ends it or the hold sees the abort; a push that
+// finished on its open file after an abort took it again for 7h (R44-04).
+func (sm *StorageManager) holdStagedWithdrawal(serverUUID string, until time.Time, aborts int64, archive string) bool {
 	if sm == nil {
-		return
+		return false
 	}
 	sm.movingMu.Lock()
 	defer sm.movingMu.Unlock()
+	if migrateAbortCount(serverUUID) != aborts {
+		return false
+	}
+	if st, err := os.Stat(archive); err != nil || st.IsDir() {
+		return false
+	}
 	if sm.staged == nil {
 		sm.staged = map[string]time.Time{}
 	}
 	if until.After(sm.staged[serverUUID]) {
 		sm.staged[serverUUID] = until
 	}
+	return true
+}
+
+// abortStagedWithdrawal counts an abort of the server's move, runs remove
+// (the archive's), and only then ends the hold: one taken between the count
+// and the remove is ended, one after the remove finds no archive.
+func (sm *StorageManager) abortStagedWithdrawal(serverUUID string, remove func()) {
+	c, _ := migrateAborts.LoadOrStore(serverUUID, new(atomic.Int64))
+	if sm != nil {
+		sm.movingMu.Lock()
+	}
+	c.(*atomic.Int64).Add(1)
+	if sm != nil {
+		sm.movingMu.Unlock()
+	}
+	remove()
+	sm.releaseStagedWithdrawal(serverUUID)
 }
 
 // releaseStagedWithdrawal ends holdStagedWithdrawal: the move ended on this

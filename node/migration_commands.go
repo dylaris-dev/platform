@@ -314,14 +314,25 @@ func handleMigrateOut(ctx context.Context, rdb *redis.Client, storage *StorageMa
 		}
 		return
 	}
+	// An earlier move's failed cleanup marked its archive's move over; this
+	// archive's is not.
+	os.Remove(migrationCleanupMarker(storagePath, serverUUID))
 	if err := os.Rename(partZip, destZip); err != nil {
 		log.Printf("migrate_out %s: cannot put the archive in place: %v", serverUUID, err)
 		setMigrationStatus(ctx, rdb, nodeToken, progressID, "error", "cannot put the archive in place")
 		return
 	}
 	// From here a write is in no copy. Held until an abort keeps the server
-	// here or the cleanup removes it, bounded like the archive itself.
-	storage.holdStagedWithdrawal(serverUUID, time.Now().Add(stagedArchiveMaxAge))
+	// here or the cleanup removes it, bounded like the archive itself. An
+	// abort since the check above found no archive to remove (R44-05).
+	if !storage.holdStagedWithdrawal(serverUUID, time.Now().Add(stagedArchiveMaxAge), aborts, destZip) {
+		log.Printf("migrate_out %s: the move was aborted while staging, dropping the archive", serverUUID)
+		if cur, _ := migrateOutLatest.Load(serverUUID); cur == run {
+			os.Remove(destZip)
+			os.Remove(migrationOriginPath(storagePath, serverUUID))
+		}
+		return
+	}
 
 	meta := migrationMeta{SHA256: sha, Size: size, SourceNodeID: nodeID, StagedAt: time.Now().Unix()}
 	metaJSON, _ := json.Marshal(meta)
@@ -785,6 +796,11 @@ func sweepStaleMigrationArchives(storage *StorageManager) {
 // with a staged archive here: the hold lived in memory, and a restart between
 // 'staged' and the end of the move gave stale sessions their writes back.
 // Dated by the archive like migrationInFlight. Run before any session opens.
+//
+// Not for an archive whose move is over (R44-06, R44-09): its cleanup ran
+// and failed partway, or the server has moved back here since, which marks
+// its copy live above the archive's date. The release on landing lived only
+// in memory.
 func resumeStagedWithdrawals(storage *StorageManager) {
 	for _, root := range storage.Paths() {
 		entries, err := os.ReadDir(filepath.Join(root, migrationStagingDir))
@@ -796,11 +812,37 @@ func resumeStagedWithdrawals(storage *StorageManager) {
 			if !ok || e.IsDir() || !validate.IsServerUUID(uuid) {
 				continue
 			}
-			if info, err := e.Info(); err == nil && time.Since(info.ModTime()) < stagedArchiveMaxAge {
-				storage.holdStagedWithdrawal(uuid, info.ModTime().Add(stagedArchiveMaxAge))
+			info, err := e.Info()
+			if err != nil || time.Since(info.ModTime()) >= stagedArchiveMaxAge {
+				continue
 			}
+			if _, err := os.Stat(migrationCleanupMarker(root, uuid)); err == nil || livedHereSince(storage.Paths(), uuid, info.ModTime()) {
+				continue
+			}
+			storage.holdStagedWithdrawal(uuid, info.ModTime().Add(stagedArchiveMaxAge), migrateAbortCount(uuid), filepath.Join(root, migrationStagingDir, e.Name()))
 		}
 	}
+}
+
+// livedHereSince reports whether a copy of the server on paths was marked
+// live after t: a landing or a storage move writes its clock as the mark.
+func livedHereSince(paths []string, serverUUID string, t time.Time) bool {
+	for _, p := range paths {
+		dir := filepath.Join(p, serverUUID)
+		if _, err := readServerRootFile(dir, storageMovedAwayMarker); err == nil {
+			continue
+		}
+		if gen, ok, _ := liveGeneration(dir); ok && gen > t.UnixNano() {
+			return true
+		}
+	}
+	return false
+}
+
+// migrationCleanupMarker is written in the staging dir when a migrate_cleanup
+// starts: the move is over, whatever of its archive a failure leaves.
+func migrationCleanupMarker(storagePath, serverUUID string) string {
+	return filepath.Join(storagePath, migrationStagingDir, serverUUID+".cleanup")
 }
 
 // handleMigrateAbort (source side) removes the staged archive and origin stamp
@@ -808,7 +850,6 @@ func resumeStagedWithdrawals(storage *StorageManager) {
 // node. The archive is a full copy of the server outside its disk quota, and
 // only the successful path's cleanup used to remove it.
 func handleMigrateAbort(storage *StorageManager, serverUUID string, issuedAt int64) {
-	c, _ := migrateAborts.LoadOrStore(serverUUID, new(atomic.Int64))
 	storagePath := storage.GetServerPath(serverUUID)
 	// Recorded before the count moves: a run that reads its baseline after
 	// the increment then reads this file, and one that read it before sees
@@ -819,25 +860,25 @@ func handleMigrateAbort(storage *StorageManager, serverUUID string, issuedAt int
 			log.Printf("migrate_abort %s: could not record the abort: %v", serverUUID, err)
 		}
 	}
-	c.(*atomic.Int64).Add(1)
-	// The server stays here. A run still staging keeps its own withdrawal
-	// until it sees the count move and drops its archive.
-	storage.releaseStagedWithdrawal(serverUUID)
-	if storagePath == "" {
-		return
-	}
-	if cur, ok := migrateOutLatest.Load(serverUUID); ok {
-		// The run may not have made the staging dir yet.
-		os.MkdirAll(filepath.Join(storagePath, migrationStagingDir), 0755)
-		if err := os.WriteFile(migrationAbortedPath(storagePath, serverUUID), []byte(*cur.(*string)), 0644); err != nil {
-			log.Printf("migrate_abort %s: could not record the abort: %v", serverUUID, err)
+	// The server stays here. A run still staging or pushing takes no hold
+	// once the count moved, and drops its archive.
+	storage.abortStagedWithdrawal(serverUUID, func() {
+		if storagePath == "" {
+			return
 		}
-	}
-	for _, p := range []string{stagedArchivePath(storagePath, serverUUID), migrationOriginPath(storagePath, serverUUID)} {
-		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
-			log.Printf("migrate_abort %s: could not remove %s: %v", serverUUID, p, err)
+		if cur, ok := migrateOutLatest.Load(serverUUID); ok {
+			// The run may not have made the staging dir yet.
+			os.MkdirAll(filepath.Join(storagePath, migrationStagingDir), 0755)
+			if err := os.WriteFile(migrationAbortedPath(storagePath, serverUUID), []byte(*cur.(*string)), 0644); err != nil {
+				log.Printf("migrate_abort %s: could not record the abort: %v", serverUUID, err)
+			}
 		}
-	}
+		for _, p := range []string{stagedArchivePath(storagePath, serverUUID), migrationOriginPath(storagePath, serverUUID)} {
+			if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+				log.Printf("migrate_abort %s: could not remove %s: %v", serverUUID, p, err)
+			}
+		}
+	})
 }
 
 // migrateAborts counts the aborts this node has run per server (uuid ->
@@ -1129,6 +1170,11 @@ func handleMigrateCleanup(ctx context.Context, rdb *redis.Client, storage *Stora
 		return
 	}
 	defer migrateInFlight.Delete(serverUUID)
+	// Before anything that can fail: boot must not take the hold again from
+	// an archive a failed cleanup leaves (resumeStagedWithdrawals).
+	if err := os.WriteFile(migrationCleanupMarker(storagePath, serverUUID), nil, 0644); err != nil && !os.IsNotExist(err) {
+		log.Printf("migrate_cleanup %s: could not mark the move over: %v", serverUUID, err)
+	}
 
 	// The container first. It was only stopped for the move and stayed behind:
 	// once Core set the server online for the target, this node's reconciler
@@ -1177,6 +1223,7 @@ func handleMigrateCleanup(ctx context.Context, rdb *redis.Client, storage *Stora
 	if err := os.Remove(originPath); err != nil && !os.IsNotExist(err) {
 		log.Printf("migrate_cleanup %s: could not remove origin stamp %s: %v", serverUUID, originPath, err)
 	}
+	os.Remove(migrationCleanupMarker(storagePath, serverUUID))
 
 	storage.RemoveServerPath(serverUUID)
 	// As the delete path does: the cached limit has no TTL, and a move back
@@ -1199,6 +1246,9 @@ func handleMigrateCleanup(ctx context.Context, rdb *redis.Client, storage *Stora
 // piece of the archive; Core completes the upload once we report "pushed".
 // Without them the archive goes up as one PUT, as an older Core expects.
 func handleMigratePushR2(ctx context.Context, rdb *redis.Client, storage *StorageManager, nodeToken, serverUUID, progressID, putURL string, partURLs []string, partSize int64) {
+	// Before the archive is looked at: an abort from here on ends the push's
+	// claim on the hold.
+	aborts := migrateAbortCount(serverUUID)
 	if putURL == "" && len(partURLs) == 0 {
 		log.Printf("migrate_push_r2 %s: missing presigned put url", serverUUID)
 		setMigrationStatus(ctx, rdb, nodeToken, progressID, "error", "missing push_r2 url")
@@ -1217,7 +1267,11 @@ func handleMigratePushR2(ctx context.Context, rdb *redis.Client, storage *Storag
 		return
 	}
 
-	touchStagedArchive(storage, storagePath, serverUUID)
+	if !touchStagedArchive(storage, storagePath, serverUUID, aborts) {
+		log.Printf("migrate_push_r2 %s: the move was aborted, not uploading", serverUUID)
+		setMigrationStatus(ctx, rdb, nodeToken, progressID, "error", "this move was cancelled")
+		return
+	}
 	log.Printf("migrate_push_r2 %s: uploading staged archive to R2 (%d parts)", serverUUID, len(partURLs))
 	var sent countingWriter
 	stopProgress := reportMigrationProgress(ctx, rdb, nodeToken, progressID, "pushing", sent.Total)
@@ -1242,22 +1296,30 @@ func handleMigratePushR2(ctx context.Context, rdb *redis.Client, storage *Storag
 	}
 
 	// The pull leg Core waits on next gets its own 6h, after this one's.
-	touchStagedArchive(storage, storagePath, serverUUID)
+	if !touchStagedArchive(storage, storagePath, serverUUID, aborts) {
+		log.Printf("migrate_push_r2 %s: the move was aborted while uploading", serverUUID)
+		setMigrationStatus(ctx, rdb, nodeToken, progressID, "error", "this move was cancelled")
+		return
+	}
 	setMigrationStatus(ctx, rdb, nodeToken, progressID, "pushed", "")
 	log.Printf("migrate_push_r2 %s: uploaded to R2", serverUUID)
 }
 
 // touchStagedArchive dates the staged archive and origin stamp from now, so
 // their age, which the restart guard and the boot sweep read, counts from the
-// archive's last use rather than from the end of staging.
-func touchStagedArchive(storage *StorageManager, storagePath, serverUUID string) {
+// archive's last use rather than from the end of staging. false: the move
+// was aborted since aborts was read, and nothing is touched.
+func touchStagedArchive(storage *StorageManager, storagePath, serverUUID string, aborts int64) bool {
 	now := time.Now()
-	storage.holdStagedWithdrawal(serverUUID, now.Add(stagedArchiveMaxAge))
+	if !storage.holdStagedWithdrawal(serverUUID, now.Add(stagedArchiveMaxAge), aborts, stagedArchivePath(storagePath, serverUUID)) {
+		return false
+	}
 	for _, p := range []string{stagedArchivePath(storagePath, serverUUID), migrationOriginPath(storagePath, serverUUID)} {
 		if err := os.Chtimes(p, now, now); err != nil && !os.IsNotExist(err) {
 			log.Printf("migrate_push_r2 %s: could not date %s: %v", serverUUID, p, err)
 		}
 	}
+	return true
 }
 
 // handleMigratePullR2 (target side) downloads the migration archive from a
