@@ -51,6 +51,12 @@ type BackupManifest struct {
 	// empty list means "there were none" - and the second is what makes the
 	// backup-then-install-then-restore case remove the row it has to remove.
 	Mods []BackupManifestMods `json:"mods"`
+	// Complete: every store read that names the covered sub-servers and their
+	// mods succeeded, so a sub-server missing from Installs and Mods was really
+	// not there. Only then may a restore treat absence as "not in the archive"
+	// and remove its rows (R45-03); false, and every manifest from before the
+	// field, keeps absence meaning "says nothing".
+	Complete bool `json:"complete,omitempty"`
 }
 
 // BackupManifestMods is the mod list of one sub-server.
@@ -135,13 +141,14 @@ func BuildBackupManifest(st backupManifestStore, serverID int, scope, release st
 		Mods:      []BackupManifestMods{},
 	}
 
-	subs := manifestScopeSubServers(st, serverID, scope)
+	subs, complete := manifestScopeSubServers(st, serverID, scope)
 	for _, sub := range subs {
 		if rec, err := st.GetSubServerInstall(serverID, sub); err == nil && rec != nil {
 			m.Installs = append(m.Installs, *rec)
 		}
 		rows, err := st.ListServerMods(serverID, sub)
 		if err != nil {
+			complete = false
 			continue
 		}
 		mods := make([]BackupManifestMod, 0, len(rows))
@@ -166,6 +173,7 @@ func BuildBackupManifest(st backupManifestStore, serverID int, scope, release st
 		}
 		m.Mods = append(m.Mods, BackupManifestMods{SubServer: sub, Mods: mods})
 	}
+	m.Complete = complete
 	return m
 }
 
@@ -177,13 +185,13 @@ func BuildBackupManifest(st backupManifestStore, serverID int, scope, release st
 // install records still has mods, while a freshly created one has a record and
 // no mods yet. Taking only one source would silently leave the other's
 // sub-servers undescribed, and an undescribed sub-server is one whose rows a
-// restore leaves untouched.
-func manifestScopeSubServers(st backupManifestStore, serverID int, scope string) []string {
+// restore leaves untouched. complete is false when either list failed.
+func manifestScopeSubServers(st backupManifestStore, serverID int, scope string) (out []string, complete bool) {
 	if scope != "" {
-		return []string{scope}
+		return []string{scope}, true
 	}
 	seen := map[string]bool{}
-	var out []string
+	complete = true
 	add := func(name string) {
 		if seen[name] {
 			return
@@ -195,13 +203,17 @@ func manifestScopeSubServers(st backupManifestStore, serverID int, scope string)
 		for _, in := range installs {
 			add(in.SubServerName)
 		}
+	} else {
+		complete = false
 	}
 	if names, err := st.ListServerModSubServers(serverID); err == nil {
 		for _, n := range names {
 			add(n)
 		}
+	} else {
+		complete = false
 	}
-	return out
+	return out, complete
 }
 
 // EncodeBackupManifest renders the manifest for the archive and the run row.

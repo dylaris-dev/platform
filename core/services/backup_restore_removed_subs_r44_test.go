@@ -44,10 +44,11 @@ func (f *removedSubsFakeStore) ReplaceServerMods(serverID int, sub string, mods 
 // must go with it, as on a sub-server delete; a scoped or overlay restore, a run
 // without a manifest, and the active sub-server leave the rows alone.
 func TestForgetSubServersRestoredAway(t *testing.T) {
-	manifest := func(scope string) string {
+	manifest := func(scope string, complete bool) string {
 		b, _ := json.Marshal(&BackupManifest{
 			Schema:   BackupManifestSchema,
 			Scope:    scope,
+			Complete: complete,
 			Installs: []models.SubServerInstall{{SubServerName: "survival"}},
 			Mods:     []BackupManifestMods{{SubServer: "survival", Mods: []BackupManifestMod{}}, {SubServer: "nether"}},
 		})
@@ -60,10 +61,13 @@ func TestForgetSubServersRestoredAway(t *testing.T) {
 		overlay  *bool
 		want     []string
 	}{
-		{"whole-server full restore", manifest(""), &no, []string{"creative"}},
-		{"whole-server restore from before the overlay column", manifest(""), nil, []string{"creative"}},
-		{"overlay restore", manifest(""), &yes, nil},
-		{"scoped restore", manifest("survival"), &no, nil},
+		{"whole-server full restore", manifest("", true), &no, []string{"creative"}},
+		{"whole-server restore from before the overlay column", manifest("", true), nil, []string{"creative"}},
+		// R45-03/R45-04: a manifest whose sub-server list a store error cut
+		// short, or one from before the field, cannot say creative was absent.
+		{"incomplete or legacy manifest", manifest("", false), &no, nil},
+		{"overlay restore", manifest("", true), &yes, nil},
+		{"scoped restore", manifest("survival", true), &no, nil},
 		{"no manifest", "", &no, nil},
 		{"unreadable manifest", "{not json", &no, nil},
 	} {

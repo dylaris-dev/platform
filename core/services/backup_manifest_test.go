@@ -2,6 +2,7 @@ package services
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -257,5 +258,57 @@ func TestRestoreMods_RestoredRowsAreConfirmedAndUnattributed(t *testing.T) {
 	}
 	if got.FileName != "sodium.jar" || got.TargetDir != "mods" {
 		t.Errorf("row = %+v, want the archived file name and target dir", got)
+	}
+}
+
+type failingManifestStore struct {
+	manifestFakeStore
+	failInstalls, failModSubs, failModsOf string
+}
+
+func (f *failingManifestStore) ListSubServerInstalls(id int) ([]models.SubServerInstall, error) {
+	if f.failInstalls != "" {
+		return nil, errors.New("db blip")
+	}
+	return f.manifestFakeStore.ListSubServerInstalls(id)
+}
+
+func (f *failingManifestStore) ListServerModSubServers(id int) ([]string, error) {
+	if f.failModSubs != "" {
+		return nil, errors.New("db blip")
+	}
+	return f.manifestFakeStore.ListServerModSubServers(id)
+}
+
+func (f *failingManifestStore) ListServerMods(id int, sub string) ([]models.ServerMod, error) {
+	if sub == f.failModsOf {
+		return nil, errors.New("db blip")
+	}
+	return f.manifestFakeStore.ListServerMods(id, sub)
+}
+
+// R45-03/R45-04: Complete is set only when every read that names the covered
+// sub-servers succeeded, because a restore deletes the rows of a sub-server a
+// complete whole-server manifest leaves out.
+func TestBuildBackupManifest_Complete(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		st   failingManifestStore
+		want bool
+	}{
+		{"every read succeeded", failingManifestStore{}, true},
+		{"install list failed", failingManifestStore{failInstalls: "x"}, false},
+		{"mod sub-server list failed", failingManifestStore{failModSubs: "x"}, false},
+		{"one sub-server's mods failed", failingManifestStore{failModsOf: "creative"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.st.manifestFakeStore = manifestFakeStore{
+				allInstall: []models.SubServerInstall{{SubServerName: "survival"}, {SubServerName: "creative"}},
+				modSubs:    []string{"survival"},
+			}
+			if got := BuildBackupManifest(&tc.st, 1, "", "test").Complete; got != tc.want {
+				t.Errorf("Complete = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }

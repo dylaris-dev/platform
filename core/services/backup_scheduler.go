@@ -1236,8 +1236,9 @@ func (b *BackupScheduler) restoreMods(runID, serverID int, overlay *bool) {
 // archive, so a sub-server created after the backup is gone from disk, and its
 // mod rows, install record and modpack snapshot would otherwise outlive it the
 // way DeleteSubServer exists to prevent (R44-03). Only a whole-server manifest
-// says which sub-servers the archive held; without one nothing is removed. The
-// active sub-server is kept: the node refuses a restore whose archive lacks it.
+// says which sub-servers the archive held, and only a Complete one says it of
+// the ones it leaves out; without that nothing is removed. The active
+// sub-server is kept: the node refuses a restore whose archive lacks it.
 func (b *BackupScheduler) forgetSubServersRestoredAway(runID, serverID int, overlay *bool) {
 	run, err := b.store.GetBackupRun(runID)
 	if err != nil || run == nil {
@@ -1248,6 +1249,10 @@ func (b *BackupScheduler) forgetSubServersRestoredAway(runID, serverID int, over
 	}
 	m, ok := DecodeBackupManifest(run.Manifest)
 	if !ok || m.Scope != "" {
+		return
+	}
+	if !m.Complete {
+		log.Printf("restore run %d: manifest sub-server list incomplete or legacy, keeping rows of sub-servers it does not name", runID)
 		return
 	}
 	srv, err := b.store.GetServerByID(serverID)
@@ -1261,7 +1266,9 @@ func (b *BackupScheduler) forgetSubServersRestoredAway(runID, serverID int, over
 	for _, entry := range m.Mods {
 		archived[entry.SubServer] = true
 	}
-	for _, sub := range manifestScopeSubServers(b.store, serverID, "") {
+	// A failed live read only lists fewer sub-servers, so it removes less.
+	live, _ := manifestScopeSubServers(b.store, serverID, "")
+	for _, sub := range live {
 		if !archived[sub] {
 			RemoveCopyTargetRows(b.store, srv, sub)
 		}
