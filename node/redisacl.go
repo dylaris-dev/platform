@@ -162,6 +162,30 @@ func saveNodeID(workdir, id string) error {
 	return writeFileAtomic(workdir, ".node_id", []byte(id))
 }
 
+// formerNodeIDsFile lists the ids an enrolment replaced, one per line. Only this
+// node writes it, in its own identity dir: main reads the replaced id before
+// enrolment, but a restart before storage init loses that read, and the old
+// id's beacon then counts as a peer's (R43-06).
+const formerNodeIDsFile = ".node_id.former"
+
+func recordFormerNodeID(workdir, id string) error {
+	ids := loadFormerNodeIDs(workdir)
+	for _, have := range ids {
+		if have == id {
+			return nil
+		}
+	}
+	return writeFileAtomic(workdir, formerNodeIDsFile, []byte(strings.Join(append(ids, id), "\n")+"\n"))
+}
+
+func loadFormerNodeIDs(workdir string) []string {
+	b, err := os.ReadFile(filepath.Join(workdir, formerNodeIDsFile))
+	if err != nil {
+		return nil
+	}
+	return strings.Fields(string(b))
+}
+
 // writeFileAtomic writes name in dir through a temp file in the same directory,
 // fsynced, then renamed over the old one, so a crash leaves the old content or
 // the new and never half of either. CreateTemp opens the file 0600, the mode

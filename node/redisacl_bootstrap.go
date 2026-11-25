@@ -318,6 +318,11 @@ func bootstrapSecretViaGRPC(ctx context.Context, allowIdentityChange bool) ([]by
 		// replaced identity, and no row was orphaned.
 		cached, _ := cachedNodeID(nodeSecretDir)
 		nodeID = res.AssignedId
+		if cached != "" && cached != res.AssignedId {
+			if werr := recordFormerNodeID(nodeSecretDir, cached); werr != nil {
+				log.Printf("redisacl: WARN failed to record replaced node id %s: %v", cached, werr)
+			}
+		}
 		if werr := saveNodeID(nodeSecretDir, res.AssignedId); werr != nil {
 			log.Printf("redisacl: WARN failed to persist assigned node id: %v", werr)
 		}

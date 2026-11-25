@@ -1,11 +1,16 @@
 package main
 
 import (
+	"bytes"
+	"context"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	pb "dylaris-proto/node"
 )
 
 func TestEvaluateBeacons(t *testing.T) {
@@ -395,6 +400,62 @@ func TestFormerIDsOf_IgnoresPeerIDInMarker(t *testing.T) {
 				t.Fatal(err)
 			}
 			got := formerIDsOf(tt.bootIDs)
+			if len(got) != len(tt.want) {
+				t.Errorf("formerIDsOf = %v, want %v", got, tt.want)
+			}
+			for _, id := range tt.want {
+				if !got[id] {
+					t.Errorf("formerIDsOf = %v, missing %s", got, id)
+				}
+			}
+		})
+	}
+}
+
+// R43-06/R43-07: the id an enrolment replaces lives only in main's bootNodeIDs
+// until NewStorageManager. A restart in between (the Redis ping loop has no
+// bound) must still read it as this node's former id, or its fresh beacon
+// counts as a peer for 24h. A peer's id in the shared marker still never does.
+func TestFormerIDsOf_SurvivesARestartAfterAReplacedIdentity(t *testing.T) {
+	tests := []struct {
+		name     string
+		cached   string
+		assigned string
+		want     []string
+	}{
+		{name: "identity replaced", cached: "node-old", assigned: "node-new", want: []string{"node-new", "node-old"}},
+		{name: "first pairing", assigned: "node-new", want: []string{"node-new"}},
+		{name: "re-confirmed", cached: "node-new", assigned: "node-new", want: []string{"node-new"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if tt.cached != "" {
+				if err := saveNodeID(dir, tt.cached); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.WriteFile(filepath.Join(dir, storageMarkerName), []byte("#node node-peer\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			secret := bytes.Repeat([]byte{0x5a}, 32)
+			assign := func(_ *pb.NodeAuth, stream pb.NodeService_NodeConnectServer) error {
+				return sendResult(stream, &pb.AuthResult{Ok: true, AssignedId: tt.assigned, NodeSecret: hex.EncodeToString(secret)})
+			}
+			useFakeCore(t, &fakeCore{script: []func(*pb.NodeAuth, pb.NodeService_NodeConnectServer) error{assign}}, dir)
+			t.Setenv("NODE_ID", "")
+			nodeID = tt.cached
+			if nodeID == "" {
+				nodeID = "the-hostname"
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if _, err := bootstrapSecretViaGRPC(ctx, true); err != nil {
+				t.Fatal(err)
+			}
+
+			// The restart: the boot ids are read again from disk.
+			got := formerIDsOf(nodeIdentities(dir))
 			if len(got) != len(tt.want) {
 				t.Errorf("formerIDsOf = %v, want %v", got, tt.want)
 			}

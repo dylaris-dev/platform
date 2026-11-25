@@ -56,13 +56,14 @@ var (
 )
 
 // formerIDsOf are the ids this node ran as: bootIDs, read from the identity
-// dir before enrolment could replace .node_id, plus the ones it holds now. Not
+// dir before enrolment could replace .node_id, the ones an enrolment recorded
+// as replaced (a restart since loses bootIDs), plus the ones it holds now. Not
 // the storage marker's #node lines: a peer whose STORAGE_PATHS also lists this
 // node's identity dir writes its own id into that marker, and its live beacon
 // then read as this node's leftover and was deleted (R42-07).
 func formerIDsOf(bootIDs []string) map[string]bool {
 	ids := map[string]bool{}
-	for _, id := range append(bootIDs, nodeIdentities(nodeSecretDir)...) {
+	for _, id := range append(append(bootIDs, loadFormerNodeIDs(nodeSecretDir)...), nodeIdentities(nodeSecretDir)...) {
 		ids[id] = true
 	}
 	return ids
