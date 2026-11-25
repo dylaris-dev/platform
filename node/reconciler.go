@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
@@ -45,6 +46,34 @@ type reconcileInfo struct {
 	lastRestart   time.Time
 	lastSeenAlive time.Time
 	streakStart   time.Time // when the current crash streak began; see crashWindow
+}
+
+// crashStreakResets carries clearRunBlockers' reset to the crash-restart
+// pass, whose tracker is held for the whole pass, PowerAction calls included.
+// A streak left over from before a deliberate start (the create's empty slot
+// crashing while its setup queued) cost the fresh server its restarts.
+var crashStreakResets sync.Map // uuid -> struct{}
+
+func takeCrashStreakReset(tracker map[string]*reconcileInfo, uuid string) {
+	if _, ok := crashStreakResets.LoadAndDelete(uuid); ok {
+		delete(tracker, uuid)
+	}
+}
+
+// neverSetUp reports whether uuid's directory exists but no setup has written
+// its .active_server: the container there is create's slot with no command,
+// which exits at once, so starting it only counts crashes against the setup.
+// The recreate pass holds the same rule through ActiveSubServer == "".
+func neverSetUp(storage *StorageManager, uuid string) bool {
+	dir := storage.GetServerDir(uuid)
+	if dir == "" {
+		return false
+	}
+	if _, err := os.Stat(dir); err != nil {
+		return false
+	}
+	_, err := readServerRootFile(dir, ".active_server")
+	return errors.Is(err, fs.ErrNotExist)
 }
 
 // nodeBusyKey marks a server this node is deliberately holding down while it
@@ -401,6 +430,7 @@ func StartReconciler(ctx context.Context, rdb *redis.Client, dm *DockerManager, 
 		defer mu.Unlock()
 
 		for _, c := range containers {
+			takeCrashStreakReset(tracker, c.UUID)
 			desiredKey := fmt.Sprintf("dylaris:server:%s:desired_state", c.UUID)
 			desired, err := rdb.Get(ctx, desiredKey).Result()
 			if err != nil {
@@ -429,6 +459,10 @@ func StartReconciler(ctx context.Context, rdb *redis.Client, dm *DockerManager, 
 
 			// Container is NOT running but desired_state is "online".
 			if serverPowerActive(c.UUID) || restartBlocked(ctx, rdb, storage, c.UUID) {
+				continue
+			}
+			if neverSetUp(storage, c.UUID) {
+				delete(tracker, c.UUID)
 				continue
 			}
 			statusKey := fmt.Sprintf("dylaris:server:%s:status", c.UUID)

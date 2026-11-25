@@ -241,6 +241,9 @@ func clearRunBlockers(ctx context.Context, rdb *redis.Client, uuid string) {
 	// reached the next start at once, and that start then read as a stop.
 	rdb.Del(ctx, fmt.Sprintf("dylaris:server:%s:reconcile_failed", uuid), stoppedByServerKey(uuid),
 		fmt.Sprintf("dylaris:server:%s:input", uuid))
+	// A streak kept after reconcile_failed is gone gave up on the next crash
+	// with no restart at all.
+	crashStreakResets.Store(uuid, struct{}{})
 }
 
 // serverInstallLocks order create, setup and reinstall of one server. Core
