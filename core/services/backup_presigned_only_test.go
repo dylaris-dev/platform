@@ -391,7 +391,8 @@ func TestDispatch_ATenantBucketAsksTheNodeToGuardItsTransfers(t *testing.T) {
 // B06: the node counts its node-local backup folder toward the server's disk
 // limit only when the platform shares the quota, so every run tells it. Sent
 // on any storage: the setting is platform-wide and the node keeps the last
-// value. Absent means a separate budget, as an older Core implies.
+// value. Sent as false too: an absent field is an older Core, which the node
+// must keep charging to the server.
 func TestDispatch_TellsTheNodeWhetherBackupsShareTheServerQuota(t *testing.T) {
 	for _, share := range []bool{false, true} {
 		t.Run(fmt.Sprintf("share=%t", share), func(t *testing.T) {
@@ -412,7 +413,7 @@ func TestDispatch_TellsTheNodeWhetherBackupsShareTheServerQuota(t *testing.T) {
 			if err := json.Unmarshal([]byte(cmds[0]), &cmd); err != nil {
 				t.Fatal(err)
 			}
-			if got := cmd["shareQuotaWithServer"] == true; got != share {
+			if got, ok := cmd["shareQuotaWithServer"].(bool); !ok || got != share {
 				t.Fatalf("shareQuotaWithServer = %v, want %v: %s", cmd["shareQuotaWithServer"], share, cmds[0])
 			}
 		})

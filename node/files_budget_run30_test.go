@@ -55,8 +55,8 @@ func TestStreamedUploadBytesCountOnceAgainstTheServerLimit(t *testing.T) {
 				globalStorageMgr = NewStorageManager(root, rdb)
 				dir = globalStorageMgr.GetServerDir(uuid)
 				// What the server is charged: its node-local backups (the
-				// mesh fixture has one) are a separate budget.
-				base = serverDiskBytes(dir, false)
+				// mesh fixture has one) count only in share mode.
+				base = serverDiskBytes(dir, backupShareQuota())
 				ctx := context.Background()
 				recordDiskLimit(ctx, rdb, uuid, limitMB)
 				rdb.Set(ctx, diskGaugeKey(uuid), `{"total":0,"limit":1048576}`, 10*time.Minute)

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -17,7 +18,7 @@ func TestDuDiskUsageCountsBackupsOnlyWhenShared(t *testing.T) {
 	prevNodeID, prevMgr, prevSecret := nodeID, globalStorageMgr, nodeSecretDir
 	t.Cleanup(func() {
 		nodeID, globalStorageMgr, nodeSecretDir = prevNodeID, prevMgr, prevSecret
-		backupShareQuotaMem.Store(false)
+		backupShareQuotaMem.Store(0)
 	})
 	nodeID = "node-1"
 
@@ -39,22 +40,34 @@ func TestDuDiskUsageCountsBackupsOnlyWhenShared(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	on, off := true, false
 	for _, tc := range []struct {
 		name       string
-		share      bool
-		restart    bool // the in-memory mode is lost, the persisted one is not
+		share      []*bool // the runs Core sent, in order; nil is an older Core
+		restart    bool    // the in-memory mode is lost, the persisted one is not
 		wantBackup bool
 	}{
-		{"separate budget (default, older Core)", false, false, false},
-		{"shared with the server", true, false, true},
-		{"shared, after a node restart", true, true, true},
-		{"separate again after sharing", false, true, false},
+		// An older Core never sends the field and still skips its own per-server
+		// cap in share mode, so the archives stay charged to the server, as
+		// before the field existed.
+		{"never told (older Core)", []*bool{nil}, false, true},
+		{"never told, after a node restart", []*bool{nil}, true, true},
+		{"separate budget", []*bool{&off}, false, false},
+		{"separate budget, after a node restart", []*bool{&off}, true, false},
+		{"shared with the server", []*bool{&on}, false, true},
+		{"shared, after a node restart", []*bool{&on}, true, true},
+		{"separate again after sharing", []*bool{&on, &off}, true, false},
+		{"an older Core leaves an explicit separate budget alone", []*bool{&off, nil}, true, false},
+		{"an older Core leaves an explicit share alone", []*bool{&on, nil}, false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			nodeSecretDir = t.TempDir()
-			setBackupShareQuota(tc.share)
+			backupShareQuotaMem.Store(0)
+			for _, s := range tc.share {
+				setBackupShareQuota(s)
+			}
 			if tc.restart {
-				backupShareQuotaMem.Store(false)
+				backupShareQuotaMem.Store(0)
 			}
 			usage := duDiskUsage(ctx, rdb, uuid)
 			if usage == nil {
@@ -70,17 +83,22 @@ func TestDuDiskUsageCountsBackupsOnlyWhenShared(t *testing.T) {
 func TestBackupRunCommandCarriesShareQuota(t *testing.T) {
 	for _, tc := range []struct {
 		raw  string
-		want bool
+		want string
 	}{
-		{`{"runId":1}`, false}, // an older Core sends nothing: separate budget
-		{`{"runId":1,"shareQuotaWithServer":true}`, true},
+		{`{"runId":1}`, "absent"}, // an older Core: must stay distinguishable from false
+		{`{"runId":1,"shareQuotaWithServer":false}`, "false"},
+		{`{"runId":1,"shareQuotaWithServer":true}`, "true"},
 	} {
 		var cmd BackupRunCommand
 		if err := json.Unmarshal([]byte(tc.raw), &cmd); err != nil {
 			t.Fatal(err)
 		}
-		if cmd.ShareQuotaWithServer != tc.want {
-			t.Errorf("%s: ShareQuotaWithServer = %v, want %v", tc.raw, cmd.ShareQuotaWithServer, tc.want)
+		got := "absent"
+		if cmd.ShareQuotaWithServer != nil {
+			got = fmt.Sprintf("%t", *cmd.ShareQuotaWithServer)
+		}
+		if got != tc.want {
+			t.Errorf("%s: ShareQuotaWithServer = %s, want %s", tc.raw, got, tc.want)
 		}
 	}
 }

@@ -65,30 +65,47 @@ type BackupRunCommand struct {
 	UploadCapMbit int64 `json:"uploadCapMbit"`
 	// ShareQuotaWithServer is Core's backup.share_quota_with_server: the
 	// node-local backup folder counts toward the server's own disk limit.
-	// false (an older Core, or the setting off) is a separate budget.
-	ShareQuotaWithServer bool `json:"shareQuotaWithServer"`
+	// A pointer because absent is not false: an older Core never sends it and,
+	// in share mode, skips its own per-server cap, so absent must keep the
+	// archives charged to the server. Only an explicit false is a separate
+	// budget.
+	ShareQuotaWithServer *bool `json:"shareQuotaWithServer"`
 }
+
+// Values of backupShareQuotaMem. 0 means not loaded yet: the persisted mode
+// decides.
+const (
+	backupShareQuotaOn  int32 = 1
+	backupShareQuotaOff int32 = 2
+)
 
 // backupShareQuotaMem holds the last ShareQuotaWithServer seen. One value for
 // the node: the setting is platform-wide.
-var backupShareQuotaMem atomic.Bool
+var backupShareQuotaMem atomic.Int32
 
 func backupShareQuotaPath() string { return filepath.Join(nodeSecretDir, "backup_share_quota") }
 
-// setBackupShareQuota records the share mode, on disk as well, so a restart
-// does not count the archives differently until the next backup arrives.
-func setBackupShareQuota(on bool) {
-	backupShareQuotaMem.Store(on)
+// backupShareQuotaOffMarker is the persisted content for an explicit separate
+// budget. Anything else, a missing file included, is share: until a Core has
+// said otherwise, the archives count as they did before the field existed.
+const backupShareQuotaOffMarker = "off"
+
+// setBackupShareQuota records the share mode Core sent, on disk as well, so a
+// restart does not count the archives differently until the next backup
+// arrives. nil (an older Core) changes nothing.
+func setBackupShareQuota(on *bool) {
+	if on == nil {
+		return
+	}
+	mode, content := backupShareQuotaOn, "on"
+	if !*on {
+		mode, content = backupShareQuotaOff, backupShareQuotaOffMarker
+	}
+	backupShareQuotaMem.Store(mode)
 	if nodeSecretDir == "" {
 		return
 	}
-	var err error
-	if on {
-		err = os.WriteFile(backupShareQuotaPath(), nil, 0o600)
-	} else if err = os.Remove(backupShareQuotaPath()); os.IsNotExist(err) {
-		err = nil
-	}
-	if err != nil {
+	if err := os.WriteFile(backupShareQuotaPath(), []byte(content), 0o600); err != nil {
 		log.Printf("backup: share-quota mode not persisted: %v", err)
 	}
 }
@@ -96,14 +113,17 @@ func setBackupShareQuota(on bool) {
 // backupShareQuota reports whether node-local archives count toward their
 // server's disk limit.
 func backupShareQuota() bool {
-	if backupShareQuotaMem.Load() {
+	switch backupShareQuotaMem.Load() {
+	case backupShareQuotaOn:
 		return true
-	}
-	if nodeSecretDir == "" {
+	case backupShareQuotaOff:
 		return false
 	}
-	_, err := os.Stat(backupShareQuotaPath())
-	return err == nil
+	if nodeSecretDir == "" {
+		return true
+	}
+	b, err := os.ReadFile(backupShareQuotaPath())
+	return err != nil || string(b) != backupShareQuotaOffMarker
 }
 
 // manifestEntryName is where the archive description lives inside the archive.
