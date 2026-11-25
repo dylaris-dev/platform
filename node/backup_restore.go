@@ -222,6 +222,19 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 	// The server comes back up only if it was running. Every failure after the
 	// stop returned without starting it again, and a success started it even
 	// when its owner had it stopped.
+	// The server's power lock from here until after the restart: a start,
+	// restart or switch already in the command stream ran beside the restore,
+	// brought the JVM up on the old tree, and the swap deleted it under it. A
+	// restore is a tree change and holds no install lock, so this keeps the
+	// lock order (waitServerPower); taken before wasRunning, so a restart in
+	// flight is done and read as running.
+	releasePower, powerOK := waitServerPower(ctx, cmd.ServerUUID)
+	if !powerOK {
+		stageCleanup()
+		failure = "the node is shutting down"
+		return
+	}
+	defer releasePower()
 	wasRunning := dm != nil && containerRunning(dm, cmd.ServerUUID)
 	if dm != nil {
 		log.Printf("Restore %d: stopping container %s", cmd.RunID, cmd.ServerUUID)

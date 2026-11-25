@@ -158,7 +158,8 @@ func tryLockServerPower(uuid string) (func(), bool) {
 //
 // Lock order for one server, always: tree change (enterTreeChangeOfServer /
 // waitTreeChangeOfServer) -> install (lockServerInstall) -> power. Setup,
-// reinstall, version move and sub-server delete take them in that order; the
+// reinstall, version move and sub-server delete take them in that order (a
+// restore: its tree-change mark, then power); the
 // power holders (serialisedActions, the reconciler, ReconcileRedisEnv) take
 // only the power lock and never wait on the other two, so nothing deadlocks.
 func waitServerPower(ctx context.Context, uuid string) (func(), bool) {
