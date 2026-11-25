@@ -288,25 +288,18 @@ func (qp *QuotaProvider) TagBackupDir(uuid string) error {
 	return nil
 }
 
-// RetagIfMoved re-tags the server's tree when its top level left the server's
-// project. A tenant container created before the seccomp profile (see
-// tenantSeccompProfile) can still change its files' project, and the quota
-// then stops counting them; the profile reaches it only on a recreate.
-func (qp *QuotaProvider) RetagIfMoved(uuid string) {
+// TagsMoved reports whether anything in the server's tree left its project;
+// see retagIfMoved. A walk error is logged: past a hit it is beside the point,
+// short of one it means entries went unread.
+func (qp *QuotaProvider) TagsMoved(uuid string) bool {
 	if !qp.available {
-		return
+		return false
 	}
-	serverPath := filepath.Join(qp.basePath, uuid)
-	pid := projectID(uuid)
-	// An error is not logged: a tree that cannot be read here fails the
-	// quota read and the tag walk too, which say so.
-	if moved, err := projectTagsMoved(serverPath, backupDirName, pid); err != nil || !moved {
-		return
+	moved, err := projectTagsMoved(filepath.Join(qp.basePath, uuid), backupDirName, projectID(uuid))
+	if err != nil && !moved {
+		log.Printf("quota: tag check %s: %v", uuid, err)
 	}
-	log.Printf("WARNING: quota: %s: the server's files left its quota project, re-tagging", uuid)
-	if err := tagProjectTree(serverPath, pid); err != nil {
-		log.Printf("quota: re-tag %s: %v", uuid, err)
-	}
+	return moved
 }
 
 // GetDiskUsage returns disk usage for a server via quota reporting.

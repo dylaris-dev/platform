@@ -198,17 +198,19 @@ func TestProjectAttrs(t *testing.T) {
 }
 
 // A tenant container created before the seccomp profile can still re-tag its
-// tree; the stats pass checks the server dir and each sub-server dir below it
-// and re-tags when one left the server's project or lost inheritance.
-func TestTopLevelTagsMoved(t *testing.T) {
+// tree, at any depth and file by file; the check reads every entry and
+// re-tags when one left the server's project or a directory lost inheritance.
+func TestTreeTagsMoved(t *testing.T) {
 	root := t.TempDir()
-	for _, d := range []string{"lobby/world", "survival", backupDirName} {
+	for _, d := range []string{"lobby/world/region", "survival", backupDirName} {
 		if err := os.MkdirAll(filepath.Join(root, d), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := os.WriteFile(filepath.Join(root, "eula.txt"), []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
+	for _, f := range []string{"eula.txt", "lobby/world/region/r.0.0.mca", backupDirName + "/a.tar.gz"} {
+		if err := os.WriteFile(filepath.Join(root, f), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	tagged := fsxattr{projid: 7, xflags: fsXflagProjinherit}
 	for _, tc := range []struct {
@@ -220,16 +222,21 @@ func TestTopLevelTagsMoved(t *testing.T) {
 		{"root untagged", map[string]fsxattr{"": {}}, true},
 		{"a sub-server moved to project 0", map[string]fsxattr{"survival": {xflags: fsXflagProjinherit}}, true},
 		{"a sub-server lost inheritance", map[string]fsxattr{"lobby": {projid: 7}}, true},
-		// The backup folder has its own budget, and deeper entries are the
-		// full walk's business.
-		{"backup folder untagged", map[string]fsxattr{backupDirName: {}}, false},
-		{"deeper dir untagged", map[string]fsxattr{"lobby/world": {}}, false},
+		// R53-06/R53-08: below the sub-server dir, and files too.
+		{"deeper dir untagged", map[string]fsxattr{"lobby/world": {}}, true},
+		{"deeper dir lost inheritance", map[string]fsxattr{"lobby/world/region": {projid: 7}}, true},
+		{"file at the root untagged", map[string]fsxattr{"eula.txt": {}}, true},
+		{"deep file untagged", map[string]fsxattr{"lobby/world/region/r.0.0.mca": {}}, true},
+		// A file carries no inheritance flag to lose.
+		{"file without inheritance", map[string]fsxattr{"eula.txt": {projid: 7}}, false},
+		// The backup folder has its own budget.
+		{"backup folder untagged", map[string]fsxattr{backupDirName: {}, backupDirName + "/a.tar.gz": {}}, false},
 	} {
 		byIno := map[uint64]fsxattr{}
 		for p, fa := range tc.attrs {
 			byIno[inodeOf(t, filepath.Join(root, p))] = fa
 		}
-		moved, err := topLevelTagsMoved(root, backupDirName, 7, func(fd int) (fsxattr, error) {
+		moved, err := treeTagsMoved(root, backupDirName, 7, func(fd int) (fsxattr, error) {
 			var st syscall.Stat_t
 			if err := syscall.Fstat(fd, &st); err != nil {
 				return fsxattr{}, err

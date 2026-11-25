@@ -27,6 +27,8 @@ type fakeQuota struct {
 	setLimits     []int64
 	// onTag runs inside the tag, where a node killed mid-walk stops.
 	onTag func()
+	// tagErr is what the tag returns: entries the walk could not tag.
+	tagErr error
 }
 
 func (f *fakeQuota) AssignQuota(string) error {
@@ -35,7 +37,7 @@ func (f *fakeQuota) AssignQuota(string) error {
 	if f.onTag != nil {
 		f.onTag()
 	}
-	return nil
+	return f.tagErr
 }
 func (f *fakeQuota) GetDiskUsage(string) *DiskUsagePayload {
 	if f.assigned {
@@ -1048,5 +1050,84 @@ func TestAnUnlimitedCreateClearsAnInheritedHardLimit(t *testing.T) {
 	assignNewServerQuota(ctx, rdb, q, "srv", 0)
 	if q.limitMB != 0 {
 		t.Fatalf("hard limit after an unlimited create = %d MB, want 0", q.limitMB)
+	}
+}
+
+// movedQuota is fakeQuota whose tree a tenant re-tagged out of its project.
+type movedQuota struct {
+	fakeQuota
+	moved bool
+}
+
+func (m *movedQuota) TagsMoved(string) bool { return m.moved }
+
+// R53-07: the stats pass re-tagged a moved tree with the hard limit still on,
+// ext4 refused the files past bhard, and the rest stayed uncounted for good.
+// The re-tag lifts the limit and puts it back, also when the walk fails.
+func TestRetagIfMovedLiftsTheLimitForTheTag(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		uncounted bool
+		moved     bool
+		tagErr    error
+		tagged    bool
+	}{
+		{"nothing moved", false, false, nil, false},
+		{"moved", false, true, nil, true},
+		{"moved, walk fails part way", false, true, fmt.Errorf("3 entries not tagged"), true},
+		// The boot recount's, which may owe it the grace.
+		{"not counted yet", true, true, nil, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rdb := newDiskGuardRedis(t)
+			ctx := context.Background()
+			recordDiskLimit(ctx, rdb, "srv", 100)
+			if !tc.uncounted {
+				markDiskCounted(ctx, rdb, "srv")
+			}
+			q := &movedQuota{fakeQuota: fakeQuota{limitMB: 100, after: usageOf(150*mib, 100*mib), tagErr: tc.tagErr}, moved: tc.moved}
+			retagIfMoved(ctx, rdb, q, "srv")
+			if q.assigned != tc.tagged {
+				t.Fatalf("tagged = %v, want %v", q.assigned, tc.tagged)
+			}
+			if !tc.tagged {
+				if len(q.setLimits) != 0 {
+					t.Fatalf("set limits %v, want none", q.setLimits)
+				}
+				return
+			}
+			if q.limitAtTag != 0 {
+				t.Fatalf("hard limit during the tag = %d MB, want it lifted", q.limitAtTag)
+			}
+			if q.limitMB != 100 {
+				t.Fatalf("hard limit after = %d MB, want 100", q.limitMB)
+			}
+			if n, _ := rdb.Exists(ctx, diskGraceKey("srv")).Result(); n != 0 {
+				t.Fatal("a tenant that re-tagged its files out was granted the grace")
+			}
+		})
+	}
+}
+
+// One walk at a time per server and a pause between them: the check reads
+// every inode of the tree, too much for the 10 s disk tick.
+func TestRetagIfMovedSoonThrottles(t *testing.T) {
+	prev := retagCheckInterval
+	t.Cleanup(func() { retagCheckInterval = prev })
+	retagCheckInterval = time.Hour
+	if !claimRetagCheck("srv-throttle") {
+		t.Fatal("first check refused")
+	}
+	if claimRetagCheck("srv-throttle") {
+		t.Fatal("second check while the first runs")
+	}
+	releaseRetagCheck("srv-throttle")
+	if claimRetagCheck("srv-throttle") {
+		t.Fatal("check again inside the interval")
+	}
+	retagCheckInterval = 0
+	releaseRetagCheck("srv-throttle")
+	if !claimRetagCheck("srv-throttle") {
+		t.Fatal("check refused after the interval")
 	}
 }

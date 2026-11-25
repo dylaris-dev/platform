@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -629,4 +630,84 @@ func loadDiskLimit(ctx context.Context, rdb *redis.Client, uuid string) int64 {
 		return 0
 	}
 	return v
+}
+
+// quotaRetagger is a quota that can tell whether a server's files left its
+// project.
+type quotaRetagger interface {
+	quotaAssigner
+	TagsMoved(uuid string) bool
+}
+
+// retagCheckInterval spaces the re-tag checks of one server. The check reads
+// every inode of the tree (an open, a stat and an ioctl each, roughly 10 s for
+// half a million files with a warm cache), too much for the 10 s disk tick.
+var retagCheckInterval = 15 * time.Minute
+
+// retagChecks holds per server when its next check may start; a running one
+// holds it shut until it ends. retagWalks lets one walk run on the node at a
+// time, so a node boot does not walk every tree at once.
+var (
+	retagChecks = struct {
+		sync.Mutex
+		next map[string]time.Time
+	}{next: map[string]time.Time{}}
+	retagWalks = make(chan struct{}, 1)
+)
+
+func claimRetagCheck(uuid string) bool {
+	retagChecks.Lock()
+	defer retagChecks.Unlock()
+	if time.Now().Before(retagChecks.next[uuid]) {
+		return false
+	}
+	retagChecks.next[uuid] = time.Now().Add(100 * 365 * 24 * time.Hour)
+	return true
+}
+
+func releaseRetagCheck(uuid string) {
+	retagChecks.Lock()
+	retagChecks.next[uuid] = time.Now().Add(retagCheckInterval)
+	retagChecks.Unlock()
+}
+
+// retagIfMovedSoon checks in the background, at most once per interval per
+// server, whether a tenant moved its files out of the server's project, and
+// re-tags them. A tenant container created before the seccomp profile (see
+// tenantSeccompProfile) can still change its files' project, and the quota
+// then stops counting them; the profile reaches it only on a recreate.
+func retagIfMovedSoon(rdb *redis.Client, q *QuotaSet, uuid string) {
+	if !claimRetagCheck(uuid) {
+		return
+	}
+	go func() {
+		defer releaseRetagCheck(uuid)
+		retagWalks <- struct{}{}
+		defer func() { <-retagWalks }()
+		retagIfMoved(context.Background(), rdb, q, uuid)
+	}()
+}
+
+// retagIfMoved re-tags through countDiskUsage, with the hard limit lifted and
+// put back: ext4 refused the moved files past bhard, and those stayed
+// uncounted for good (R53-07). No grace: the server is over its limit by its
+// own doing, and the guard stops it. A server not counted yet is the boot
+// recount's, which may owe it the once-only grace.
+//
+// ponytail: an update_resources landing during the walk can have its new limit
+// overwritten by the one read here, as with the restore's recount; a
+// per-server limit lock closes both if it shows up.
+func retagIfMoved(ctx context.Context, rdb *redis.Client, q quotaRetagger, uuid string) {
+	if rdb != nil && !diskCountedOnDisk(uuid) {
+		if n, err := rdb.Exists(ctx, diskCountedKey(uuid)).Result(); err != nil || n == 0 {
+			return
+		}
+	}
+	if !q.TagsMoved(uuid) {
+		return
+	}
+	log.Printf("WARNING: quota: %s: the server's files left its quota project, re-tagging", uuid)
+	if err := countDiskUsage(ctx, rdb, q, uuid, knownDiskLimitMB(ctx, rdb, q, uuid), false); err != nil {
+		log.Printf("quota: re-tag %s: %v", uuid, err)
+	}
 }

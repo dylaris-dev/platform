@@ -953,7 +953,7 @@ func getDiskUsage(ctx context.Context, rdb *redis.Client, uuid string, quota *Qu
 	var usage *DiskUsagePayload
 	enforceable := quota != nil && quota.IsAvailableFor(uuid)
 	if enforceable {
-		quota.RetagIfMoved(uuid)
+		retagIfMovedSoon(rdb, quota, uuid)
 		usage = quota.GetDiskUsage(uuid)
 		if usage != nil {
 			repairLostDiskLimit(ctx, rdb, quota, uuid, usage)
