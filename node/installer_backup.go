@@ -219,7 +219,7 @@ func publishSetupFailure(ctx context.Context, rdb *redis.Client, serverUUID, sub
 	// there. A setup with no stamp is an older Core's, which ignores both and
 	// never deletes the key, so it gets the Pub/Sub copy only, as before.
 	if payload["attempt"] != nil {
-		if err := rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:setup_failed", serverUUID), data, 10*time.Minute).Err(); err != nil {
+		if err := rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:setup_failed", serverUUID), data, reportTTL(ctx, rdb, setupBeforeKey(serverUUID), 10*time.Minute)).Err(); err != nil {
 			log.Printf("setup failure report: could not keep it for Core: %v", err)
 		} else {
 			payload["durable"] = true

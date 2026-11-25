@@ -321,6 +321,17 @@ func setupBeforeKey(uuid string) string {
 	return fmt.Sprintf("dylaris:server:%s:setup_before", uuid)
 }
 
+// reportTTL is how long a failure report Core answers record with should
+// live: at least floor, and as long as record's remaining TTL. A report that
+// expired unread (Core down, no leader) left the record's state wrong until
+// it ran out; an older Core writes no record, so floor as before.
+func reportTTL(ctx context.Context, rdb *redis.Client, record string, floor time.Duration) time.Duration {
+	if left := rdb.PTTL(ctx, record).Val(); left > floor {
+		return left
+	}
+	return floor
+}
+
 // dispatchRecord is what the node reads of a switch_undo or setup_before
 // record. Go matches the keys case-insensitively, so one struct reads both
 // ("target" there, "Target" here).

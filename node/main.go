@@ -3105,11 +3105,7 @@ func reportSwitchFailed(ctx context.Context, rdb *redis.Client, uuid, target, pr
 	if err != nil {
 		return
 	}
-	ttl := 5 * time.Minute
-	if undo := rdb.PTTL(ctx, switchUndoKey(uuid)).Val(); undo > ttl {
-		ttl = undo
-	}
-	rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:switch_failed", uuid), b, ttl)
+	rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:switch_failed", uuid), b, reportTTL(ctx, rdb, switchUndoKey(uuid), 5*time.Minute))
 }
 
 // reportRefusedStatus is the status write of a setup or reinstall refused

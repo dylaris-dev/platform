@@ -188,5 +188,6 @@ func reportCopyFailed(ctx context.Context, rdb *redis.Client, serverUUID, target
 	if err != nil {
 		return
 	}
-	rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:copy_sub_failed", serverUUID), b, 5*time.Minute)
+	pending := fmt.Sprintf("dylaris:server:%s:copy_pending", serverUUID)
+	rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:copy_sub_failed", serverUUID), b, reportTTL(ctx, rdb, pending, 5*time.Minute))
 }

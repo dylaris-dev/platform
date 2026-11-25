@@ -404,8 +404,9 @@ func forgetValueIf(ctx context.Context, rdb *redis.Client, key, want string) {
 // touched, or a failure after the stop whose files were put back. A server that
 // really has moved must not be reverted, or the database would be wrong in the
 // other direction. The TTL outlives several of the status watcher's
-// five-second ticks without lingering long enough to land on a later,
-// successful move.
+// five-second ticks, and Core's undo record it answers (reportTTL), but no
+// longer: Core pairs the signal with that record, so it cannot land on a
+// later, successful move once the record is gone.
 func abandonVersionUpdate(ctx context.Context, rdb *redis.Client, serverUUID, reason string) {
 	if rdb == nil {
 		return
@@ -414,7 +415,8 @@ func abandonVersionUpdate(ctx context.Context, rdb *redis.Client, serverUUID, re
 		reason = "the node could not carry out the move"
 	}
 	key := fmt.Sprintf("dylaris:server:%s:version_update_failed", serverUUID)
-	rdb.Set(ctx, key, reason, 5*time.Minute)
+	undo := fmt.Sprintf("dylaris:server:%s:version_update_undo", serverUUID)
+	rdb.Set(ctx, key, reason, reportTTL(ctx, rdb, undo, 5*time.Minute))
 }
 
 // takeVersionMoveRemovals sets every old jar aside into the stash, each from
