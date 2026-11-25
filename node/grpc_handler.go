@@ -739,7 +739,7 @@ func zipMethodFor(name string) uint16 {
 // one reached through a link, by identity (see nodeOwnedIdentities). That
 // includes the backup store, which no file surface serves.
 func addZipEntry(zw *zip.Writer, root *os.Root, name, relPath string, info fs.FileInfo, deny map[fileIdentity]bool) error {
-	if isProtectedFile(name) || deniedIdentity(info, deny) {
+	if zipLeavesOut(name, info, deny) {
 		if info.IsDir() {
 			return fs.SkipDir
 		}
@@ -776,6 +776,12 @@ func addZipEntry(zw *zip.Writer, root *os.Root, name, relPath string, info fs.Fi
 	}
 	_, err = io.Copy(writer, f)
 	return err
+}
+
+// zipLeavesOut is the filter addZipEntry applies, shared with the size
+// estimate so the two cannot disagree on what goes in.
+func zipLeavesOut(name string, info fs.FileInfo, deny map[fileIdentity]bool) bool {
+	return isProtectedFile(name) || deniedIdentity(info, deny)
 }
 
 // streamSelectiveZip zips only selected paths from a base directory using io.Pipe streaming.

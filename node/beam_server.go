@@ -270,7 +270,7 @@ func (s *beamServer) auditBeam(ctx context.Context, serverUUID, kind, rel string
 			ip = peerHost(p.Addr)
 		}
 	}
-	a := newSFTPAudit(s.extractUsername(ctx), ip)
+	a := newSFTPAudit(s.extractUsername(ctx), s.extractUserID(ctx), ip)
 	a.via = "beam"
 	a.note(serverUUID, kind, rel)
 	publishSFTPAudit(s.rdb, a)
@@ -1442,7 +1442,7 @@ func (s *beamServer) DownloadFile(req *pb.BeamDownloadReq, stream grpc.ServerStr
 			return status.Error(codes.InvalidArgument, "path is a directory; set zip_if_dir to download it as an archive")
 		}
 		display := filepath.Join(s.storageMgr.GetServerDir(serverUUID), filepath.FromSlash(name))
-		return s.streamZip(stream, zipNameFor(display), dirSizeIn(root, name), func(zw *zip.Writer) error {
+		return s.streamZip(stream, zipNameFor(display), zipTreeSize(root, name, name), func(zw *zip.Writer) error {
 			return addTreeToZip(zw, root, name, name)
 		})
 	}
@@ -2105,7 +2105,7 @@ func (s *beamServer) DownloadSelective(req *pb.BeamSelectiveReq, stream grpc.Ser
 // resolved the same way, for the progress estimate.
 func selectionSize(root *os.Root, serverDir, basePath, baseName string, req *pb.BeamSelectiveReq) int64 {
 	if req.SelectAll {
-		return dirSizeIn(root, baseName)
+		return zipTreeSize(root, baseName, baseName)
 	}
 	var total int64
 	for _, sel := range req.Selected {
@@ -2117,16 +2117,33 @@ func selectionSize(root *os.Root, serverDir, basePath, baseName string, req *pb.
 		if err != nil {
 			continue
 		}
-		info, err := root.Lstat(selName)
-		if err != nil {
-			continue
+		total += zipTreeSize(root, baseName, selName)
+	}
+	return total
+}
+
+// zipTreeSize is the content size addTreeToZip(zw, root, nameBase, target)
+// archives, walked and filtered the same way. A raw tree size counted the
+// backup store and the node's own files, also through a link, which the zip
+// leaves out: a member without backups.read read the backups' size off it.
+func zipTreeSize(root *os.Root, nameBase, target string) int64 {
+	deny := nodeOwnedIdentities(root, true)
+	var total int64
+	_ = walkRoot(root, target, func(name string, info fs.FileInfo) error {
+		if relTo(nameBase, name) == "." {
+			return nil
 		}
-		if info.IsDir() {
-			total += dirSizeIn(root, selName)
-		} else {
+		if zipLeavesOut(name, info, deny) {
+			if info.IsDir() {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if !info.IsDir() {
 			total += info.Size()
 		}
-	}
+		return nil
+	})
 	return total
 }
 
@@ -2327,15 +2344,20 @@ func (s *beamServer) extractUsername(ctx context.Context) string {
 // "" when the peer has no session, which disables the daily quota rather than
 // bucketing distinct users together.
 func (s *beamServer) extractQuotaBucket(ctx context.Context) quota.Bucket {
-	var id string
+	return quota.BucketFor(s.extractUserID(ctx), s.extractUsername(ctx))
+}
+
+// extractUserID is the user id of the ticket this peer authenticated with, ""
+// for a ticket from a Core older than the id or a peer with no session.
+func (s *beamServer) extractUserID(ctx context.Context) string {
 	if p, ok := peer.FromContext(ctx); ok && p != nil && p.Addr != nil {
 		if v, ok := s.sessionByPeer.Load(p.Addr.String()); ok {
 			if sess, _ := v.(*beamSession); sess != nil && sess.claims != nil {
-				id = sess.claims.UserID
+				return sess.claims.UserID
 			}
 		}
 	}
-	return quota.BucketFor(id, s.extractUsername(ctx))
+	return ""
 }
 
 // copyDir and copyFile are defined in installer.go — reused here.

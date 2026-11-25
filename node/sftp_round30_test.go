@@ -266,7 +266,7 @@ func TestSFTPWritesHonourTheOpenFlagsAndTruncate(t *testing.T) {
 // SFTP changes reached no audit trail.
 func TestSFTPChangesAreCollectedForTheAudit(t *testing.T) {
 	fs, _ := permittedFS(t, fileperms.Full())
-	fs.audit = newSFTPAudit("alice", "203.0.113.5")
+	fs.audit = newSFTPAudit("alice", "", "203.0.113.5")
 	if err := fs.Filecmd(&sftp.Request{Method: "Remove", Filepath: "myserver/survival/server.jar"}); err != nil {
 		t.Fatal(err)
 	}

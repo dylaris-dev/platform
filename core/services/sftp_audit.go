@@ -9,6 +9,7 @@ import (
 	"dylaris-core/models"
 	"dylaris-core/store"
 	"dylaris-pkg/queue"
+	"dylaris-pkg/validate"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -126,11 +127,24 @@ func (s *SFTPAuditService) apply(channel string, rec queue.SFTPAuditRecord) {
 	// platform user it could otherwise put on any change.
 	if node.IsExternal() {
 		ev.Metadata["reported_by"] = "external-node"
-	} else if u, err := s.store.GetUserByUsername(rec.Username); err == nil && u != nil {
+	} else if u, err := s.actorOf(rec); err == nil && u != nil {
 		id := u.ID
 		ev.ActorUserID = &id
 	}
 	if err := s.store.InsertServerAudit(ev); err != nil {
 		log.Printf("sftp audit: insert for server %d: %v", srv.ID, err)
 	}
+}
+
+// actorOf is the account behind a record: by its user id when it carries one,
+// which a rename does not change, else by name (a node or ticket older than
+// the id). The name was resolved when the row came in, so a session open
+// across a rename was pinned on whoever had taken the old name by then. An id
+// that no longer resolves (a deleted account) leaves the row without an actor
+// rather than falling back to the name.
+func (s *SFTPAuditService) actorOf(rec queue.SFTPAuditRecord) (*models.User, error) {
+	if validate.IsUserID(rec.UserID) {
+		return s.store.GetUserByID(rec.UserID)
+	}
+	return s.store.GetUserByUsername(rec.Username)
 }

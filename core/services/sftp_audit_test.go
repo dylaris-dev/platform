@@ -122,3 +122,44 @@ func TestTheAuditAddressIsWhatAnInetColumnTakes(t *testing.T) {
 		}
 	}
 }
+
+type sftpAuditByIDStore struct {
+	sftpAuditFakeStore
+}
+
+func (f *sftpAuditByIDStore) GetUserByID(id string) (*models.User, error) {
+	if id == "6f1c2a7e-3b4d-4e5f-8a9b-0c1d2e3f4a5b" {
+		return &models.User{ID: id}, nil
+	}
+	return nil, nil
+}
+
+// R53-05: the actor was resolved by the name in the record when the row came
+// in, so after a rename a still-open Beam session's changes went to whoever
+// took the old name. A record with the user id is resolved by it; one from an
+// older node or ticket still by name.
+func TestTheAuditActorIsResolvedByUserIDWhenTheRecordHasOne(t *testing.T) {
+	for _, tc := range []struct {
+		name, userID string
+		want         *string
+	}{
+		{"record with the id", "6f1c2a7e-3b4d-4e5f-8a9b-0c1d2e3f4a5b", strPtr("6f1c2a7e-3b4d-4e5f-8a9b-0c1d2e3f4a5b")},
+		{"record from an older node", "", strPtr("u-bob")},
+		{"id of a deleted account", "00000000-0000-4000-8000-000000000000", nil},
+		{"not an id", "bob", strPtr("u-bob")},
+	} {
+		fs := &sftpAuditByIDStore{sftpAuditFakeStore{node: models.Node{Token: "n1"}}}
+		NewSFTPAuditService(fs, nil, nil).apply(queue.SFTPAuditChannel("n1"),
+			queue.SFTPAuditRecord{ServerUUID: "srv", Username: "bob", UserID: tc.userID, Writes: 1, Via: "beam"})
+		if len(fs.written) != 1 {
+			t.Fatalf("%s: %d rows", tc.name, len(fs.written))
+		}
+		got := fs.written[0].ActorUserID
+		if (got == nil) != (tc.want == nil) || (got != nil && *got != *tc.want) {
+			t.Errorf("%s: actor = %v, want %v", tc.name, got, tc.want)
+		}
+		if fs.written[0].Metadata["username"] != "bob" {
+			t.Errorf("%s: username = %v, want bob kept for display", tc.name, fs.written[0].Metadata["username"])
+		}
+	}
+}

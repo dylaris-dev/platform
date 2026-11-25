@@ -495,7 +495,7 @@ func (s *SFTPServer) handleConn(conn net.Conn, config *ssh.ServerConfig, handsho
 	set := &atomic.Pointer[sftpServerSet]{}
 	set.Store(newServerSet(servers))
 	open := &sftpOpenWriters{}
-	audit := newSFTPAudit(username, peerHost(conn.RemoteAddr()))
+	audit := newSFTPAudit(username, listUserID(servers), peerHost(conn.RemoteAddr()))
 
 	// The server list and the credential were read once, at sign-in, and the
 	// session then ran on that snapshot for as long as the client stayed - a
@@ -794,10 +794,19 @@ func newServerSet(servers []sftpServerRef) *sftpServerSet {
 // the id, or a list with no servers in it).
 func (v *virtualFS) quotaBucket() quota.Bucket {
 	var id string
-	if set := v.set.Load(); set != nil && len(set.servers) > 0 {
-		id = set.servers[0].UserID
+	if set := v.set.Load(); set != nil {
+		id = listUserID(set.servers)
 	}
 	return quota.BucketFor(id, v.username)
+}
+
+// listUserID is the account id Core publishes in a server list, "" from a
+// Core older than it or for a list with no servers in it.
+func listUserID(servers []sftpServerRef) string {
+	if len(servers) > 0 {
+		return servers[0].UserID
+	}
+	return ""
 }
 
 func newVirtualFS(servers []sftpServerRef, sm *StorageManager, rdb *redis.Client, username string) *virtualFS {
@@ -1628,17 +1637,17 @@ func (n *namedFileInfo) Name() string { return n.name }
 // audit trail. The panel's file operations were recorded there; the same ones
 // over SFTP were not.
 type sftpAudit struct {
-	username, addr string
-	via            string // "" = sftp
-	mu             sync.Mutex
-	byServer       map[string]*queue.SFTPAuditRecord
+	username, userID, addr string
+	via                    string // "" = sftp
+	mu                     sync.Mutex
+	byServer               map[string]*queue.SFTPAuditRecord
 }
 
 // sftpAuditMaxPaths bounds the paths one record carries.
 const sftpAuditMaxPaths = 50
 
-func newSFTPAudit(username, addr string) *sftpAudit {
-	return &sftpAudit{username: username, addr: addr, byServer: map[string]*queue.SFTPAuditRecord{}}
+func newSFTPAudit(username, userID, addr string) *sftpAudit {
+	return &sftpAudit{username: username, userID: userID, addr: addr, byServer: map[string]*queue.SFTPAuditRecord{}}
 }
 
 // note records one change. A nil receiver records nothing.
@@ -1650,7 +1659,7 @@ func (a *sftpAudit) note(serverUUID, kind, rel string) {
 	defer a.mu.Unlock()
 	rec := a.byServer[serverUUID]
 	if rec == nil {
-		rec = &queue.SFTPAuditRecord{ServerUUID: serverUUID, Username: a.username, RemoteIP: a.addr, Via: a.via}
+		rec = &queue.SFTPAuditRecord{ServerUUID: serverUUID, Username: a.username, UserID: a.userID, RemoteIP: a.addr, Via: a.via}
 		a.byServer[serverUUID] = rec
 	}
 	switch kind {

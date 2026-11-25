@@ -35,11 +35,15 @@ func NodeTokenFromSFTPAuditChannel(channel string) (token string, ok bool) {
 type SFTPAuditRecord struct {
 	ServerUUID string `json:"serverUuid"`
 	Username   string `json:"username"`
-	RemoteIP   string `json:"remoteIp"`
-	Writes     int    `json:"writes"`
-	Deletes    int    `json:"deletes"`
-	Renames    int    `json:"renames"`
-	Mkdirs     int    `json:"mkdirs"`
+	// UserID is the account's immutable id, which a rename does not change;
+	// Core resolves the actor by it. Empty from a node, ticket or Core older
+	// than it: Core then falls back to Username.
+	UserID   string `json:"userId,omitempty"`
+	RemoteIP string `json:"remoteIp"`
+	Writes   int    `json:"writes"`
+	Deletes  int    `json:"deletes"`
+	Renames  int    `json:"renames"`
+	Mkdirs   int    `json:"mkdirs"`
 	// Paths are the first changed paths, relative to the server, capped by the
 	// node; Truncated says there were more.
 	Paths     []string `json:"paths"`
