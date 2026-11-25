@@ -310,30 +310,78 @@ func TestASetupFailureIsAppliedOnceFromTheDurableKey(t *testing.T) {
 // is pending read that online, so when the switch was refused and the setup
 // failed too, the owner's stopped intent was gone and the reconciler started
 // the server (R42-02). The pending switch's record holds the intent from
-// before it; an overtaken one or one to another target does not count.
+// before it; an overtaken one or one to another target does not count. A
+// switch that landed did start the server, so its online stays (R43-01).
 func TestAFailedSetupAfterAPendingSwitchPutsTheIntentBack(t *testing.T) {
+	const (
+		refused        = "refused"         // the status watcher read the refusal first
+		refusalPending = "refusal pending" // the setup's failure came first
+		landed         = "landed"          // the node deleted the switch record
+	)
 	for _, c := range []struct {
-		name string
-		undo *SwitchUndo
-		want []string
+		name    string
+		undo    *SwitchUndo
+		outcome string
+		want    []string
 	}{
-		{"pending switch to the active sub-server", &SwitchUndo{Target: "b", Previous: "a", DesiredState: "stopped"}, []string{"stopped"}},
-		{"switch already overtaken", &SwitchUndo{Target: "b", Previous: "a", DesiredState: "stopped", Overtaken: true}, nil},
-		{"switch to another target", &SwitchUndo{Target: "c", Previous: "a", DesiredState: "stopped"}, nil},
-		{"switch record from an older core", &SwitchUndo{Target: "b", Previous: "a"}, nil},
-		{"no switch", nil, nil},
+		{"pending switch to the active sub-server, refused", &SwitchUndo{Target: "b", Previous: "a", DesiredState: "stopped"}, refused, []string{"stopped"}},
+		{"pending switch to the active sub-server, refusal not read yet", &SwitchUndo{Target: "b", Previous: "a", DesiredState: "stopped"}, refusalPending, []string{"stopped"}},
+		{"pending switch to the active sub-server, landed", &SwitchUndo{Target: "b", Previous: "a", DesiredState: "stopped"}, landed, nil},
+		{"switch already overtaken", &SwitchUndo{Target: "b", Previous: "a", DesiredState: "stopped", Overtaken: true}, refused, nil},
+		{"switch to another target", &SwitchUndo{Target: "c", Previous: "a", DesiredState: "stopped"}, refused, nil},
+		{"switch record from an older core", &SwitchUndo{Target: "b", Previous: "a"}, refused, nil},
+		{"no switch", nil, "", nil},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			rdb := newQueueTestRedis(t)
 			ctx := context.Background()
-			st := &setupBeforeStore{}
 			srv := &models.Server{ID: 3, UUID: "srv-3", ActiveSubServer: "b", DesiredState: "online"}
+			st := &setupBeforeStore{srv: srv}
 			if c.undo != nil {
 				raw, _ := json.Marshal(c.undo)
 				rdb.Set(ctx, SwitchUndoKey(srv.UUID), raw, time.Hour)
 			}
 
 			RememberSetupBefore(ctx, rdb, st, srv, "b")
+			OvertakeSwitchUndo(ctx, rdb, srv.UUID) // the setup went out
+			switch c.outcome {
+			case refused, refusalPending:
+				raw, _ := json.Marshal(switchSubFailure{Target: c.undo.Target, Previous: "a", Reason: "not set up"})
+				rdb.Set(ctx, SwitchSubFailedKey(srv.UUID), raw, time.Hour)
+				if c.outcome == refused {
+					(&StatusWatcherService{store: st, redis: rdb}).consumeSwitchSubFailures(ctx)
+				}
+			case landed:
+				rdb.Del(ctx, SwitchUndoKey(srv.UUID))
+			}
+			if !RestoreSetupBefore(ctx, rdb, st, srv, "b") {
+				t.Fatal("did not restore the setup it recorded")
+			}
+			if fmt.Sprint(st.desired) != fmt.Sprint(c.want) {
+				t.Fatalf("desired-state writes = %v, want %v", st.desired, c.want)
+			}
+		})
+	}
+}
+
+// A record an older Core wrote carries no switch fields: the intent it saved
+// is put back as it was.
+func TestASetupRecordWithoutTheSwitchFieldsKeepsItsIntent(t *testing.T) {
+	for _, c := range []struct {
+		name, saved string
+		want        []string
+	}{
+		{"saved online", "online", nil},
+		{"saved stopped", "stopped", []string{"stopped"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			rdb := newQueueTestRedis(t)
+			ctx := context.Background()
+			srv := &models.Server{ID: 3, UUID: "srv-3", ActiveSubServer: "b", DesiredState: "online"}
+			st := &setupBeforeStore{srv: srv}
+			rdb.Set(ctx, setupBeforeKey(srv.UUID), `{"Target":"b","Active":"b","DesiredState":"`+c.saved+`"}`, time.Hour)
+			raw, _ := json.Marshal(switchSubFailure{Target: "b", Previous: "a"})
+			rdb.Set(ctx, SwitchSubFailedKey(srv.UUID), raw, time.Hour)
 			if !RestoreSetupBefore(ctx, rdb, st, srv, "b") {
 				t.Fatal("did not restore the setup it recorded")
 			}

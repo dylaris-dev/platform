@@ -36,6 +36,12 @@ type setupBefore struct {
 	// The run intent before the dispatch flipped it to online (IntendOnline).
 	// Empty in a record from before the field: the intent is then left alone.
 	DesiredState string `json:",omitempty"`
+	// The intent from before a switch to Target that was still pending when
+	// this setup overtook it, and whether the node refused that switch
+	// (consumeSwitchSubFailures). Only a refused one ran nothing: one that
+	// landed started the server, and DesiredState (online) is then right.
+	SwitchIntent  string `json:",omitempty"`
+	SwitchRefused bool   `json:",omitempty"`
 	// The target's mod rows before the setup dropped them (RememberSetupMods).
 	// Absent unless the setup changes them.
 	ModsKnown bool               `json:",omitempty"`
@@ -63,12 +69,13 @@ func RememberSetupBefore(ctx context.Context, rdb *redis.Client, st store.Store,
 	// A switch still pending already flipped the intent to online, and the
 	// setup overtakes it, which drops that switch's refusal and with it the
 	// only copy of the intent from before: carried forward like ChainSwitchUndo
-	// does for a switch after a switch. Active and the loader columns are not:
+	// does for a switch after a switch, but kept apart, because whether the
+	// switch lands is known only later. Active and the loader columns are not:
 	// the node's .active_server is adopted once the records clear.
 	if raw, err := rdb.Get(ctx, SwitchUndoKey(srv.UUID)).Result(); err == nil {
 		var undo SwitchUndo
 		if json.Unmarshal([]byte(raw), &undo) == nil && !undo.Overtaken && undo.DesiredState != "" && strings.EqualFold(undo.Target, srv.ActiveSubServer) {
-			before.DesiredState = undo.DesiredState
+			before.SwitchIntent = undo.DesiredState
 		}
 	}
 	if st != nil {
@@ -180,13 +187,53 @@ func RestoreSetupBefore(ctx context.Context, rdb *redis.Client, st store.Store, 
 	// meant to run: the reconciler would start one its owner had stopped. Only
 	// over the online the dispatch wrote, so a stop since is kept; a start the
 	// owner issued meanwhile cannot be told apart from it and is undone too.
-	if b.DesiredState != "" && b.DesiredState != "online" && srv.DesiredState == "online" {
-		if err := st.UpdateServerDesiredState(srv.ID, b.DesiredState); err != nil {
+	want := b.DesiredState
+	if b.SwitchIntent != "" && (b.SwitchRefused || switchRefusalPending(ctx, rdb, srv.UUID, b.Target)) {
+		want = b.SwitchIntent
+	}
+	if want != "" && want != "online" && srv.DesiredState == "online" {
+		if err := st.UpdateServerDesiredState(srv.ID, want); err != nil {
 			log.Printf("setup of %s failed, and its run intent could not be put back: %v", srv.UUID, err)
 		} else {
-			PublishDesiredState(ctx, rdb, srv.UUID, b.DesiredState)
+			PublishDesiredState(ctx, rdb, srv.UUID, want)
 		}
 	}
 	rdb.Del(ctx, setupBeforeKey(srv.UUID))
 	return true
+}
+
+// markSetupSwitchRefused records on the pending setup to target that the
+// switch it overtook was refused. Watched: a setup landing in between deletes
+// the record, and a plain SET brought it back with no TTL.
+func markSetupSwitchRefused(ctx context.Context, rdb *redis.Client, serverUUID, target string) {
+	key := setupBeforeKey(serverUUID)
+	err := rdb.Watch(ctx, func(tx *redis.Tx) error {
+		var b setupBefore
+		raw, err := tx.Get(ctx, key).Result()
+		if err != nil || json.Unmarshal([]byte(raw), &b) != nil || !strings.EqualFold(b.Target, target) || b.SwitchIntent == "" || b.SwitchRefused {
+			return nil
+		}
+		b.SwitchRefused = true
+		rec, err := json.Marshal(b)
+		if err != nil {
+			return nil
+		}
+		_, err = tx.TxPipelined(ctx, func(p redis.Pipeliner) error {
+			p.SetArgs(ctx, key, rec, redis.SetArgs{KeepTTL: true})
+			return nil
+		})
+		return err
+	}, key)
+	if err != nil {
+		log.Printf("Server %s: could not mark the switch the setup overtook refused: %v", serverUUID, err)
+	}
+}
+
+// switchRefusalPending reports whether the node's refusal of a switch to
+// target is waiting to be read: the setup's own failure report can arrive
+// first (Pub/Sub), before the status watcher marks the record.
+func switchRefusalPending(ctx context.Context, rdb *redis.Client, serverUUID, target string) bool {
+	raw, err := rdb.Get(ctx, SwitchSubFailedKey(serverUUID)).Result()
+	var rep switchSubFailure
+	return err == nil && json.Unmarshal([]byte(raw), &rep) == nil && strings.EqualFold(rep.Target, target)
 }

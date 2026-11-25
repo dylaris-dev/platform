@@ -266,6 +266,7 @@ func (s *StatusWatcherService) consumeSwitchSubFailures(ctx context.Context) boo
 			// and is what the node runs, not the switch's previous sub-server.
 			if undo.Overtaken {
 				log.Printf("Server %s: the switch to sub-server %q failed on the node (%s), overtaken by a setup", srv.UUID, rep.Target, rep.Reason)
+				markSetupSwitchRefused(ctx, s.redis, srv.UUID, rep.Target)
 				ForgetSwitchUndo(ctx, s.redis, srv.UUID, rep.Target)
 				continue
 			}
