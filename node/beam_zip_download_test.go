@@ -232,6 +232,14 @@ func TestDownloadSelective(t *testing.T) {
 			selected: []string{"../../../../etc/passwd", "other.jar"},
 			want:     []string{"other.jar"},
 		},
+		{
+			// Removed by the running server since the client listed it: skipped,
+			// as the panel's selective zip does, instead of aborting the rest.
+			name:     "vanished entry is skipped, the rest survives",
+			basePath: "plugins",
+			selected: []string{"gone.log", "WorldEdit", "other.jar"},
+			want:     []string{"WorldEdit/", "WorldEdit/config.yml", "other.jar"},
+		},
 	}
 
 	for _, tt := range tests {

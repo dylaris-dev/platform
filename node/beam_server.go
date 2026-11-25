@@ -2091,6 +2091,13 @@ func (s *beamServer) DownloadSelective(req *pb.BeamSelectiveReq, stream grpc.Ser
 			if err != nil {
 				continue
 			}
+			// Deleted or rotated since the client listed it: walkRoot fails on a
+			// missing start, which aborted the zip of everything else. Same rule
+			// as the panel's selective zip in grpc_handler.go.
+			if _, err := root.Lstat(selName); errors.Is(err, fs.ErrNotExist) {
+				log.Printf("beam: selective download for %s skipped %q: no longer exists", serverUUID, selName)
+				continue
+			}
 			// Names stay relative to the base so the archive reproduces the
 			// layout the user selected, not an absolute tree.
 			if err := addTreeToZip(zw, root, baseName, selName); err != nil {
