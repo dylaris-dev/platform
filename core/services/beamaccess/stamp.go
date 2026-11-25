@@ -104,14 +104,30 @@ func ReachOf(st store.Store, rdb *redis.Client, userID string) []string {
 		log.Printf("beam access stamp: could not resolve user %s: %v", userID, err)
 		return nil
 	}
-	servers, err := st.ListServersForUser(userID, u.IsAdmin)
+	// The grant-shaped list is the one written arm for arm against the resolver
+	// the ticket handler asks. An admin's own list leaves out the account-wide
+	// and inherited grants on a customer's node, yet the resolver drops the
+	// admin short-circuit there and falls through to exactly those grants, so
+	// an admin needs both lists.
+	servers, err := st.ListServersForUser(userID, false)
 	if err != nil {
 		log.Printf("beam access stamp: could not list servers of %s: %v", userID, err)
 		return nil
 	}
+	if u.IsAdmin {
+		adminServers, err := st.ListServersForUser(userID, true)
+		if err != nil {
+			log.Printf("beam access stamp: could not list servers of admin %s: %v", userID, err)
+		}
+		servers = append(servers, adminServers...)
+	}
+	seen := make(map[string]bool, len(servers))
 	out := make([]string, 0, len(servers))
 	for _, s := range servers {
-		out = append(out, s.UUID)
+		if !seen[s.UUID] {
+			seen[s.UUID] = true
+			out = append(out, s.UUID)
+		}
 	}
 	return out
 }
