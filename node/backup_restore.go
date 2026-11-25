@@ -997,12 +997,10 @@ func reportRestore(ctx context.Context, rdb *redis.Client, cmd BackupRestoreComm
 	// restore as lost (from six hours after the request; a day leaves room for
 	// a restore that ran for hours). Set before the PUBLISH so Core's delete of
 	// an applied result cannot land first. An old Core never reads it; the TTL clears it.
-	if err := rdb.Set(ctx, queue.RestoreResultKey(cmd.ServerUUID, cmd.RestoreID), data, restoreResultTTL).Err(); err != nil {
+	if err := rdb.Set(ctx, queue.RestoreResultKey(cmd.ServerUUID, cmd.RestoreID), data, queue.RestoreResultTTL).Err(); err != nil {
 		log.Printf("restore result could not be kept: %v", err)
 	}
 	if err := rdb.Publish(ctx, queue.BackupRestoresChannel(nodeID), data).Err(); err != nil {
 		log.Printf("restore result publish failed: %v", err)
 	}
 }
-
-const restoreResultTTL = 24 * time.Hour

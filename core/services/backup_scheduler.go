@@ -198,30 +198,50 @@ func (b *BackupScheduler) consumeRestoreResults(ctx context.Context) {
 			if b.leader != nil && !b.leader.IsLeader() {
 				continue
 			}
-			var result restoreResult
-			if err := json.Unmarshal([]byte(msg.Payload), &result); err != nil {
-				logErrf("backup-scheduler", "restore result: decode failed: %v", err)
-				continue
-			}
-			if result.RestoreID == 0 {
-				continue
-			}
-			// The restore row names the server directly, so the reporting node is
-			// checked against it before anything is written.
-			restore, err := b.store.GetBackupRestore(result.RestoreID)
-			if err != nil || restore == nil {
-				log.Printf("restore result: restore %d not found", result.RestoreID)
-				continue
-			}
-			if !b.reporterMatchesServer(msg.Channel, restore.ServerID, "restore result") {
-				continue
-			}
-			// serverUuid comes only from a node that also keeps the result
-			// (RestoreResultKey); attribution above already passed.
-			if b.applyRestoreResult(restore, result, true) && result.ServerUUID != "" {
-				b.redis.Del(ctx, queue.RestoreResultKey(result.ServerUUID, result.RestoreID))
-			}
+			b.handleRestoreResult(ctx, msg.Channel, msg.Payload)
 		}
+	}
+}
+
+// handleRestoreResult applies one result delivered on a node's restore channel.
+func (b *BackupScheduler) handleRestoreResult(ctx context.Context, channel, payload string) {
+	var result restoreResult
+	if err := json.Unmarshal([]byte(payload), &result); err != nil {
+		logErrf("backup-scheduler", "restore result: decode failed: %v", err)
+		return
+	}
+	if result.RestoreID == 0 {
+		return
+	}
+	// The restore row names the server directly, so the reporting node is
+	// checked against it before anything is written.
+	restore, err := b.store.GetBackupRestore(result.RestoreID)
+	if err != nil || restore == nil {
+		log.Printf("restore result: restore %d not found", result.RestoreID)
+		return
+	}
+	if !b.reporterMatchesServer(channel, restore.ServerID, "restore result") {
+		return
+	}
+	// serverUuid comes only from a node that also keeps the result
+	// (RestoreResultKey); an older node keeps nothing the tick could race for.
+	if result.ServerUUID == "" {
+		b.applyRestoreResult(restore, result, true)
+		return
+	}
+	// The node SETs before it PUBLISHes, so the tick can read the key first.
+	// Whoever claims it applies; the other one must not write the row again.
+	key := queue.RestoreResultKey(result.ServerUUID, result.RestoreID)
+	raw, pttl, err := b.claimKeptRestoreResult(ctx, key)
+	if err == redis.Nil {
+		return
+	}
+	if err != nil {
+		logErrf("backup-scheduler", "restore result: claiming %d failed, the next tick applies it: %v", result.RestoreID, err)
+		return
+	}
+	if late := b.applyClaimedRestoreResult(ctx, key, raw, pttl, restore, result); late != "" {
+		log.Printf("backup-scheduler: restore %d: applied its result as status only (%s); install, mod and sub-server rows were NOT reconciled", restore.ID, late)
 	}
 }
 
@@ -232,11 +252,12 @@ type restoreResult struct {
 	Status     string `json:"status"`
 	Error      string `json:"error"`
 	ServerUUID string `json:"serverUuid"`
-	Timestamp  int64  `json:"timestamp"` // Unix seconds, the node's clock
+	Timestamp  int64  `json:"timestamp"` // Unix seconds, the node's clock: for logs only
 }
 
 // keptRestoreResultFresh bounds how old a kept result may be and still
-// reconcile the install, mod and sub-server rows. The tick reads kept results
+// reconcile the install, mod and sub-server rows, measured on the Redis clock
+// (see claimKeptRestoreResult). The tick reads kept results
 // every minute and a new leader ticks at once, so a result lost in a leader gap
 // (lease 30s) is normally read well inside it; an older one was kept through a
 // longer outage, and the customer may have changed the server since.
@@ -274,9 +295,9 @@ func (b *BackupScheduler) applyRestoreResult(restore *models.BackupRestore, resu
 // one, and reports whether r is settled by it (or cannot be judged now).
 // The key lives under the server's namespace, which the node's ACL grants only
 // for the servers it hosts, so it stands in for the channel attribution.
-func (b *BackupScheduler) appliedKeptRestoreResult(ctx context.Context, r models.AbandonedBackupRestore, now time.Time) bool {
+func (b *BackupScheduler) appliedKeptRestoreResult(ctx context.Context, r models.AbandonedBackupRestore) bool {
 	key := queue.RestoreResultKey(r.ServerUUID, r.ID)
-	raw, err := b.redis.Get(ctx, key).Result()
+	raw, pttl, err := b.claimKeptRestoreResult(ctx, key)
 	if err == redis.Nil {
 		return false
 	}
@@ -290,41 +311,77 @@ func (b *BackupScheduler) appliedKeptRestoreResult(ctx context.Context, r models
 	}
 	restore, err := b.store.GetBackupRestore(r.ID)
 	if err != nil || restore == nil {
+		if pttl > 0 {
+			b.redis.Set(ctx, key, raw, pttl)
+		}
 		return true
 	}
 	if restore.Status != "queued" && restore.Status != "running" {
 		return true
 	}
-	// The archive's rows are reconciled against the database as it is NOW, so a
-	// result that is not fresh, or one a later restore has overtaken, would
-	// rewrite whatever the customer changed since. It only closes the row.
-	late := ""
-	if age := now.Sub(time.Unix(result.Timestamp, 0)); result.Timestamp == 0 || age > keptRestoreResultFresh {
-		late = "it is not fresh"
-	} else if b.newerRestoreFinished(restore) {
-		late = "a later restore of the server has finished"
-	}
-	if b.applyRestoreResult(restore, result, late == "") {
-		b.redis.Del(ctx, key)
-		if late != "" {
-			log.Printf("backup-scheduler: restore %d: applied the result the node kept as status only (%s); install, mod and sub-server rows were NOT reconciled", r.ID, late)
-		} else {
-			log.Printf("backup-scheduler: restore %d: applied the result the node kept, its report never arrived", r.ID)
-		}
+	if late := b.applyClaimedRestoreResult(ctx, key, raw, pttl, restore, result); late != "" {
+		log.Printf("backup-scheduler: restore %d: applied the result the node kept as status only (%s); install, mod and sub-server rows were NOT reconciled", r.ID, late)
+	} else {
+		log.Printf("backup-scheduler: restore %d: applied the result the node kept, its report never arrived", r.ID)
 	}
 	return true
 }
 
+// claimKeptRestoreResult takes the result kept under key, so the live consumer
+// and the tick never both apply one (redis.Nil: gone, or the other one has it).
+// It also returns the key's remaining TTL from the same transaction: the age
+// RestoreResultTTL-pttl is on the Redis clock, which a skewed node clock cannot
+// move the way it moves the payload's timestamp.
+func (b *BackupScheduler) claimKeptRestoreResult(ctx context.Context, key string) (string, time.Duration, error) {
+	var ttl *redis.DurationCmd
+	var get *redis.StringCmd
+	_, err := b.redis.TxPipelined(ctx, func(p redis.Pipeliner) error {
+		ttl = p.PTTL(ctx, key)
+		get = p.GetDel(ctx, key)
+		return nil
+	})
+	if get != nil && get.Err() == redis.Nil {
+		return "", 0, redis.Nil
+	}
+	if err != nil {
+		return "", 0, err
+	}
+	return get.Val(), ttl.Val(), nil
+}
+
+// applyClaimedRestoreResult applies a claimed result to restore and returns why
+// the reconciliation was skipped ("" = it ran). The archive's rows are
+// reconciled against the database as it is NOW, so a result that is not fresh,
+// or one a later restore has overtaken, would rewrite whatever the customer
+// changed since; it only closes the row. A row that could not be written gets
+// the key back, so a later tick retries.
+func (b *BackupScheduler) applyClaimedRestoreResult(ctx context.Context, key, raw string, pttl time.Duration, restore *models.BackupRestore, result restoreResult) string {
+	late := ""
+	// No TTL (-1) or more than the node sets is no age at all.
+	if pttl <= 0 || pttl > queue.RestoreResultTTL || queue.RestoreResultTTL-pttl > keptRestoreResultFresh {
+		late = fmt.Sprintf("it is not fresh: %s left of its %s TTL, node clock said %s",
+			pttl, queue.RestoreResultTTL, time.Unix(result.Timestamp, 0).UTC().Format(time.RFC3339))
+	} else if b.newerRestoreFinished(restore) {
+		late = "a later restore of the server has finished"
+	}
+	if !b.applyRestoreResult(restore, result, late == "") && pttl > 0 {
+		b.redis.Set(ctx, key, raw, pttl)
+	}
+	return late
+}
+
 // newerRestoreFinished reports whether a restore of the same server requested
-// after restore has already finished. A lookup error counts as yes: skipping
-// the reconciliation is the safe side.
+// after restore has already succeeded. Only a success counts: a failed restore
+// never swaps the world in (early refusals touch nothing, later failures drop
+// the stage or roll the swap back), so it has not overtaken the archive's rows.
+// A lookup error counts as yes: skipping the reconciliation is the safe side.
 func (b *BackupScheduler) newerRestoreFinished(restore *models.BackupRestore) bool {
 	others, err := b.store.ListBackupRestores(restore.ServerID, 25)
 	if err != nil {
 		return true
 	}
 	for _, o := range others {
-		if o.ID > restore.ID && (o.Status == "success" || o.Status == "failed") {
+		if o.ID > restore.ID && o.Status == "success" {
 			return true
 		}
 	}
@@ -618,7 +675,7 @@ func (b *BackupScheduler) reapAbandonedRestores(ctx context.Context, now time.Ti
 	for _, r := range restores {
 		// First: a kept result is the node's own answer, whether or not the
 		// node is reachable now.
-		if b.appliedKeptRestoreResult(ctx, r, now) {
+		if b.appliedKeptRestoreResult(ctx, r) {
 			continue
 		}
 		if now.Sub(r.RequestedAt) < backupRunAbandonedAfter {

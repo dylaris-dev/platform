@@ -31,16 +31,17 @@ func TestAKeptRestoreResultIsReadPromptlyAndAppliedLateOnlyAsStatus(t *testing.T
 		name         string
 		requested    time.Duration // ago
 		kept         string
+		age          time.Duration // RestoreResultTTL - remaining TTL, on the Redis clock; <0 = no TTL
 		rowStatus    string
 		others       []models.BackupRestore
 		wantUpdated  int
 		wantReplaced int
 		wantClosed   bool
 	}{
-		{name: "fresh result on a minute-old restore", requested: time.Minute, kept: kept(now.Add(-30 * time.Second).Unix()), wantUpdated: 1, wantReplaced: 1},
+		{name: "fresh result on a minute-old restore", requested: time.Minute, kept: kept(now.Unix()), age: 30 * time.Second, wantUpdated: 1, wantReplaced: 1},
 		{name: "fresh result on a restore past the deadline", requested: 7 * time.Hour, kept: kept(now.Unix()), wantUpdated: 1, wantReplaced: 1},
-		{name: "late result: status only", requested: time.Hour, kept: kept(now.Add(-10 * time.Minute).Unix()), wantUpdated: 1},
-		{name: "no timestamp counts as late", requested: time.Hour, kept: `{"restoreId":1,"status":"success"}`, wantUpdated: 1},
+		{name: "late result: status only", requested: time.Hour, kept: kept(now.Unix()), age: 10 * time.Minute, wantUpdated: 1},
+		{name: "no TTL counts as late", requested: time.Hour, kept: kept(now.Unix()), age: -1, wantUpdated: 1},
 		{name: "a newer restore has finished: status only", requested: time.Hour, kept: kept(now.Unix()),
 			others: []models.BackupRestore{{ID: 2, ServerID: 2, Status: "success"}}, wantUpdated: 1},
 		{name: "a newer restore still queued does not count", requested: time.Hour, kept: kept(now.Unix()),
@@ -58,6 +59,9 @@ func TestAKeptRestoreResultIsReadPromptlyAndAppliedLateOnlyAsStatus(t *testing.T
 			key := queue.RestoreResultKey("u", 1)
 			if tt.kept != "" {
 				mr.Set(key, tt.kept)
+				if tt.age >= 0 {
+					mr.SetTTL(key, queue.RestoreResultTTL-tt.age)
+				}
 			}
 			status := tt.rowStatus
 			if status == "" {

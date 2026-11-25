@@ -68,6 +68,7 @@ func TestTheReaperAppliesAKeptRestoreResult(t *testing.T) {
 			key := queue.RestoreResultKey("u", 1)
 			if tt.kept != "" {
 				mr.Set(key, tt.kept)
+				mr.SetTTL(key, queue.RestoreResultTTL)
 			}
 			now := time.Now()
 			st := &restoreResultStore{

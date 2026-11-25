@@ -3,6 +3,7 @@ package queue
 import (
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Node -> Core backup reporting channels.
@@ -80,3 +81,8 @@ func NodeTokenFromBackupChannel(channel string) (token string, ok bool) {
 func RestoreResultKey(serverUUID string, restoreID int) string {
 	return "dylaris:server:" + serverUUID + ":restore_result:" + strconv.Itoa(restoreID)
 }
+
+// RestoreResultTTL is how long a node keeps a restore result. Core reads a kept
+// result's age as RestoreResultTTL minus the key's remaining TTL, on the Redis
+// clock, because a BYON node's own clock can be off by minutes or hours.
+const RestoreResultTTL = 24 * time.Hour
