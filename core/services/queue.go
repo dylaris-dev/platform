@@ -50,6 +50,10 @@ type NodeCommand struct {
 	// was away from a fresh one; see stalePowerAction in the node. An older
 	// node ignores it.
 	IssuedAt int64 `json:"issuedAt,omitempty"`
+	// IssuedAtMs is the same instant in milliseconds: seconds tie for a
+	// delete and a re-create of one UUID in the same second, and the node's
+	// tombstone needs to order them. An older node ignores it.
+	IssuedAtMs int64 `json:"issuedAtMs,omitempty"`
 }
 
 // SendCommand pushes a command into the Node's queue (mailbox).
@@ -72,11 +76,13 @@ func (q *QueueService) SendCommand(ctx context.Context, nodeToken string, action
 
 	stream := nodeCmdStream(nodeToken)
 
+	now := time.Now()
 	cmd := NodeCommand{
-		Action:    action,
-		Config:    config,
-		Installer: installer,
-		IssuedAt:  time.Now().Unix(),
+		Action:     action,
+		Config:     config,
+		Installer:  installer,
+		IssuedAt:   now.Unix(),
+		IssuedAtMs: now.UnixMilli(),
 	}
 
 	jsonData, err := json.Marshal(cmd)
@@ -178,16 +184,19 @@ func (q *QueueService) sendAttemptCommand(ctx context.Context, nodeToken, action
 	stream := nodeCmdStream(nodeToken)
 
 	type migrateOutCmd struct {
-		Action   string                 `json:"action"`
-		IssuedAt int64                  `json:"issuedAt"`
-		Config   map[string]interface{} `json:"config"`
-		Attempt  string                 `json:"attempt,omitempty"`
+		Action     string                 `json:"action"`
+		IssuedAt   int64                  `json:"issuedAt"`
+		IssuedAtMs int64                  `json:"issuedAtMs"`
+		Config     map[string]interface{} `json:"config"`
+		Attempt    string                 `json:"attempt,omitempty"`
 	}
+	now := time.Now()
 	cmd := migrateOutCmd{
-		Action:   action,
-		IssuedAt: time.Now().Unix(),
-		Config:   map[string]interface{}{"uuid": serverUUID},
-		Attempt:  attempt,
+		Action:     action,
+		IssuedAt:   now.Unix(),
+		IssuedAtMs: now.UnixMilli(),
+		Config:     map[string]interface{}{"uuid": serverUUID},
+		Attempt:    attempt,
 	}
 
 	jsonData, err := json.Marshal(cmd)

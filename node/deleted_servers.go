@@ -37,17 +37,22 @@ import (
 var deletedServers = struct {
 	sync.Mutex
 	at map[string]time.Time
-	// issued is the delete command's issuedAt (Core's clock), 0 when unknown.
-	issued map[string]int64
-}{at: map[string]time.Time{}, issued: map[string]int64{}}
+	// issued is the delete command's issuedAt (Core's clock), 0 when unknown;
+	// issuedMs its issuedAtMs, 0 from a Core that predates it.
+	issued   map[string]int64
+	issuedMs map[string]int64
+}{at: map[string]time.Time{}, issued: map[string]int64{}, issuedMs: map[string]int64{}}
 
 const deletedServerMemory = 90 * 24 * time.Hour
 
-func markServerDeleted(uuid string) { markServerDeletedIssued(uuid, 0) }
+func markServerDeleted(uuid string) { markServerDeletedIssued(uuid, 0, 0) }
 
-// markServerDeletedIssued records the tombstone with the delete's issuedAt,
-// which is also the marker file's content, so a restart keeps it.
-func markServerDeletedIssued(uuid string, issuedAt int64) {
+// markServerDeletedIssued records the tombstone with the delete's issuedAt
+// and issuedAtMs, which are also the marker file's content ("<s>" or
+// "<s> <ms>"), so a restart keeps them. A node rolled back to a build that
+// reads only "<s>" parses the two-field form as 0 and refuses the re-create,
+// the same as a tombstone that predates issuedAt.
+func markServerDeletedIssued(uuid string, issuedAt, issuedAtMs int64) {
 	deletedServers.Lock()
 	defer deletedServers.Unlock()
 	now := time.Now()
@@ -55,10 +60,12 @@ func markServerDeletedIssued(uuid string, issuedAt int64) {
 		if now.Sub(t) > deletedServerMemory {
 			delete(deletedServers.at, u)
 			delete(deletedServers.issued, u)
+			delete(deletedServers.issuedMs, u)
 		}
 	}
 	deletedServers.at[uuid] = now
 	deletedServers.issued[uuid] = issuedAt
+	deletedServers.issuedMs[uuid] = issuedAtMs
 	if nodeSecretDir == "" {
 		return
 	}
@@ -72,6 +79,9 @@ func markServerDeletedIssued(uuid string, issuedAt int64) {
 	var content []byte
 	if issuedAt > 0 {
 		content = strconv.AppendInt(nil, issuedAt, 10)
+		if issuedAtMs > 0 {
+			content = strconv.AppendInt(append(content, ' '), issuedAtMs, 10)
+		}
 	}
 	if err := os.WriteFile(tombstonePath(uuid), content, 0o600); err != nil {
 		log.Printf("delete %s: tombstone not persisted, a restart forgets it: %v", uuid, err)
@@ -97,15 +107,33 @@ func serverDeleted(uuid string) bool {
 // node clock skew cannot reorder them; a create queued before the delete and
 // redelivered after it is older and stays refused. Without both times (an old
 // Core, a tombstone written before this) nothing is cleared.
-func clearTombstoneForCreate(uuid string, createIssuedAt int64) bool {
+//
+// Seconds tie for a delete and a re-create in the same second, and a tie must
+// refuse, so milliseconds decide when both commands carry them. Two Core
+// replicas whose clocks disagree by more than the gap can still misorder them;
+// no Core timestamp can fix that.
+func clearTombstoneForCreate(uuid string, createIssuedAt, createIssuedAtMs int64) bool {
 	deletedServers.Lock()
 	defer deletedServers.Unlock()
 	deleteIssuedAt, ok := deletedServers.issued[uuid]
+	deleteIssuedAtMs := deletedServers.issuedMs[uuid]
 	if !ok && nodeSecretDir != "" {
 		b, _ := os.ReadFile(tombstonePath(uuid))
-		deleteIssuedAt, _ = strconv.ParseInt(strings.TrimSpace(string(b)), 10, 64)
+		if f := strings.Fields(string(b)); len(f) > 0 {
+			deleteIssuedAt, _ = strconv.ParseInt(f[0], 10, 64)
+			if len(f) > 1 {
+				deleteIssuedAtMs, _ = strconv.ParseInt(f[1], 10, 64)
+			}
+		}
 	}
-	if createIssuedAt == 0 || deleteIssuedAt == 0 || createIssuedAt <= deleteIssuedAt {
+	if createIssuedAt == 0 || deleteIssuedAt == 0 {
+		return false
+	}
+	if createIssuedAtMs > 0 && deleteIssuedAtMs > 0 {
+		if createIssuedAtMs <= deleteIssuedAtMs {
+			return false
+		}
+	} else if createIssuedAt <= deleteIssuedAt {
 		return false
 	}
 	// The file first: serverDeleted falls back to it on a map miss, so a file
@@ -118,6 +146,7 @@ func clearTombstoneForCreate(uuid string, createIssuedAt int64) bool {
 	}
 	delete(deletedServers.at, uuid)
 	delete(deletedServers.issued, uuid)
+	delete(deletedServers.issuedMs, uuid)
 	return true
 }
 
@@ -186,11 +215,11 @@ var removeTreeVerified = func(dir string) error {
 // UUID, and the tombstone would otherwise refuse every container build for the
 // server once the move had cut over and the source copy was gone. The same
 // rule as a create decides; a refused move fails before any byte is pulled.
-func admitMoveOfDeletedServer(ctx context.Context, rdb *redis.Client, nodeToken, uuid, progressID string, issuedAt int64) bool {
+func admitMoveOfDeletedServer(ctx context.Context, rdb *redis.Client, nodeToken, uuid, progressID string, issuedAt, issuedAtMs int64) bool {
 	if !serverDeleted(uuid) {
 		return true
 	}
-	if !clearTombstoneForCreate(uuid, issuedAt) {
+	if !clearTombstoneForCreate(uuid, issuedAt, issuedAtMs) {
 		log.Printf("move %s: the server was deleted on this node after the move was issued, refusing it", uuid)
 		setMigrationStatus(ctx, rdb, nodeToken, progressID, "error", "the server was deleted on the target node")
 		return false

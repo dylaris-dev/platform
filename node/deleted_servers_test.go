@@ -159,31 +159,42 @@ func TestALeftoverContainerOfADeletedServerIsRemoved(t *testing.T) {
 // a create from before the delete - is still refused.
 func TestACreateIssuedAfterTheDeleteClearsTheTombstone(t *testing.T) {
 	cases := []struct {
-		name          string
-		deleteIssued  int64
-		createIssued  int64
-		restart       bool
-		wantClearance bool
+		name           string
+		deleteIssued   int64
+		deleteIssuedMs int64
+		createIssued   int64
+		createIssuedMs int64
+		restart        bool
+		wantClearance  bool
 	}{
-		{"create issued after the delete", 1000, 2000, false, true},
-		{"after a node restart", 1000, 2000, true, true},
-		{"create queued before the delete", 1000, 990, false, false},
-		{"same second", 1000, 1000, false, false},
-		{"old core: create has no issuedAt", 1000, 0, false, false},
-		{"old tombstone: no delete issuedAt", 0, 2000, true, false},
+		{"create issued after the delete", 1000, 0, 2000, 0, false, true},
+		{"after a node restart", 1000, 0, 2000, 0, true, true},
+		{"create queued before the delete", 1000, 0, 990, 0, false, false},
+		{"same second", 1000, 0, 1000, 0, false, false},
+		{"old core: create has no issuedAt", 1000, 0, 0, 0, false, false},
+		{"old tombstone: no delete issuedAt", 0, 0, 2000, 0, true, false},
+		// W02: a delete and a re-create in the same second are ordered by
+		// Core's milliseconds when both commands carry them.
+		{"same second, create later in ms", 1000, 1000100, 1000, 1000900, false, true},
+		{"same second, create later in ms, after a restart", 1000, 1000100, 1000, 1000900, true, true},
+		{"same second, create earlier in ms", 1000, 1000900, 1000, 1000100, true, false},
+		{"same millisecond", 1000, 1000500, 1000, 1000500, false, false},
+		{"old core create, ms tombstone: seconds decide", 1000, 1000500, 1000, 0, true, false},
+		{"old core create, ms tombstone, later second", 1000, 1000500, 1001, 0, true, true},
+		{"seconds tombstone, ms create: seconds decide", 1000, 0, 1000, 1000900, true, false},
 	}
 	for i, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			uuid := "7d1e0000-0000-4000-8000-0000000005a" + string(rune('0'+i))
+			uuid := "7d1e0000-0000-4000-8000-0000000005" + string(rune('a'+i))
 			prev := nodeSecretDir
 			nodeSecretDir = t.TempDir()
 			t.Cleanup(func() { nodeSecretDir = prev; forgetTombstoneInMemory(uuid) })
 
-			markServerDeletedIssued(uuid, c.deleteIssued)
+			markServerDeletedIssued(uuid, c.deleteIssued, c.deleteIssuedMs)
 			if c.restart {
 				forgetTombstoneInMemory(uuid)
 			}
-			if got := clearTombstoneForCreate(uuid, c.createIssued); got != c.wantClearance {
+			if got := clearTombstoneForCreate(uuid, c.createIssued, c.createIssuedMs); got != c.wantClearance {
 				t.Fatalf("cleared = %v, want %v", got, c.wantClearance)
 			}
 			if serverDeleted(uuid) == c.wantClearance {
@@ -219,10 +230,10 @@ func TestAMoveIssuedAfterTheDeleteClearsTheTombstone(t *testing.T) {
 			t.Cleanup(func() { nodeSecretDir = prev; forgetTombstoneInMemory(uuid) })
 			rdb := redis.NewClient(&redis.Options{Addr: miniredis.RunT(t).Addr()})
 			if c.tombstone {
-				markServerDeletedIssued(uuid, c.deleteIssued)
+				markServerDeletedIssued(uuid, c.deleteIssued, 0)
 			}
 
-			if got := admitMoveOfDeletedServer(context.Background(), rdb, "tok", uuid, uuid, c.moveIssued); got != c.wantAdmit {
+			if got := admitMoveOfDeletedServer(context.Background(), rdb, "tok", uuid, uuid, c.moveIssued, 0); got != c.wantAdmit {
 				t.Fatalf("admitted = %v, want %v", got, c.wantAdmit)
 			}
 			if serverDeleted(uuid) == c.wantAdmit {
@@ -249,7 +260,7 @@ func TestATombstoneThatCannotBeRemovedIsNotCleared(t *testing.T) {
 	nodeSecretDir = t.TempDir()
 	t.Cleanup(func() { nodeSecretDir = prev; forgetTombstoneInMemory(uuid) })
 
-	markServerDeletedIssued(uuid, 1000)
+	markServerDeletedIssued(uuid, 1000, 0)
 	// A non-empty directory in the file's place makes os.Remove fail.
 	if err := os.Remove(tombstonePath(uuid)); err != nil {
 		t.Fatal(err)
@@ -258,7 +269,7 @@ func TestATombstoneThatCannotBeRemovedIsNotCleared(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if clearTombstoneForCreate(uuid, 2000) {
+	if clearTombstoneForCreate(uuid, 2000, 0) {
 		t.Fatal("cleared although the tombstone file is still there")
 	}
 	if !serverDeleted(uuid) {

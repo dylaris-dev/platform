@@ -441,6 +441,7 @@ func TestSendCommand_StampsIssuedAt(t *testing.T) {
 	if !ok || int64(at) < before || int64(at) > time.Now().Unix() {
 		t.Fatalf("issuedAt = %v, want the time it was queued", payload["issuedAt"])
 	}
+	assertIssuedAtMs(t, payload)
 }
 
 // H59: a migrate_out is stamped too, so a node can drop one Core gave up on.
@@ -455,5 +456,16 @@ func TestSendMigrateOutCommand_StampsIssuedAt(t *testing.T) {
 	at, ok := payload["issuedAt"].(float64)
 	if !ok || int64(at) < before || int64(at) > time.Now().Unix() {
 		t.Fatalf("issuedAt = %v, want the time it was queued", payload["issuedAt"])
+	}
+	assertIssuedAtMs(t, payload)
+}
+
+// W02: issuedAtMs is the same instant as issuedAt in milliseconds, so a node
+// can order a delete and a re-create queued within one second.
+func assertIssuedAtMs(t *testing.T, payload map[string]interface{}) {
+	t.Helper()
+	ms, ok := payload["issuedAtMs"].(float64)
+	if !ok || int64(ms)/1000 != int64(payload["issuedAt"].(float64)) {
+		t.Fatalf("issuedAtMs = %v, want issuedAt %v in milliseconds", payload["issuedAtMs"], payload["issuedAt"])
 	}
 }

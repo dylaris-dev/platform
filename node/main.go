@@ -207,7 +207,10 @@ type NodeCommand struct {
 	Action string `json:"action"`
 	// IssuedAt is when Core queued the command (unix seconds, Core's clock);
 	// 0 from a Core that predates it. See stalePowerAction.
-	IssuedAt   int64           `json:"issuedAt,omitempty"`
+	IssuedAt int64 `json:"issuedAt,omitempty"`
+	// IssuedAtMs is the same instant in milliseconds, 0 from an older Core;
+	// it orders a delete and a re-create queued in the same second.
+	IssuedAtMs int64           `json:"issuedAtMs,omitempty"`
 	Config     ServerConfig    `json:"config"`
 	Installer  InstallerConfig `json:"installer"`
 	TargetPath string          `json:"targetPath,omitempty"`
@@ -1755,7 +1758,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		// A create and a delete queued together (node offline, restarting) run
 		// in parallel, and the delete usually finishes first.
 		if serverDeleted(cmd.Config.UUID) {
-			if !clearTombstoneForCreate(cmd.Config.UUID, cmd.IssuedAt) {
+			if !clearTombstoneForCreate(cmd.Config.UUID, cmd.IssuedAt, cmd.IssuedAtMs) {
 				log.Printf("create %s: the server was already deleted on this node, not creating it", cmd.Config.UUID)
 				return
 			}
@@ -2309,7 +2312,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		}
 		log.Printf("Deleting Server %s ...", cmd.Config.UUID)
 		// First, so an install still running for it cannot start it again.
-		markServerDeletedIssued(cmd.Config.UUID, cmd.IssuedAt)
+		markServerDeletedIssued(cmd.Config.UUID, cmd.IssuedAt, cmd.IssuedAtMs)
 		// The data goes regardless: Core has already dropped the row. A
 		// container left behind is removed by the reconciler (tombstone).
 		if err := dm.PowerAction(cmd.Config.UUID, "delete"); err != nil && !client.IsErrNotFound(err) {
@@ -2863,7 +2866,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		// Target side: pull the staged archive and extract it. No
 		// container start here: Core sends "reconfigure" with its config next,
 		// and the reconciler creates the container from that.
-		if !admitMoveOfDeletedServer(ctx, rdb, id, cmd.Config.UUID, queue.MigrationProgressID(cmd.Config.UUID, cmd.Attempt), cmd.IssuedAt) {
+		if !admitMoveOfDeletedServer(ctx, rdb, id, cmd.Config.UUID, queue.MigrationProgressID(cmd.Config.UUID, cmd.Attempt), cmd.IssuedAt, cmd.IssuedAtMs) {
 			break
 		}
 		handleMigrateIn(ctx, rdb, storage, id, cmd.Config.UUID, queue.MigrationProgressID(cmd.Config.UUID, cmd.Attempt), cmd.SourceNodeID, cmd.MigrateToken, cmd.ExpectedSha256, cmd.ExpectedSize, cmd.SourcePrivateIPs)
@@ -2889,7 +2892,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 
 	case "migrate_pull_r2":
 		// Target side (cross-LAN BYON fallback): download from R2, verify, extract.
-		if !admitMoveOfDeletedServer(ctx, rdb, id, cmd.Config.UUID, queue.MigrationProgressID(cmd.Config.UUID, cmd.Attempt), cmd.IssuedAt) {
+		if !admitMoveOfDeletedServer(ctx, rdb, id, cmd.Config.UUID, queue.MigrationProgressID(cmd.Config.UUID, cmd.Attempt), cmd.IssuedAt, cmd.IssuedAtMs) {
 			break
 		}
 		handleMigratePullR2(ctx, rdb, storage, id, cmd.Config.UUID, queue.MigrationProgressID(cmd.Config.UUID, cmd.Attempt), cmd.PresignedGetURL, cmd.ExpectedSha256, cmd.ExpectedSize)

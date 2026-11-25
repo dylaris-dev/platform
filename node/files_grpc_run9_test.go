@@ -66,7 +66,7 @@ func TestAWriteForADeletedServerDoesNotRecreateIt(t *testing.T) {
 		delete(deletedServers.issued, uuid)
 		deletedServers.Unlock()
 	})
-	markServerDeletedIssued(uuid, 0)
+	markServerDeletedIssued(uuid, 0, 0)
 	dir := filepath.Join(t.TempDir(), uuid)
 	if root, _, err := openJailedForWrite(dir, "plugins/x.yml"); err == nil {
 		root.Close()
