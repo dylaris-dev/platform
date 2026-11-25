@@ -38,7 +38,7 @@ func TestAMoveNeedsRoomForTheArchiveAndItsUnpackedCopy(t *testing.T) {
 			rdb := redis.NewClient(&redis.Options{Addr: miniredis.RunT(t).Addr()})
 			progress := queue.MigrationProgressID(stagingTestUUID, string(rune('a'+i)))
 			pulled := false
-			receiveMovedServer(context.Background(), rdb, "tok", stagingTestUUID, progress, t.TempDir(), tc.size, "migrate_in", "pull failed",
+			receiveMovedServer(context.Background(), rdb, nil, "tok", stagingTestUUID, progress, t.TempDir(), tc.size, "migrate_in", "pull failed",
 				func(string, int64, func(int64)) error { pulled = true; return errors.New("stop here") })
 			if pulled != tc.wantPull {
 				t.Fatalf("pulled = %v, want %v", pulled, tc.wantPull)

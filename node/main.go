@@ -351,6 +351,8 @@ func main() {
 	storageMgr := NewStorageManager(storagePaths, rdb)
 	storageMgr.LogStorageInfo()
 	globalStorageMgr = storageMgr
+	// Before the SFTP and Beam servers start taking writes.
+	resumeStagedWithdrawals(storageMgr)
 
 	dockerMgr, err := NewDockerManager(storageMgr)
 	if err == nil {

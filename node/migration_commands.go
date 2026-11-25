@@ -227,8 +227,9 @@ func handleMigrateOut(ctx context.Context, rdb *redis.Client, storage *StorageMa
 	}
 	// A write landing while the tree is read is missing from the copy or torn
 	// in it, and the source is deleted after cutover. So the writes are
-	// withdrawn here, at once and for the whole staging, rather than at each
-	// session's next access check; the server is already stopped, so writes
+	// withdrawn here, at once and until the move ends on this node (see
+	// holdStagedWithdrawal below), rather than at each session's next access
+	// check; the server is already stopped, so writes
 	// still running are waited out until quiet, and refused only past the
 	// bound, before anything is staged. A write the archive still sees
 	// drops it.
@@ -318,6 +319,9 @@ func handleMigrateOut(ctx context.Context, rdb *redis.Client, storage *StorageMa
 		setMigrationStatus(ctx, rdb, nodeToken, progressID, "error", "cannot put the archive in place")
 		return
 	}
+	// From here a write is in no copy. Held until an abort keeps the server
+	// here or the cleanup removes it, bounded like the archive itself.
+	storage.holdStagedWithdrawal(serverUUID, time.Now().Add(stagedArchiveMaxAge))
 
 	meta := migrationMeta{SHA256: sha, Size: size, SourceNodeID: nodeID, StagedAt: time.Now().Unix()}
 	metaJSON, _ := json.Marshal(meta)
@@ -472,7 +476,7 @@ func handleMigrateIn(ctx context.Context, rdb *redis.Client, storage *StorageMan
 	// status: a customer's node could map what this node can reach.
 	// SelectStoragePath already persisted node:<nodeID>:server:<uuid>:storage,
 	// so the node knows where the server lives for the follow-up start.
-	receiveMovedServer(ctx, rdb, nodeToken, serverUUID, progressID, targetPath, expectedSize, "migrate_in", "pull from the source node failed",
+	receiveMovedServer(ctx, rdb, storage, nodeToken, serverUUID, progressID, targetPath, expectedSize, "migrate_in", "pull from the source node failed",
 		func(dest string, maxBytes int64, onWrite func(int64)) error {
 			return migration.Pull(ctx, url, token, expectedSha256, dest, 3, maxBytes, onWrite)
 		})
@@ -489,7 +493,7 @@ func handleMigrateIn(ctx context.Context, rdb *redis.Client, storage *StorageMan
 // already claimed, and claim their own while they run: the pull its cap, the
 // unpack what it has written (as backup_restore does). Both report their
 // bytes, which is what keeps Core waiting on a long transfer.
-func receiveMovedServer(ctx context.Context, rdb *redis.Client, nodeToken, serverUUID, progressID, targetPath string, expectedSize int64, cmd, pullFailed string, pull func(dest string, maxBytes int64, onWrite func(int64)) error) {
+func receiveMovedServer(ctx context.Context, rdb *redis.Client, storage *StorageManager, nodeToken, serverUUID, progressID, targetPath string, expectedSize int64, cmd, pullFailed string, pull func(dest string, maxBytes int64, onWrite func(int64)) error) {
 	var moved atomic.Int64
 	stopProgress := reportMigrationProgress(ctx, rdb, nodeToken, progressID, "transferring", moved.Load)
 	phase, msg := "transferred", ""
@@ -551,6 +555,9 @@ func receiveMovedServer(ctx context.Context, rdb *redis.Client, nodeToken, serve
 	if err := os.WriteFile(landedMarker(targetPath, serverUUID), []byte(progressID), 0o600); err != nil {
 		log.Printf("%s %s: could not mark the landed copy: %v", cmd, serverUUID, err)
 	}
+	// The server lives here again: an earlier move out of this node whose
+	// cleanup has not run yet must not keep the landed copy read-only.
+	storage.releaseStagedWithdrawal(serverUUID)
 	log.Printf("%s %s: transferred into %s", cmd, serverUUID, targetDir)
 }
 
@@ -774,6 +781,28 @@ func sweepStaleMigrationArchives(storage *StorageManager) {
 	}
 }
 
+// resumeStagedWithdrawals withdraws again, at boot, the writes of every server
+// with a staged archive here: the hold lived in memory, and a restart between
+// 'staged' and the end of the move gave stale sessions their writes back.
+// Dated by the archive like migrationInFlight. Run before any session opens.
+func resumeStagedWithdrawals(storage *StorageManager) {
+	for _, root := range storage.Paths() {
+		entries, err := os.ReadDir(filepath.Join(root, migrationStagingDir))
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			uuid, ok := strings.CutSuffix(e.Name(), ".zip")
+			if !ok || e.IsDir() || !validate.IsServerUUID(uuid) {
+				continue
+			}
+			if info, err := e.Info(); err == nil && time.Since(info.ModTime()) < stagedArchiveMaxAge {
+				storage.holdStagedWithdrawal(uuid, info.ModTime().Add(stagedArchiveMaxAge))
+			}
+		}
+	}
+}
+
 // handleMigrateAbort (source side) removes the staged archive and origin stamp
 // of a move that did not happen - and nothing else: the server stays on this
 // node. The archive is a full copy of the server outside its disk quota, and
@@ -791,6 +820,9 @@ func handleMigrateAbort(storage *StorageManager, serverUUID string, issuedAt int
 		}
 	}
 	c.(*atomic.Int64).Add(1)
+	// The server stays here. A run still staging keeps its own withdrawal
+	// until it sees the count move and drops its archive.
+	storage.releaseStagedWithdrawal(serverUUID)
 	if storagePath == "" {
 		return
 	}
@@ -1151,6 +1183,8 @@ func handleMigrateCleanup(ctx context.Context, rdb *redis.Client, storage *Stora
 	// that carries "unlimited" (0) would fall back to this stale cap.
 	globalQuotaSet.RemoveQuota(serverUUID)
 	forgetDiskLimit(ctx, rdb, serverUUID)
+	// Only now: a move of the server back here must find its writes allowed.
+	storage.releaseStagedWithdrawal(serverUUID)
 	log.Printf("migrate_cleanup %s: source data removed", serverUUID)
 }
 
@@ -1183,7 +1217,7 @@ func handleMigratePushR2(ctx context.Context, rdb *redis.Client, storage *Storag
 		return
 	}
 
-	touchStagedArchive(storagePath, serverUUID)
+	touchStagedArchive(storage, storagePath, serverUUID)
 	log.Printf("migrate_push_r2 %s: uploading staged archive to R2 (%d parts)", serverUUID, len(partURLs))
 	var sent countingWriter
 	stopProgress := reportMigrationProgress(ctx, rdb, nodeToken, progressID, "pushing", sent.Total)
@@ -1208,7 +1242,7 @@ func handleMigratePushR2(ctx context.Context, rdb *redis.Client, storage *Storag
 	}
 
 	// The pull leg Core waits on next gets its own 6h, after this one's.
-	touchStagedArchive(storagePath, serverUUID)
+	touchStagedArchive(storage, storagePath, serverUUID)
 	setMigrationStatus(ctx, rdb, nodeToken, progressID, "pushed", "")
 	log.Printf("migrate_push_r2 %s: uploaded to R2", serverUUID)
 }
@@ -1216,8 +1250,9 @@ func handleMigratePushR2(ctx context.Context, rdb *redis.Client, storage *Storag
 // touchStagedArchive dates the staged archive and origin stamp from now, so
 // their age, which the restart guard and the boot sweep read, counts from the
 // archive's last use rather than from the end of staging.
-func touchStagedArchive(storagePath, serverUUID string) {
+func touchStagedArchive(storage *StorageManager, storagePath, serverUUID string) {
 	now := time.Now()
+	storage.holdStagedWithdrawal(serverUUID, now.Add(stagedArchiveMaxAge))
 	for _, p := range []string{stagedArchivePath(storagePath, serverUUID), migrationOriginPath(storagePath, serverUUID)} {
 		if err := os.Chtimes(p, now, now); err != nil && !os.IsNotExist(err) {
 			log.Printf("migrate_push_r2 %s: could not date %s: %v", serverUUID, p, err)
@@ -1270,7 +1305,7 @@ func handleMigratePullR2(ctx context.Context, rdb *redis.Client, storage *Storag
 	markMovedIn(targetPath, serverUUID, progressID)
 
 	log.Printf("migrate_pull_r2 %s: downloading from R2", serverUUID)
-	receiveMovedServer(ctx, rdb, nodeToken, serverUUID, progressID, targetPath, expectedSize, "migrate_pull_r2", "download from transfer storage failed",
+	receiveMovedServer(ctx, rdb, storage, nodeToken, serverUUID, progressID, targetPath, expectedSize, "migrate_pull_r2", "download from transfer storage failed",
 		func(dest string, maxBytes int64, onWrite func(int64)) error {
 			return migration.PullURL(ctx, getURL, expectedSha256, dest, 3, maxBytes, onWrite)
 		})

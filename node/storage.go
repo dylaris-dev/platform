@@ -68,6 +68,9 @@ type StorageManager struct {
 	// Beam, SFTP and panel writes are refused at once instead of at each
 	// session's next access check. See withdrawWrites.
 	withdrawn map[string]int
+	// staged holds, per server, until when a staged move keeps its writes
+	// withdrawn after the run that staged it. See holdStagedWithdrawal.
+	staged map[string]time.Time
 	// readers counts, per server, folder zip downloads in progress. Apart
 	// from writers so a download does not bump writeGen. See holdReader.
 	readers map[string]int
@@ -1385,7 +1388,7 @@ func (sm *StorageManager) holdWriterUnlessMoving(serverUUID string, refuseMoving
 		return func() {}, true
 	}
 	sm.movingMu.Lock()
-	if refuseMoving && (sm.moving[serverUUID] != nil || sm.withdrawn[serverUUID] > 0) {
+	if refuseMoving && (sm.moving[serverUUID] != nil || sm.withdrawnLocked(serverUUID)) {
 		sm.movingMu.Unlock()
 		return func() {}, false
 	}
@@ -1491,7 +1494,42 @@ func (sm *StorageManager) writesWithdrawn(serverUUID string) bool {
 	}
 	sm.movingMu.Lock()
 	defer sm.movingMu.Unlock()
-	return sm.withdrawn[serverUUID] > 0
+	return sm.withdrawnLocked(serverUUID)
+}
+
+func (sm *StorageManager) withdrawnLocked(serverUUID string) bool {
+	return sm.withdrawn[serverUUID] > 0 || time.Now().Before(sm.staged[serverUUID])
+}
+
+// holdStagedWithdrawal keeps the server's writes withdrawn past the run that
+// staged it, until releaseStagedWithdrawal or until. A write after the archive
+// was made is in no copy, and the source is deleted at cleanup; sessions on
+// access from before the move still pass Core's own withdrawal for up to
+// sftpRecheckInterval. A later until extends the hold, an earlier one does not
+// shorten it.
+func (sm *StorageManager) holdStagedWithdrawal(serverUUID string, until time.Time) {
+	if sm == nil {
+		return
+	}
+	sm.movingMu.Lock()
+	defer sm.movingMu.Unlock()
+	if sm.staged == nil {
+		sm.staged = map[string]time.Time{}
+	}
+	if until.After(sm.staged[serverUUID]) {
+		sm.staged[serverUUID] = until
+	}
+}
+
+// releaseStagedWithdrawal ends holdStagedWithdrawal: the move ended on this
+// node, either the server stays here or its copy here is gone.
+func (sm *StorageManager) releaseStagedWithdrawal(serverUUID string) {
+	if sm == nil {
+		return
+	}
+	sm.movingMu.Lock()
+	defer sm.movingMu.Unlock()
+	delete(sm.staged, serverUUID)
 }
 
 // quiesceWrites withdraws the server's writes and waits, up to bound, until

@@ -101,6 +101,9 @@ func TestMigrateOutStagesOnlyAfterAQuietWindow(t *testing.T) {
 				if archived {
 					t.Fatal("staged while writes were still landing")
 				}
+				if storage.writesWithdrawn(stagingTestUUID) {
+					t.Fatal("write access is still withdrawn after the run failed")
+				}
 				return
 			}
 			if st.Phase != "staged" {
@@ -109,8 +112,9 @@ func TestMigrateOutStagesOnlyAfterAQuietWindow(t *testing.T) {
 			if len(tc.holds) > 0 && archivedAt < lastStart+migrateOutQuietWindow {
 				t.Fatalf("archive started %v after the command, before the last write (%v) was %v quiet", archivedAt, lastStart, migrateOutQuietWindow)
 			}
-			if storage.writesWithdrawn(stagingTestUUID) {
-				t.Fatal("write access is still withdrawn after the run ended")
+			// R43-04: a staged move keeps them withdrawn until it ends here.
+			if !storage.writesWithdrawn(stagingTestUUID) {
+				t.Fatal("write access came back once the server was staged")
 			}
 		})
 	}
