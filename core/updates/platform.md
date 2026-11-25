@@ -8,6 +8,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.25
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- On project-quota storage, code inside a server could move its own files out of the server's quota project, so
+  the disk limit and the disk guard stopped counting them. Server and installer containers now run under Docker's
+  default seccomp profile minus the two ioctls that change a file's quota project. A running server gets it at its
+  next restart. `node`
+
+### Fixes
+- Nothing.
+
 ## 2026.11.23
 
 ### Features

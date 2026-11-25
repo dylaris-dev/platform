@@ -11,6 +11,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.25
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Code inside a Minecraft server (a plugin, for example) could take its files out of the server's disk limit on
+  nodes that use project quotas. Servers now run under a profile that refuses this; your node updates itself and
+  each server picks it up at its next restart. `node`
+
+### Fixes
+- Nothing.
+
 ## 2026.11.23
 
 ### Features
