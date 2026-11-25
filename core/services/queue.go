@@ -140,11 +140,36 @@ func (q *QueueService) SendRawCommand(ctx context.Context, nodeToken string, pay
 	return nil
 }
 
+// issued is when Core queued a command, at the payload's top level where the
+// node's NodeCommand reads it (see NodeCommand.IssuedAt). Per-command senders
+// that left it out reached the node as 0, and a migrate_in or migrate_pull_r2
+// onto a node holding the uuid's tombstone was then always refused, because
+// only a move issued after the delete may clear it. An older node ignores it.
+type issued struct {
+	IssuedAt   int64 `json:"issuedAt"`
+	IssuedAtMs int64 `json:"issuedAtMs"`
+}
+
+func (s *issued) stamp(now time.Time) { s.IssuedAt, s.IssuedAtMs = now.Unix(), now.UnixMilli() }
+
+// stampedCommand is a command struct embedding issued. publishCommand takes
+// only those, so a new per-command sender cannot skip the stamp.
+type stampedCommand interface{ stamp(time.Time) }
+
+func (q *QueueService) publishCommand(ctx context.Context, nodeToken, action string, cmd stampedCommand) error {
+	cmd.stamp(time.Now())
+	jsonData, err := json.Marshal(cmd)
+	if err != nil {
+		return fmt.Errorf("failed to marshal %s command: %w", action, err)
+	}
+	_, err = queue.Publish(ctx, q.redis, nodeCmdStream(nodeToken), jsonData)
+	return err
+}
+
 // SendMigrateCommand queues a migrate_storage command for the given server.
 func (q *QueueService) SendMigrateCommand(ctx context.Context, nodeToken, serverUUID, targetPath string) error {
-	stream := nodeCmdStream(nodeToken)
-
 	type migrateCmd struct {
+		issued
 		Action     string                 `json:"action"`
 		Config     map[string]interface{} `json:"config"`
 		TargetPath string                 `json:"targetPath"`
@@ -155,14 +180,7 @@ func (q *QueueService) SendMigrateCommand(ctx context.Context, nodeToken, server
 		Config:     map[string]interface{}{"uuid": serverUUID},
 		TargetPath: targetPath,
 	}
-
-	jsonData, err := json.Marshal(cmd)
-	if err != nil {
-		return fmt.Errorf("failed to marshal migrate command: %w", err)
-	}
-
-	_, err = queue.Publish(ctx, q.redis, stream, jsonData)
-	return err
+	return q.publishCommand(ctx, nodeToken, cmd.Action, &cmd)
 }
 
 // SendMigrateOutCommand queues a migrate_out (auto-move) command. The source
@@ -181,30 +199,18 @@ func (q *QueueService) SendMigrateDiscardCommand(ctx context.Context, nodeToken,
 }
 
 func (q *QueueService) sendAttemptCommand(ctx context.Context, nodeToken, action, serverUUID, attempt string) error {
-	stream := nodeCmdStream(nodeToken)
-
 	type migrateOutCmd struct {
-		Action     string                 `json:"action"`
-		IssuedAt   int64                  `json:"issuedAt"`
-		IssuedAtMs int64                  `json:"issuedAtMs"`
-		Config     map[string]interface{} `json:"config"`
-		Attempt    string                 `json:"attempt,omitempty"`
+		issued
+		Action  string                 `json:"action"`
+		Config  map[string]interface{} `json:"config"`
+		Attempt string                 `json:"attempt,omitempty"`
 	}
-	now := time.Now()
 	cmd := migrateOutCmd{
-		Action:     action,
-		IssuedAt:   now.Unix(),
-		IssuedAtMs: now.UnixMilli(),
-		Config:     map[string]interface{}{"uuid": serverUUID},
-		Attempt:    attempt,
+		Action:  action,
+		Config:  map[string]interface{}{"uuid": serverUUID},
+		Attempt: attempt,
 	}
-
-	jsonData, err := json.Marshal(cmd)
-	if err != nil {
-		return fmt.Errorf("failed to marshal %s command: %w", action, err)
-	}
-	_, err = queue.Publish(ctx, q.redis, stream, jsonData)
-	return err
+	return q.publishCommand(ctx, nodeToken, action, &cmd)
 }
 
 // migrateTargetConfig is the Config of a command that lands a server on a new
@@ -232,9 +238,8 @@ func migrateTargetConfig(serverUUID string, diskLimitMB int64, diskGrace string)
 // moved server ran with no disk limit on its new node until someone next
 // changed its resources.
 func (q *QueueService) SendMigrateInCommand(ctx context.Context, nodeToken, serverUUID, attempt, sourceNodeID, token, expectedSha256 string, expectedSize int64, sourcePrivateIPs []string, diskLimitMB int64, diskGrace string) error {
-	stream := nodeCmdStream(nodeToken)
-
 	type migrateInCmd struct {
+		issued
 		Action         string                 `json:"action"`
 		Config         map[string]interface{} `json:"config"`
 		SourceNodeID   string                 `json:"sourceNodeId"`
@@ -263,12 +268,7 @@ func (q *QueueService) SendMigrateInCommand(ctx context.Context, nodeToken, serv
 		SourcePrivateIPs: sourcePrivateIPs,
 	}
 
-	jsonData, err := json.Marshal(cmd)
-	if err != nil {
-		return fmt.Errorf("failed to marshal migrate_in command: %w", err)
-	}
-	_, err = queue.Publish(ctx, q.redis, stream, jsonData)
-	return err
+	return q.publishCommand(ctx, nodeToken, cmd.Action, &cmd)
 }
 
 // SendMigratePushR2Command queues a migrate_push_r2 command (cross-LAN BYON
@@ -279,9 +279,8 @@ func (q *QueueService) SendMigrateInCommand(ctx context.Context, nodeToken, serv
 // partURLs, when set, sign every partSize piece of an archive too large for one
 // PUT; a node that knows them uploads in parts, an older one tries putURL.
 func (q *QueueService) SendMigratePushR2Command(ctx context.Context, nodeToken, serverUUID, attempt, putURL string, partURLs []string, partSize int64) error {
-	stream := nodeCmdStream(nodeToken)
-
 	type migratePushR2Cmd struct {
+		issued
 		Action            string                 `json:"action"`
 		Config            map[string]interface{} `json:"config"`
 		Attempt           string                 `json:"attempt,omitempty"`
@@ -300,12 +299,7 @@ func (q *QueueService) SendMigratePushR2Command(ctx context.Context, nodeToken, 
 		cmd.PartSize = partSize
 	}
 
-	jsonData, err := json.Marshal(cmd)
-	if err != nil {
-		return fmt.Errorf("failed to marshal migrate_push_r2 command: %w", err)
-	}
-	_, err = queue.Publish(ctx, q.redis, stream, jsonData)
-	return err
+	return q.publishCommand(ctx, nodeToken, cmd.Action, &cmd)
 }
 
 // SendMigratePullR2Command queues a migrate_pull_r2 command (cross-LAN BYON
@@ -313,9 +307,8 @@ func (q *QueueService) SendMigratePushR2Command(ctx context.Context, nodeToken, 
 // archive against expectedSha256, extracts it, and reports phase "transferred" —
 // the same terminal phase as migrate_in, so cutover proceeds identically.
 func (q *QueueService) SendMigratePullR2Command(ctx context.Context, nodeToken, serverUUID, attempt, getURL, expectedSha256 string, expectedSize int64, diskLimitMB int64, diskGrace string) error {
-	stream := nodeCmdStream(nodeToken)
-
 	type migratePullR2Cmd struct {
+		issued
 		Action          string                 `json:"action"`
 		Config          map[string]interface{} `json:"config"`
 		Attempt         string                 `json:"attempt,omitempty"`
@@ -333,21 +326,15 @@ func (q *QueueService) SendMigratePullR2Command(ctx context.Context, nodeToken, 
 		ExpectedSize:    expectedSize,
 	}
 
-	jsonData, err := json.Marshal(cmd)
-	if err != nil {
-		return fmt.Errorf("failed to marshal migrate_pull_r2 command: %w", err)
-	}
-	_, err = queue.Publish(ctx, q.redis, stream, jsonData)
-	return err
+	return q.publishCommand(ctx, nodeToken, cmd.Action, &cmd)
 }
 
 // SendMigrateCleanupCommand queues a migrate_cleanup (auto-move) command. The
 // source node deletes the staged archive and the original server directory.
 // Sent only after the target confirms transfer; the orchestrator owns ordering.
 func (q *QueueService) SendMigrateCleanupCommand(ctx context.Context, nodeToken, serverUUID string) error {
-	stream := nodeCmdStream(nodeToken)
-
 	type migrateCleanupCmd struct {
+		issued
 		Action string                 `json:"action"`
 		Config map[string]interface{} `json:"config"`
 	}
@@ -356,10 +343,5 @@ func (q *QueueService) SendMigrateCleanupCommand(ctx context.Context, nodeToken,
 		Config: map[string]interface{}{"uuid": serverUUID},
 	}
 
-	jsonData, err := json.Marshal(cmd)
-	if err != nil {
-		return fmt.Errorf("failed to marshal migrate_cleanup command: %w", err)
-	}
-	_, err = queue.Publish(ctx, q.redis, stream, jsonData)
-	return err
+	return q.publishCommand(ctx, nodeToken, cmd.Action, &cmd)
 }

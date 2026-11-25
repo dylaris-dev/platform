@@ -460,6 +460,52 @@ func TestSendMigrateOutCommand_StampsIssuedAt(t *testing.T) {
 	assertIssuedAtMs(t, payload)
 }
 
+// R52-14: every move command is stamped, not only the ones sent through
+// SendCommand or sendAttemptCommand. A node holding a tombstone for the uuid
+// admits a migrate_in / migrate_pull_r2 only when it can show it was issued
+// after the delete; unstamped, every such move was refused.
+func TestMoveCommands_StampIssuedAt(t *testing.T) {
+	cases := []struct {
+		name string
+		send func(*QueueService, string) error
+	}{
+		{"migrate_in", func(q *QueueService, tok string) error {
+			return q.SendMigrateInCommand(context.Background(), tok, "srv", "a1", "src", "mt", "sha", 1, nil, 0, "")
+		}},
+		{"migrate_pull_r2", func(q *QueueService, tok string) error {
+			return q.SendMigratePullR2Command(context.Background(), tok, "srv", "a1", "https://get", "sha", 1, 0, "")
+		}},
+		{"migrate_push_r2", func(q *QueueService, tok string) error {
+			return q.SendMigratePushR2Command(context.Background(), tok, "srv", "a1", "https://put", nil, 0)
+		}},
+		{"migrate_cleanup", func(q *QueueService, tok string) error {
+			return q.SendMigrateCleanupCommand(context.Background(), tok, "srv")
+		}},
+		{"migrate_storage", func(q *QueueService, tok string) error {
+			return q.SendMigrateCommand(context.Background(), tok, "srv", "/data/new")
+		}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			rdb := newQueueTestRedis(t)
+			svc := NewQueueService(rdb)
+			before := time.Now().Unix()
+			if err := c.send(svc, "tok-s"); err != nil {
+				t.Fatalf("send: %v", err)
+			}
+			payload := readStreamPayload(t, rdb, "dylaris:node:tok-s:cmds")
+			if payload["action"] != c.name {
+				t.Fatalf("action = %v, want %s", payload["action"], c.name)
+			}
+			at, ok := payload["issuedAt"].(float64)
+			if !ok || int64(at) < before || int64(at) > time.Now().Unix() {
+				t.Fatalf("issuedAt = %v, want the time it was queued", payload["issuedAt"])
+			}
+			assertIssuedAtMs(t, payload)
+		})
+	}
+}
+
 // W02: issuedAtMs is the same instant as issuedAt in milliseconds, so a node
 // can order a delete and a re-create queued within one second.
 func assertIssuedAtMs(t *testing.T, payload map[string]interface{}) {

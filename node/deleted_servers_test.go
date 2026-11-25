@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -199,6 +200,44 @@ func TestACreateIssuedAfterTheDeleteClearsTheTombstone(t *testing.T) {
 			}
 			if serverDeleted(uuid) == c.wantClearance {
 				t.Fatalf("serverDeleted = %v after clearance %v", serverDeleted(uuid), c.wantClearance)
+			}
+		})
+	}
+}
+
+// R52-14: the stamp a migrate_in / migrate_pull_r2 carries at the payload's top
+// level reaches admitMoveOfDeletedServer through NodeCommand, so a move onto a
+// node holding an older tombstone is admitted and one older than the delete is
+// refused. Core sent these two unstamped, and every such move was refused.
+func TestAStampedMoveCommandIsOrderedAgainstTheTombstone(t *testing.T) {
+	cases := []struct {
+		name           string
+		action         string
+		deleteIssuedMs int64
+		wantAdmit      bool
+	}{
+		{"migrate_in after an older delete", "migrate_in", 1_700_000_000_000, true},
+		{"migrate_pull_r2 after an older delete", "migrate_pull_r2", 1_700_000_000_000, true},
+		{"migrate_in before a newer delete", "migrate_in", 1_700_000_009_000, false},
+		{"migrate_pull_r2 before a newer delete", "migrate_pull_r2", 1_700_000_009_000, false},
+	}
+	for i, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			uuid := "7d1e0000-0000-4000-8000-0000000014a" + string(rune('0'+i))
+			prev := nodeSecretDir
+			nodeSecretDir = t.TempDir()
+			t.Cleanup(func() { nodeSecretDir = prev; forgetTombstoneInMemory(uuid) })
+			rdb := redis.NewClient(&redis.Options{Addr: miniredis.RunT(t).Addr()})
+			markServerDeletedIssued(uuid, c.deleteIssuedMs/1000, c.deleteIssuedMs)
+
+			payload := `{"issuedAt":1700000005,"issuedAtMs":1700000005000,"action":"` + c.action +
+				`","config":{"uuid":"` + uuid + `","docker":{"diskLimit":0}},"attempt":"a1"}`
+			var cmd NodeCommand
+			if err := json.Unmarshal([]byte(payload), &cmd); err != nil {
+				t.Fatal(err)
+			}
+			if got := admitMoveOfDeletedServer(context.Background(), rdb, "tok", cmd.Config.UUID, uuid, cmd.IssuedAt, cmd.IssuedAtMs); got != c.wantAdmit {
+				t.Fatalf("admitted = %v, want %v", got, c.wantAdmit)
 			}
 		})
 	}
