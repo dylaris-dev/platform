@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"strings"
 	"time"
 
 	"dylaris-core/models"
@@ -58,6 +59,17 @@ func RememberSetupBefore(ctx context.Context, rdb *redis.Client, st store.Store,
 		Target: target, Image: srv.GameImage, Command: srv.StartCommand, Active: srv.ActiveSubServer,
 		Flags: srv.ExtraJvmFlags, Installer: srv.InstallerType, MCVersion: srv.MinecraftVersion, Build: srv.BuildNumber,
 		DesiredState: srv.DesiredState, At: time.Now().UnixNano(),
+	}
+	// A switch still pending already flipped the intent to online, and the
+	// setup overtakes it, which drops that switch's refusal and with it the
+	// only copy of the intent from before: carried forward like ChainSwitchUndo
+	// does for a switch after a switch. Active and the loader columns are not:
+	// the node's .active_server is adopted once the records clear.
+	if raw, err := rdb.Get(ctx, SwitchUndoKey(srv.UUID)).Result(); err == nil {
+		var undo SwitchUndo
+		if json.Unmarshal([]byte(raw), &undo) == nil && !undo.Overtaken && undo.DesiredState != "" && strings.EqualFold(undo.Target, srv.ActiveSubServer) {
+			before.DesiredState = undo.DesiredState
+		}
 	}
 	if st != nil {
 		if in, err := st.GetSubServerInstall(srv.ID, target); err == nil {

@@ -305,3 +305,41 @@ func TestASetupFailureIsAppliedOnceFromTheDurableKey(t *testing.T) {
 		})
 	}
 }
+
+// A switch flips the intent to online before it lands. A setup sent while it
+// is pending read that online, so when the switch was refused and the setup
+// failed too, the owner's stopped intent was gone and the reconciler started
+// the server (R42-02). The pending switch's record holds the intent from
+// before it; an overtaken one or one to another target does not count.
+func TestAFailedSetupAfterAPendingSwitchPutsTheIntentBack(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		undo *SwitchUndo
+		want []string
+	}{
+		{"pending switch to the active sub-server", &SwitchUndo{Target: "b", Previous: "a", DesiredState: "stopped"}, []string{"stopped"}},
+		{"switch already overtaken", &SwitchUndo{Target: "b", Previous: "a", DesiredState: "stopped", Overtaken: true}, nil},
+		{"switch to another target", &SwitchUndo{Target: "c", Previous: "a", DesiredState: "stopped"}, nil},
+		{"switch record from an older core", &SwitchUndo{Target: "b", Previous: "a"}, nil},
+		{"no switch", nil, nil},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			rdb := newQueueTestRedis(t)
+			ctx := context.Background()
+			st := &setupBeforeStore{}
+			srv := &models.Server{ID: 3, UUID: "srv-3", ActiveSubServer: "b", DesiredState: "online"}
+			if c.undo != nil {
+				raw, _ := json.Marshal(c.undo)
+				rdb.Set(ctx, SwitchUndoKey(srv.UUID), raw, time.Hour)
+			}
+
+			RememberSetupBefore(ctx, rdb, st, srv, "b")
+			if !RestoreSetupBefore(ctx, rdb, st, srv, "b") {
+				t.Fatal("did not restore the setup it recorded")
+			}
+			if fmt.Sprint(st.desired) != fmt.Sprint(c.want) {
+				t.Fatalf("desired-state writes = %v, want %v", st.desired, c.want)
+			}
+		})
+	}
+}

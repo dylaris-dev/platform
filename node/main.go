@@ -2909,7 +2909,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 	case "update_server_version":
 		runUpdateServerVersion(ctx, rdb, dm, storage, cmd, payload)
 	case "copy_sub_server":
-		runCopySubServer(ctx, rdb, storage, payload)
+		runCopySubServer(ctx, rdb, storage, func(uuid string) bool { return dm != nil && containerRunning(dm, uuid) }, payload)
 
 	default:
 		log.Printf("Unknown action: %s", cmd.Action)

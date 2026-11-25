@@ -366,7 +366,7 @@ func TestCopySubServerReportsAFailure(t *testing.T) {
 			payload, _ := json.Marshal(map[string]interface{}{"config": map[string]interface{}{
 				"uuid": uuid, "sourceSubServer": "main", "targetSubServer": "copy",
 			}})
-			runCopySubServer(context.Background(), rdb, &StorageManager{paths: []string{root}}, string(payload))
+			runCopySubServer(context.Background(), rdb, &StorageManager{paths: []string{root}}, nil, string(payload))
 
 			raw, _ := rdb.Get(context.Background(), "dylaris:server:"+uuid+":copy_sub_failed").Result()
 			if (raw != "") != c.wantReport {
@@ -409,7 +409,7 @@ func TestCopySubServerBesideARunningCopy(t *testing.T) {
 			payload, _ := json.Marshal(map[string]interface{}{"config": map[string]interface{}{
 				"uuid": uuid, "sourceSubServer": "main", "targetSubServer": "copy",
 			}})
-			runCopySubServer(context.Background(), rdb, &StorageManager{paths: []string{root}}, string(payload))
+			runCopySubServer(context.Background(), rdb, &StorageManager{paths: []string{root}}, nil, string(payload))
 
 			raw, _ := rdb.Get(context.Background(), "dylaris:server:"+uuid+":copy_sub_failed").Result()
 			if (raw != "") != c.wantReport {
@@ -417,6 +417,53 @@ func TestCopySubServerBesideARunningCopy(t *testing.T) {
 			}
 			if readTestFile(filepath.Join(root, uuid, "copy", "world", "level.dat")) != "<missing>" {
 				t.Error("a copy ran beside the running one")
+			}
+		})
+	}
+}
+
+// A switch queued before the copy recreates and starts the source under the
+// power lock, and the copy took none: it walked region files the booting JVM
+// was writing (R42-01). The copy now waits for the lock and refuses a source
+// that is running once it has it.
+func TestCopySubServerRefusesARunningSource(t *testing.T) {
+	for _, c := range []struct {
+		name       string
+		running    bool
+		wantReport bool
+	}{
+		{"running", true, true},
+		{"stopped", false, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			root := t.TempDir()
+			const uuid = "srv-copy-running"
+			writeTestFile(t, filepath.Join(root, uuid, "main", "world", "level.dat"), "world")
+			rdb := newMiniRedis(t)
+			payload, _ := json.Marshal(map[string]interface{}{"config": map[string]interface{}{
+				"uuid": uuid, "sourceSubServer": "main", "targetSubServer": "copy",
+			}})
+			lockHeld := false
+			running := func(u string) bool {
+				if release, ok := tryLockServerPower(u); ok {
+					release()
+				} else {
+					lockHeld = true
+				}
+				return c.running
+			}
+			runCopySubServer(context.Background(), rdb, &StorageManager{paths: []string{root}}, running, string(payload))
+
+			if !lockHeld {
+				t.Error("the source was checked without the power lock held")
+			}
+			raw, _ := rdb.Get(context.Background(), "dylaris:server:"+uuid+":copy_sub_failed").Result()
+			if (raw != "") != c.wantReport {
+				t.Fatalf("failure report = %q, want reported=%v", raw, c.wantReport)
+			}
+			landed := readTestFile(filepath.Join(root, uuid, "copy", "world", "level.dat")) == "world"
+			if landed == c.running {
+				t.Errorf("copy landed = %v with the source running = %v", landed, c.running)
 			}
 		})
 	}

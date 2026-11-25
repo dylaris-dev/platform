@@ -155,3 +155,38 @@ func TestACopiedModRowCarriesNoPendingAttempt(t *testing.T) {
 		}
 	}
 }
+
+// A switch flips only the intent and leaves the status stopped until the node
+// reports it starting, so a copy sent right after it passed the stopped check
+// and walked the world the switch was booting (R42-01).
+func TestACopyWaitsForAPendingSwitch(t *testing.T) {
+	cases := []struct {
+		name    string
+		undo    string
+		refused bool
+	}{
+		{"switch pending", `{"target":"main","previous":"old"}`, true},
+		{"switch overtaken by a setup", `{"target":"main","previous":"old","overtaken":true}`, false},
+		{"no switch", "", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			fs := &copyModsFakeStore{serverPowerFakeStore: serverPowerFakeStore{
+				server:  &models.Server{ID: 1, UUID: "srv-uuid", Status: "stopped", OwnerID: "u1", NodeID: 7, ActiveSubServer: "main"},
+				nodeErr: errors.New("no node in this test"),
+			}}
+			rdb := handlertest.RedisClient(t)
+			if c.undo != "" {
+				rdb.Set(context.Background(), services.SwitchUndoKey("srv-uuid"), c.undo, time.Hour)
+			}
+			h := &ServerModsHandler{d: testDeps(Deps{Store: fs, Redis: rdb})}
+			r := httptest.NewRequest("POST", "/api/servers/1/copy-sub-server", bytes.NewBufferString(`{"targetName":"copy"}`))
+			r = mux.SetURLVars(r.WithContext(context.WithValue(r.Context(), "isAdmin", false)), map[string]string{"id": "1"})
+			rec := httptest.NewRecorder()
+			h.CopySubServer(rec, r)
+			if refused := rec.Code == http.StatusConflict && strings.Contains(rec.Body.String(), "switch"); refused != c.refused {
+				t.Fatalf("status %d %s, want refused=%v", rec.Code, rec.Body.String(), c.refused)
+			}
+		})
+	}
+}

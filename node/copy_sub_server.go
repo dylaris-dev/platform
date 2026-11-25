@@ -36,7 +36,7 @@ type copySubServerPayload struct {
 	TargetSubServer string `json:"targetSubServer"`
 }
 
-func runCopySubServer(ctx context.Context, rdb *redis.Client, storage *StorageManager, payload string) {
+func runCopySubServer(ctx context.Context, rdb *redis.Client, storage *StorageManager, running func(uuid string) bool, payload string) {
 	var pl copySubServerPayload
 	if err := json.Unmarshal([]byte(payload), &struct {
 		Config *copySubServerPayload `json:"config"`
@@ -84,6 +84,21 @@ func runCopySubServer(ctx context.Context, rdb *redis.Client, storage *StorageMa
 		return
 	}
 	defer leaveTree()
+	// Core's stopped check cannot see a switch, start or restart already in
+	// the stream: switch_server recreates and starts the container under the
+	// power lock, and a copy beside it walked region files the JVM was writing.
+	// Held for the whole copy, so nothing starts the source mid-walk.
+	releasePower, powerOK := waitServerPower(ctx, pl.UUID)
+	if !powerOK {
+		reportCopyFailed(ctx, rdb, pl.UUID, pl.TargetSubServer, "the node is shutting down")
+		return
+	}
+	defer releasePower()
+	if running != nil && running(pl.UUID) {
+		log.Printf("copy_sub_server: copy of %s to %q refused: the server is running", pl.UUID, pl.TargetSubServer)
+		reportCopyFailed(ctx, rdb, pl.UUID, pl.TargetSubServer, "the server is running")
+		return
+	}
 
 	src, err := resolveWithinDir(serverPath, pl.SourceSubServer)
 	if err != nil {

@@ -84,6 +84,18 @@ func ChainSwitchUndo(ctx context.Context, rdb *redis.Client, serverUUID string, 
 	return next
 }
 
+// SwitchPending reports whether a switch was dispatched and has neither landed
+// nor been overtaken by a setup. It writes no status, so the server still
+// reads stopped while the node boots the target.
+func SwitchPending(ctx context.Context, rdb *redis.Client, serverUUID string) bool {
+	if rdb == nil {
+		return false
+	}
+	raw, err := rdb.Get(ctx, SwitchUndoKey(serverUUID)).Result()
+	var undo SwitchUndo
+	return err == nil && json.Unmarshal([]byte(raw), &undo) == nil && !undo.Overtaken
+}
+
 // WriteSwitchUndo writes the record of a switch about to be dispatched,
 // chained over a pending one, and returns what puts the key back if the
 // dispatch fails: the record it replaced, with its remaining TTL. Deleting the

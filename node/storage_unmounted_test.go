@@ -172,7 +172,7 @@ func TestUnmountedStorageReportsTheRefusal(t *testing.T) {
 			payload, _ := json.Marshal(map[string]interface{}{"config": map[string]interface{}{
 				"uuid": unmountedUUID, "sourceSubServer": "main", "targetSubServer": "copy",
 			}})
-			runCopySubServer(context.Background(), sm.rdb, sm, string(payload))
+			runCopySubServer(context.Background(), sm.rdb, sm, nil, string(payload))
 			return key("copy_sub_failed")
 		}},
 	}
