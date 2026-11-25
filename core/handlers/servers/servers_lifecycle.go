@@ -510,6 +510,9 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 	if refuseInstallInPowerTransition(w, r, srv) {
 		return
 	}
+	if refuseWhileSwitchPending(w, r, h.d.Redis, srv) {
+		return
+	}
 	// Before the cooldown below is claimed: a refusal here is answered by
 	// ticking a box, and must not cost the 30 seconds of a real install.
 	actorID, _ := r.Context().Value("userID").(string)
@@ -1122,6 +1125,9 @@ func (h *ServerHandler) ReinstallServer(w http.ResponseWriter, r *http.Request) 
 	if refuseInstallInPowerTransition(w, r, srv) {
 		return
 	}
+	if refuseWhileSwitchPending(w, r, h.d.Redis, srv) {
+		return
+	}
 
 	// What is sent to the node is what was validated: the request's fields,
 	// each falling back to what the server already runs. The node used to get
@@ -1727,6 +1733,21 @@ func refuseInstallInPowerTransition(w http.ResponseWriter, r *http.Request, srv 
 		return false
 	}
 	httpx.SendJSONErrorCode(w, "The server is "+srv.Status+". Try again once it has started or stopped.", "server_in_transition", http.StatusConflict)
+	return true
+}
+
+// refuseWhileSwitchPending answers a setup, reinstall, version move or copy
+// sent while a sub-server switch is still on its way to the node, and reports
+// true. A switch writes no status, so the stopped check let these through,
+// and a setup that overtook a switch lost the run intent from before it: when
+// both then failed, the reconciler started a server its owner had stopped
+// (R42-02, R44-01). The switch record ends when the switch lands, when Core
+// reads its refusal, or after SwitchUndoTTL.
+func refuseWhileSwitchPending(w http.ResponseWriter, r *http.Request, rdb *redis.Client, srv *models.Server) bool {
+	if !services.SwitchPending(r.Context(), rdb, srv.UUID) {
+		return false
+	}
+	httpx.SendJSONErrorCode(w, "A sub-server switch is still being applied. Try again in a moment.", "switch_pending", http.StatusConflict)
 	return true
 }
 
