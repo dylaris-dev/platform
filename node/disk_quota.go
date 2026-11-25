@@ -172,6 +172,33 @@ func (qp *QuotaProvider) reconcileExisting(rdb *redis.Client, storage *StorageMa
 	if count > 0 {
 		log.Printf("quota: reconciled %d existing server(s)", count)
 	}
+	// The recount above skips counted servers, so without this pass archives
+	// an older node charged to the server stayed charged until that server's
+	// next node-local backup, which a paused or S3 job never makes.
+	qp.tagBackupDirs(storage)
+}
+
+// tagBackupDirs re-decides the project of every server's backup folder on
+// this path for the current share mode.
+func (qp *QuotaProvider) tagBackupDirs(storage *StorageManager) {
+	if !qp.available {
+		return
+	}
+	var tagged, failed int
+	for _, uuid := range qp.serverDirs(storage) {
+		if _, err := os.Lstat(filepath.Join(qp.basePath, uuid, backupDirName)); err != nil {
+			continue
+		}
+		if err := qp.TagBackupDir(uuid); err != nil {
+			log.Printf("%v", err)
+			failed++
+			continue
+		}
+		tagged++
+	}
+	if tagged+failed > 0 {
+		log.Printf("quota: backup folders on %s tagged for share mode %t: %d ok, %d failed", qp.basePath, backupShareQuota(), tagged, failed)
+	}
 }
 
 // serverDirs lists the servers that live on this provider's path. A copy a
@@ -231,12 +258,16 @@ func (qp *QuotaProvider) AssignQuota(uuid string) error {
 	return nil
 }
 
+// setBackupDirProject is setProjectTree; a var so tests can see the calls.
+var setBackupDirProject = setProjectTree
+
 // TagBackupDir charges the server's node-local backup folder to the server's
 // project only while Core shares the server's quota with backups. Otherwise
 // it is a separate budget, held by Core's per-server backup quota: charged to
 // the server, the archives filled its disk limit, the kernel refused its world
 // saves and the disk guard stopped it. Archives an older node tagged come off
-// here too, so the first backup after the update frees them.
+// here too: at boot and on a share-mode change for every server (see
+// tagBackupDirs), and before each node-local archive.
 //
 // The folder is a flat list of archives, so the walk is short.
 func (qp *QuotaProvider) TagBackupDir(uuid string) error {
@@ -251,7 +282,7 @@ func (qp *QuotaProvider) TagBackupDir(uuid string) error {
 	if _, err := os.Lstat(dir); os.IsNotExist(err) {
 		return nil
 	}
-	if err := setProjectTree(dir, "", pid); err != nil {
+	if err := setBackupDirProject(dir, "", pid); err != nil {
 		return fmt.Errorf("quota: backup folder project (%s): %w", qp.fsType, err)
 	}
 	return nil

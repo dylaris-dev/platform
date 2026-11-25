@@ -102,3 +102,65 @@ func TestBackupRunCommandCarriesShareQuota(t *testing.T) {
 		}
 	}
 }
+
+// R52-02/R52-06: the backup folder's project follows the share mode for every
+// server, not only one that makes a node-local backup: at boot (the recount
+// skips counted servers) and when a backup_run changes the mode.
+func TestBackupFoldersFollowTheShareMode(t *testing.T) {
+	prevNodeID, prevSecret, prevSet, prevTag := nodeID, nodeSecretDir, globalQuotaSet, setBackupDirProject
+	t.Cleanup(func() {
+		nodeID, nodeSecretDir, globalQuotaSet, setBackupDirProject = prevNodeID, prevSecret, prevSet, prevTag
+		backupShareQuotaMem.Store(0)
+	})
+	nodeID = "node-1"
+	nodeSecretDir = t.TempDir()
+	backupShareQuotaMem.Store(0)
+
+	ctx := context.Background()
+	rdb := newDiskGuardRedis(t)
+	const withBackups = "0b6c1a52-0000-4000-8000-000000000001"
+	const without = "0b6c1a52-0000-4000-8000-000000000002"
+	root := t.TempDir()
+	storage := NewStorageManager(root, nil)
+	if err := os.MkdirAll(filepath.Join(root, withBackups, backupDirName), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, without), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, uuid := range []string{withBackups, without} {
+		markDiskCounted(ctx, rdb, uuid) // counted: the boot recount skips both
+	}
+
+	tags := map[string]uint32{}
+	setBackupDirProject = func(dir, _ string, pid uint32) error {
+		tags[dir] = pid
+		return nil
+	}
+	backupDir := filepath.Join(root, withBackups, backupDirName)
+	qp := &QuotaProvider{basePath: root, available: true}
+	globalQuotaSet = &QuotaSet{storage: storage, providers: map[string]*QuotaProvider{root: qp}}
+
+	off, on := false, true
+	setBackupShareQuota(&off) // persisted mode, before the node restart
+	clear(tags)
+	backupShareQuotaMem.Store(0)
+
+	for _, tc := range []struct {
+		name string
+		step func()
+		want map[string]uint32
+	}{
+		{"boot: counted server's folder comes off the server", func() { qp.reconcileExisting(rdb, storage) }, map[string]uint32{backupDir: 0}},
+		{"mode changes to share", func() { setBackupShareQuota(&on) }, map[string]uint32{backupDir: projectID(withBackups)}},
+		{"same mode again: no pass", func() { setBackupShareQuota(&on) }, map[string]uint32{}},
+		{"an older Core: no pass", func() { setBackupShareQuota(nil) }, map[string]uint32{}},
+		{"mode changes back to separate", func() { setBackupShareQuota(&off) }, map[string]uint32{backupDir: 0}},
+	} {
+		clear(tags)
+		tc.step()
+		if fmt.Sprint(tags) != fmt.Sprint(tc.want) {
+			t.Errorf("%s: tagged %v, want %v", tc.name, tags, tc.want)
+		}
+	}
+}

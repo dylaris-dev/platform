@@ -63,6 +63,19 @@ func (qs *QuotaSet) TagBackupDir(uuid string) error {
 	return qp.TagBackupDir(uuid)
 }
 
+// TagBackupDirs re-decides every server's backup folder on every path; see
+// QuotaProvider.tagBackupDirs.
+func (qs *QuotaSet) TagBackupDirs() {
+	if qs == nil {
+		return
+	}
+	for _, qp := range qs.providers {
+		if qp != nil {
+			qp.tagBackupDirs(qs.storage)
+		}
+	}
+}
+
 // SetLimit enforces the server's disk limit on its own filesystem.
 func (qs *QuotaSet) SetLimit(uuid string, limitMB int64) error {
 	qp := qs.forServer(uuid)

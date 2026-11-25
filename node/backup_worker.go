@@ -97,16 +97,21 @@ func setBackupShareQuota(on *bool) {
 	if on == nil {
 		return
 	}
+	changed := backupShareQuota() != *on
 	mode, content := backupShareQuotaOn, "on"
 	if !*on {
 		mode, content = backupShareQuotaOff, backupShareQuotaOffMarker
 	}
 	backupShareQuotaMem.Store(mode)
-	if nodeSecretDir == "" {
-		return
+	if nodeSecretDir != "" {
+		if err := os.WriteFile(backupShareQuotaPath(), []byte(content), 0o600); err != nil {
+			log.Printf("backup: share-quota mode not persisted: %v", err)
+		}
 	}
-	if err := os.WriteFile(backupShareQuotaPath(), []byte(content), 0o600); err != nil {
-		log.Printf("backup: share-quota mode not persisted: %v", err)
+	// Every server's folder, not only this run's: otherwise each one kept the
+	// old mode's project until its own next node-local backup.
+	if changed {
+		globalQuotaSet.TagBackupDirs()
 	}
 }
 
