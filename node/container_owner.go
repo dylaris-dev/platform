@@ -9,6 +9,8 @@ import (
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/client"
+
+	"dylaris-pkg/validate"
 )
 
 // Which MC containers on this Docker daemon are THIS node's.
@@ -113,6 +115,26 @@ func ownsContainer(labels map[string]string, self []string) bool {
 		}
 	}
 	return false
+}
+
+// listedAsOurs is ownsContainer for the mc_ listers, which every startup and
+// reconcile pass acts on (ReconcileRedisEnv restarts what it lists). A BYON node
+// drives the customer's own docker.sock, where an unlabelled mc_ container may
+// be theirs (`docker run --name mc_survival`, Compose v1 project "mc"): the
+// startup pass stopped and removed it for lacking our Redis env (R55-06). So an
+// unlabelled one counts as ours only with proof from this node's own disk: its
+// server directory on our storage, or our tombstone for it. Every legacy
+// server of ours has a directory (its data lives there), and a name pattern
+// would not do: validate.ServerUUID accepts "server_1". A labelled container
+// keeps the label rule. No storage manager keeps the old behaviour.
+func (dm *DockerManager) listedAsOurs(labels map[string]string, uuid string, self []string) bool {
+	if !ownsContainer(labels, self) {
+		return false
+	}
+	if strings.TrimSpace(labels[ownerLabel]) != "" || dm.storageMgr == nil {
+		return true
+	}
+	return validate.IsServerUUID(uuid) && (len(dm.storageMgr.PathsHolding(uuid)) > 0 || serverDeleted(uuid))
 }
 
 // foreignContainer names the node that owns the container called name, or ""

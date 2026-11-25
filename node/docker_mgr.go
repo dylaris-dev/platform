@@ -2228,10 +2228,10 @@ func (dm *DockerManager) ListRunningMCContainers() ([]MCContainer, error) {
 				// ReconcileRedisEnv reads this and RESTARTS what it does not
 				// like. Unfiltered, a node restarted another node's running
 				// servers on its own startup. See container_owner.go.
-				if !ownsContainer(c.Labels, self) {
+				uuid := strings.TrimPrefix(clean, "mc_")
+				if !dm.listedAsOurs(c.Labels, uuid, self) {
 					break
 				}
-				uuid := strings.TrimPrefix(clean, "mc_")
 				mc := MCContainer{UUID: uuid, ContainerName: clean}
 				for _, p := range c.Ports {
 					if p.PublicPort != 0 {
@@ -2282,10 +2282,10 @@ func (dm *DockerManager) ListAllMCContainers() ([]MCContainerInfo, error) {
 				// containers, and every caller of this treats what it returns as
 				// something to manage: restart it, republish its stats, recreate
 				// it. See container_owner.go for what that cost.
-				if !ownsContainer(c.Labels, self) {
+				uuid := strings.TrimPrefix(clean, "mc_")
+				if !dm.listedAsOurs(c.Labels, uuid, self) {
 					break
 				}
-				uuid := strings.TrimPrefix(clean, "mc_")
 				result = append(result, MCContainerInfo{
 					UUID:          uuid,
 					ContainerName: clean,
