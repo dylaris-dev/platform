@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 type restoreResultStore struct {
 	restoreReapStore
 	restore  models.BackupRestore
+	others   []models.BackupRestore
 	run      models.BackupRun
 	updated  []string
 	replaced []string
@@ -54,7 +56,7 @@ func TestTheReaperAppliesAKeptRestoreResult(t *testing.T) {
 		wantReplaced int
 	}{
 		{name: "old node, nothing kept", wantClosed: true},
-		{name: "kept success", kept: `{"restoreId":1,"status":"success","error":""}`, wantUpdated: []string{"success:"}, wantReplaced: 1},
+		{name: "kept success", kept: fmt.Sprintf(`{"restoreId":1,"status":"success","error":"","timestamp":%d}`, time.Now().Unix()), wantUpdated: []string{"success:"}, wantReplaced: 1},
 		{name: "kept failure", kept: `{"restoreId":1,"status":"failed","error":"disk full"}`, wantUpdated: []string{"failed:disk full"}},
 		{name: "key names another restore", kept: `{"restoreId":9,"status":"success"}`, wantClosed: true},
 	}

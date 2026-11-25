@@ -218,7 +218,7 @@ func (b *BackupScheduler) consumeRestoreResults(ctx context.Context) {
 			}
 			// serverUuid comes only from a node that also keeps the result
 			// (RestoreResultKey); attribution above already passed.
-			if b.applyRestoreResult(restore, result) && result.ServerUUID != "" {
+			if b.applyRestoreResult(restore, result, true) && result.ServerUUID != "" {
 				b.redis.Del(ctx, queue.RestoreResultKey(result.ServerUUID, result.RestoreID))
 			}
 		}
@@ -232,14 +232,22 @@ type restoreResult struct {
 	Status     string `json:"status"`
 	Error      string `json:"error"`
 	ServerUUID string `json:"serverUuid"`
+	Timestamp  int64  `json:"timestamp"` // Unix seconds, the node's clock
 }
+
+// keptRestoreResultFresh bounds how old a kept result may be and still
+// reconcile the install, mod and sub-server rows. The tick reads kept results
+// every minute and a new leader ticks at once, so a result lost in a leader gap
+// (lease 30s) is normally read well inside it; an older one was kept through a
+// longer outage, and the customer may have changed the server since.
+const keptRestoreResultFresh = 2 * time.Minute
 
 // applyRestoreResult writes a node's result to restore's row and, on success,
 // brings the install, mod and sub-server rows in line with the archive. The
 // live consumer and the reaper both go through here, so a result the reaper
 // finds kept is applied exactly as a delivered one would have been. Reports
-// whether the row now holds the result.
-func (b *BackupScheduler) applyRestoreResult(restore *models.BackupRestore, result restoreResult) bool {
+// whether the row now holds the result. reconcile false writes only the row.
+func (b *BackupScheduler) applyRestoreResult(restore *models.BackupRestore, result restoreResult, reconcile bool) bool {
 	// Already final: a duplicate report must not re-run the installs
 	// and mods below, nor overwrite the row.
 	if restore.Status == "success" {
@@ -254,7 +262,7 @@ func (b *BackupScheduler) applyRestoreResult(restore *models.BackupRestore, resu
 		logErrf("backup-scheduler", "restore result: update failed for id=%d: %v", restore.ID, err)
 		written = false
 	}
-	if result.Status == "success" {
+	if result.Status == "success" && reconcile {
 		b.restoreInstalls(restore.RunID, restore.ServerID, restore.Overlay)
 		b.restoreMods(restore.RunID, restore.ServerID, restore.Overlay)
 		b.forgetSubServersRestoredAway(restore.RunID, restore.ServerID, restore.Overlay)
@@ -266,7 +274,7 @@ func (b *BackupScheduler) applyRestoreResult(restore *models.BackupRestore, resu
 // one, and reports whether r is settled by it (or cannot be judged now).
 // The key lives under the server's namespace, which the node's ACL grants only
 // for the servers it hosts, so it stands in for the channel attribution.
-func (b *BackupScheduler) appliedKeptRestoreResult(ctx context.Context, r models.AbandonedBackupRestore) bool {
+func (b *BackupScheduler) appliedKeptRestoreResult(ctx context.Context, r models.AbandonedBackupRestore, now time.Time) bool {
 	key := queue.RestoreResultKey(r.ServerUUID, r.ID)
 	raw, err := b.redis.Get(ctx, key).Result()
 	if err == redis.Nil {
@@ -284,11 +292,43 @@ func (b *BackupScheduler) appliedKeptRestoreResult(ctx context.Context, r models
 	if err != nil || restore == nil {
 		return true
 	}
-	if b.applyRestoreResult(restore, result) {
+	if restore.Status != "queued" && restore.Status != "running" {
+		return true
+	}
+	// The archive's rows are reconciled against the database as it is NOW, so a
+	// result that is not fresh, or one a later restore has overtaken, would
+	// rewrite whatever the customer changed since. It only closes the row.
+	late := ""
+	if age := now.Sub(time.Unix(result.Timestamp, 0)); result.Timestamp == 0 || age > keptRestoreResultFresh {
+		late = "it is not fresh"
+	} else if b.newerRestoreFinished(restore) {
+		late = "a later restore of the server has finished"
+	}
+	if b.applyRestoreResult(restore, result, late == "") {
 		b.redis.Del(ctx, key)
-		log.Printf("backup-scheduler: restore %d: applied the result the node kept, its report never arrived", r.ID)
+		if late != "" {
+			log.Printf("backup-scheduler: restore %d: applied the result the node kept as status only (%s); install, mod and sub-server rows were NOT reconciled", r.ID, late)
+		} else {
+			log.Printf("backup-scheduler: restore %d: applied the result the node kept, its report never arrived", r.ID)
+		}
 	}
 	return true
+}
+
+// newerRestoreFinished reports whether a restore of the same server requested
+// after restore has already finished. A lookup error counts as yes: skipping
+// the reconciliation is the safe side.
+func (b *BackupScheduler) newerRestoreFinished(restore *models.BackupRestore) bool {
+	others, err := b.store.ListBackupRestores(restore.ServerID, 25)
+	if err != nil {
+		return true
+	}
+	for _, o := range others {
+		if o.ID > restore.ID && (o.Status == "success" || o.Status == "failed") {
+			return true
+		}
+	}
+	return false
 }
 
 // consumeResults listens on every node's own results channel and updates the
@@ -558,7 +598,9 @@ func (b *BackupScheduler) tick(ctx context.Context) {
 // so closing that row would show "failed" and then replace the world anyway;
 // it stays queued, and the panel says it resumes (restore_stall.go).
 func (b *BackupScheduler) reapAbandonedRestores(ctx context.Context, now time.Time) {
-	restores, err := b.store.ListAbandonedBackupRestores(now.Add(-backupRunAbandonedAfter), backupReapBatchSize)
+	// Every open restore, not only the overdue ones: a kept result is read on
+	// the first tick after a leader gap, not six hours later.
+	restores, err := b.store.ListAbandonedBackupRestores(now, backupReapBatchSize)
 	if err != nil {
 		logErrf("backup-scheduler", "listing abandoned restores failed: %v", err)
 		return
@@ -576,7 +618,10 @@ func (b *BackupScheduler) reapAbandonedRestores(ctx context.Context, now time.Ti
 	for _, r := range restores {
 		// First: a kept result is the node's own answer, whether or not the
 		// node is reachable now.
-		if b.appliedKeptRestoreResult(ctx, r) {
+		if b.appliedKeptRestoreResult(ctx, r, now) {
+			continue
+		}
+		if now.Sub(r.RequestedAt) < backupRunAbandonedAfter {
 			continue
 		}
 		if !b.nodeReachable(r.NodeID, r.NodeStatus, false) {

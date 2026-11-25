@@ -22,7 +22,13 @@ type restoreReapStore struct {
 
 func (f *restoreReapStore) ListAbandonedBackupRestores(before time.Time, limit int) ([]models.AbandonedBackupRestore, error) {
 	f.gotCutoff = before
-	return f.open, nil
+	var out []models.AbandonedBackupRestore
+	for _, r := range f.open {
+		if r.RequestedAt.Before(before) {
+			out = append(out, r)
+		}
+	}
+	return out, nil
 }
 
 func (f *restoreReapStore) CloseAbandonedBackupRestore(id int, message string, completed time.Time) (bool, error) {
@@ -57,7 +63,9 @@ func TestAnAbandonedRestoreIsClosedButARunningOneIsNot(t *testing.T) {
 	if len(st.closed) != 1 || st.closed[0] != 1 {
 		t.Fatalf("closed %v, want only the restore a connected node is not running", st.closed)
 	}
-	if want := now.Add(-backupRunAbandonedAfter); !st.gotCutoff.Equal(want) {
+	// Every open restore is listed, for its kept result; only the overdue
+	// ones are reaped.
+	if want := now; !st.gotCutoff.Equal(want) {
 		t.Errorf("cutoff %v, want %v", st.gotCutoff, want)
 	}
 }
