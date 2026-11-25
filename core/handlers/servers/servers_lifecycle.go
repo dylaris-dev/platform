@@ -2874,6 +2874,23 @@ func (h *ServerHandler) DeleteSubServer(w http.ResponseWriter, r *http.Request) 
 		httpx.SendJSONErrorCode(w, "The server is being installed. Try again when it has finished.", "server_installing", http.StatusConflict)
 		return
 	}
+	// R46-03: a restore still waiting in the node's stream holds no node_busy
+	// either. The node queued this delete behind it, the restore's success
+	// report wrote the slot's install record and mod rows back from the
+	// manifest, and the delete then removed the directory under them. The
+	// restore reaper closes rows whose result never arrives, so this cannot
+	// pin the server.
+	restores, err := h.d.Store.ListBackupRestores(serverID, 25)
+	if err != nil {
+		httpx.SendJSONError(w, "Could not check whether a backup is being restored to this server; try again in a moment", http.StatusServiceUnavailable)
+		return
+	}
+	for _, rs := range restores {
+		if rs.Status == "queued" || rs.Status == "running" {
+			httpx.SendJSONErrorCode(w, "A backup is being restored to this server. Delete this sub-server once the restore has finished.", "restore_running", http.StatusConflict)
+			return
+		}
+	}
 	// As CopySubServer: a start or restart in flight on the node rebuilt the
 	// container on the deleted slot, and Docker made its directory again.
 	if srv.ActiveSubServer == subServerName && inPowerTransition(srv.Status) {

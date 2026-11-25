@@ -148,6 +148,9 @@ type subServerDeleteFakeStore struct {
 	// first sees: the status watcher followed the node in between.
 	activeLater string
 	reads       int
+	// restores are the server's restore rows; restoresErr fails that lookup.
+	restores    []models.BackupRestore
+	restoresErr error
 }
 
 // The server has two sub-servers, survival (active) and creative.
