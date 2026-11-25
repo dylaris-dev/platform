@@ -536,7 +536,12 @@ type Store interface {
 	CreateBackupRestore(r *models.BackupRestore) (int, error)
 	GetBackupRestore(id int) (*models.BackupRestore, error)
 	ListBackupRestores(serverID, limit int) ([]models.BackupRestore, error)
-	UpdateBackupRestoreStatus(id int, status, errorMsg string, completed time.Time) error
+	// UpdateBackupRestoreStatus writes a result to a restore that is still
+	// open (or failed, for a success) and reports whether it changed the row.
+	UpdateBackupRestoreStatus(id int, status, errorMsg string, completed time.Time) (bool, error)
+	// ListOpenBackupRestores lists every queued or running restore, with only
+	// ID and ServerUUID set.
+	ListOpenBackupRestores() ([]models.AbandonedBackupRestore, error)
 	// ListAbandonedBackupRestores lists queued or running restores requested
 	// before the cutoff, oldest first.
 	ListAbandonedBackupRestores(requestedBefore time.Time, limit int) ([]models.AbandonedBackupRestore, error)

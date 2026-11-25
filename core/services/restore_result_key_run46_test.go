@@ -22,6 +22,8 @@ type restoreResultStore struct {
 	replaced []string
 	// updateFails makes the next that many row writes fail.
 	updateFails int
+	// beforeUpdate runs once, at the next row write, before it.
+	beforeUpdate func()
 }
 
 func (f *restoreResultStore) GetBackupRestore(id int) (*models.BackupRestore, error) {
@@ -29,13 +31,22 @@ func (f *restoreResultStore) GetBackupRestore(id int) (*models.BackupRestore, er
 	return &r, nil
 }
 
-func (f *restoreResultStore) UpdateBackupRestoreStatus(id int, status, msg string, completed time.Time) error {
+// Models the query: only an open row changes, or a failed one turning success.
+func (f *restoreResultStore) UpdateBackupRestoreStatus(id int, status, msg string, completed time.Time) (bool, error) {
+	if hook := f.beforeUpdate; hook != nil {
+		f.beforeUpdate = nil
+		hook()
+	}
 	if f.updateFails > 0 {
 		f.updateFails--
-		return fmt.Errorf("db blip")
+		return false, fmt.Errorf("db blip")
 	}
-	f.updated = append(f.updated, status+":"+msg)
-	return nil
+	if s := f.restore.Status; s == "queued" || s == "running" || (s == "failed" && status == "success") {
+		f.restore.Status = status
+		f.updated = append(f.updated, status+":"+msg)
+		return true, nil
+	}
+	return false, nil
 }
 
 func (f *restoreResultStore) GetBackupRun(id int) (*models.BackupRun, error) {

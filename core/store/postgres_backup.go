@@ -868,19 +868,48 @@ func (s *PostgresStore) ListBackupRestores(serverID, limit int) ([]models.Backup
 	return out, nil
 }
 
-func (s *PostgresStore) UpdateBackupRestoreStatus(id int, status, errorMsg string, completed time.Time) error {
+func (s *PostgresStore) UpdateBackupRestoreStatus(id int, status, errorMsg string, completed time.Time) (bool, error) {
 	var completedArg interface{} = completed
 	if completed.IsZero() {
 		completedArg = nil
 	}
 	// A success is final: a restore the node ran again after its success
 	// report (redelivered before the ACK) reports failed, and that must not
-	// turn a restore that worked into a failure in the panel.
-	_, err := s.db.Exec(
-		`UPDATE backup_restores SET status = $1, error_message = $2, completed_at = $3 WHERE id = $4 AND status <> 'success'`,
-		status, errorMsg, completedArg, id,
+	// turn a restore that worked into a failure in the panel. A failed row
+	// still takes a later success, the restore having replaced the world.
+	// Anything else already final is left as it is, so of two callers holding
+	// the same result only one changes the row.
+	res, err := s.db.Exec(
+		`UPDATE backup_restores SET status = $1, error_message = $2, completed_at = $3
+		 WHERE id = $4 AND (status IN ('queued', 'running') OR (status = 'failed' AND $5))`,
+		status, errorMsg, completedArg, id, status == "success",
 	)
-	return err
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+func (s *PostgresStore) ListOpenBackupRestores() ([]models.AbandonedBackupRestore, error) {
+	rows, err := s.db.Query(
+		`SELECT br.id, sv.uuid FROM backup_restores br
+		 JOIN servers sv ON sv.id = br.server_id
+		 WHERE br.status IN ('queued', 'running')`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []models.AbandonedBackupRestore
+	for rows.Next() {
+		var r models.AbandonedBackupRestore
+		if err := rows.Scan(&r.ID, &r.ServerUUID); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
 }
 
 func (s *PostgresStore) ListAbandonedBackupRestores(requestedBefore time.Time, limit int) ([]models.AbandonedBackupRestore, error) {

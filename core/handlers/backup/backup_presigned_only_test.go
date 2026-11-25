@@ -95,11 +95,11 @@ func (f *presignedOnlyStore) UpdateBackupRunStatus(id int, status, msg string, _
 	return nil
 }
 func (f *presignedOnlyStore) CreateBackupRestore(*models.BackupRestore) (int, error) { return 30, nil }
-func (f *presignedOnlyStore) UpdateBackupRestoreStatus(id int, status, msg string, _ time.Time) error {
+func (f *presignedOnlyStore) UpdateBackupRestoreStatus(id int, status, msg string, _ time.Time) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.restoreUpdates = append(f.restoreUpdates, strings.Join([]string{strconv.Itoa(id), status, msg}, ":"))
-	return nil
+	return true, nil
 }
 func (f *presignedOnlyStore) DeleteBackupRun(id int) error {
 	f.deleted = append(f.deleted, id)

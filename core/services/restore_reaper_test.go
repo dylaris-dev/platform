@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"fmt"
+	"sort"
 	"testing"
 	"time"
 
@@ -20,6 +21,7 @@ type restoreReapStore struct {
 	closed    []int
 }
 
+// Oldest first and capped, like the query.
 func (f *restoreReapStore) ListAbandonedBackupRestores(before time.Time, limit int) ([]models.AbandonedBackupRestore, error) {
 	f.gotCutoff = before
 	var out []models.AbandonedBackupRestore
@@ -28,7 +30,15 @@ func (f *restoreReapStore) ListAbandonedBackupRestores(before time.Time, limit i
 			out = append(out, r)
 		}
 	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].RequestedAt.Before(out[j].RequestedAt) })
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
 	return out, nil
+}
+
+func (f *restoreReapStore) ListOpenBackupRestores() ([]models.AbandonedBackupRestore, error) {
+	return f.open, nil
 }
 
 func (f *restoreReapStore) CloseAbandonedBackupRestore(id int, message string, completed time.Time) (bool, error) {
