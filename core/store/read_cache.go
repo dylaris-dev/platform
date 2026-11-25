@@ -16,6 +16,10 @@ import (
 // replica keeps its own copy, so this is also the cross-replica lag.
 const readCacheTTL = time.Second
 
+// ReadCacheTTL is readCacheTTL for callers that must outlast a stale answer
+// on another replica (the Beam off-switch stamp).
+const ReadCacheTTL = readCacheTTL
+
 // cacheNow is the clock the read caches use; tests move it.
 var cacheNow = time.Now
 

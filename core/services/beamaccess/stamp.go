@@ -126,6 +126,11 @@ func StampUUIDs(ctx context.Context, rdb *redis.Client, uuids []string) {
 // StampAll marks every server on the platform. Used when Beam itself is
 // switched off: the node never reads that setting, so without this a ticket
 // already minted and every open session kept working for up to a day.
+//
+// Dated past the settings cache: another Core replica can still read
+// beam.enabled=true from its snapshot for up to store.ReadCacheTTL after the
+// save and mint a ticket with iat = now, which a stamp dated now does not
+// cover. The extra second absorbs clock skew between replicas.
 func StampAll(ctx context.Context, st store.Store, rdb *redis.Client) {
 	if rdb == nil {
 		return
@@ -141,7 +146,7 @@ func StampAll(ctx context.Context, st store.Store, rdb *redis.Client) {
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	defer cancel()
-	if err := beamauth.BumpAccessEpochs(ctx, rdb, uuids); err != nil {
+	if err := beamauth.BumpAccessEpochsAt(ctx, rdb, uuids, time.Now().Add(store.ReadCacheTTL+time.Second)); err != nil {
 		log.Printf("beam access stamp: all %d servers: %v", len(uuids), err)
 	}
 }

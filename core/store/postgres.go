@@ -2598,10 +2598,15 @@ func (s *PostgresStore) DeleteGatewayRouteLimit(scope string) error {
 // ==========================================
 
 // GetSFTPAccessByNode returns every (user, server) pair the grant tables
-// connect to a server on this node: owners, per-server grants, and account-wide
-// grants. It answers "who could plausibly have SFTP here", not "who may" -
-// SFTPSyncService resolves each non-owner row against sftp.access before
-// publishing anything.
+// connect to a server on this node: owners, per-server grants, account-wide
+// grants and proxy-inherited ones. It answers "who could plausibly have SFTP
+// here", not "who may" - SFTPSyncService resolves each non-owner row against
+// sftp.access before publishing anything.
+//
+// The fourth branch is a grant with inherit on a linked proxy of the same
+// owner, which the resolver hands down to the backend. Without it a member
+// reaching a backend on another node than its proxy was not "on" that node:
+// no daily-quota grant there, so their Beam uploads went uncounted.
 //
 // The third branch is not cosmetic. server_invites doubles as the grant table,
 // and an account-wide grant is a row with server_id IS NULL keyed on
@@ -2624,6 +2629,13 @@ func (s *PostgresStore) GetSFTPAccessByNode(nodeID int) ([]SFTPAccess, error) {
 		SELECT s.uuid, s.name, s.id, u.id, u.username, FALSE
 		FROM servers s
 		JOIN server_invites si ON si.server_id IS NULL AND si.owner_user_id = s.owner_id
+		JOIN users u ON si.user_id = u.id
+		WHERE s.node_id = $1
+		UNION
+		SELECT s.uuid, s.name, s.id, u.id, u.username, FALSE
+		FROM servers s
+		JOIN servers proxy ON s.proxy_id = proxy.id AND proxy.owner_id = s.owner_id
+		JOIN server_invites si ON si.server_id = proxy.id AND si.inherit = TRUE
 		JOIN users u ON si.user_id = u.id
 		WHERE s.node_id = $1
 		ORDER BY 1, 5

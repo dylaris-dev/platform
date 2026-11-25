@@ -66,10 +66,16 @@ const bumpBatch = 500
 // Eval rather than the script's EvalSha: inside a pipeline the NOSCRIPT
 // fallback cannot run, and the script is a few hundred bytes.
 func BumpAccessEpochs(ctx context.Context, rdb *redis.Client, serverUUIDs []string) error {
+	return BumpAccessEpochsAt(ctx, rdb, serverUUIDs, time.Now())
+}
+
+// BumpAccessEpochsAt is BumpAccessEpochs with the stamp dated at, which may lie
+// in the future: every ticket issued up to that second is then refused.
+func BumpAccessEpochsAt(ctx context.Context, rdb *redis.Client, serverUUIDs []string, at time.Time) error {
 	if rdb == nil {
 		return nil
 	}
-	now, ttl := time.Now().Unix(), int64(AccessEpochTTL/time.Second)
+	now, ttl := at.Unix(), int64(AccessEpochTTL/time.Second)
 	for start := 0; start < len(serverUUIDs); start += bumpBatch {
 		pipe := rdb.Pipeline()
 		for _, u := range serverUUIDs[start:min(start+bumpBatch, len(serverUUIDs))] {

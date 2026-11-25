@@ -769,6 +769,78 @@ func TestIntegrationSFTPAccessCoversAccountGrants(t *testing.T) {
 	})
 }
 
+// A grant with inherit on a proxy reaches its same-owner backends (authz
+// resolver), and Beam mints tickets for them. With the backend on another node
+// the access rows of that node had no row for the member, so the node's Redis
+// user got no daily-quota grant for them: every upload there failed open and
+// went uncounted. The rows must name the inherited pair, on the backend's node.
+func TestIntegrationSFTPAccessCoversProxyInheritance(t *testing.T) {
+	_, st := integrationDB(t)
+	f := newFixture(t, st) // f.server stands in for the proxy, on f.node
+
+	nodeB := &models.Node{Name: uniqueName("nb_"), Address: "127.0.0.2", Token: uniqueName("tb_"), Status: "online"}
+	if err := st.CreateNode(nodeB); err != nil {
+		t.Fatalf("CreateNode: %v", err)
+	}
+	backend := &models.Server{
+		UUID: uniqueName("uuidb_"), Name: uniqueName("sb_"), NodeID: nodeB.ID, OwnerID: f.user.ID,
+		GameImage: "img", Port: 25601, Memory: 1024, Status: "stopped", ServerType: "game",
+	}
+	sid, err := st.CreateServer(backend)
+	if err != nil {
+		t.Fatalf("CreateServer: %v", err)
+	}
+	backend.ID = int(sid)
+	t.Cleanup(func() { st.DeleteServer(backend.ID); st.DeleteNode(nodeB.ID) })
+	if err := st.UpdateServerProxyID(backend.ID, &f.server.ID); err != nil {
+		t.Fatalf("UpdateServerProxyID: %v", err)
+	}
+
+	friend := &models.User{Username: uniqueName("f_inh_"), Password: "x", Email: uniqueName("fi_") + "@example.test"}
+	if err := st.CreateUser(friend); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	t.Cleanup(func() { st.DeleteUser(friend.ID) })
+
+	onB := func() []store.SFTPAccess {
+		t.Helper()
+		all, err := st.GetSFTPAccessByNode(nodeB.ID)
+		if err != nil {
+			t.Fatalf("GetSFTPAccessByNode: %v", err)
+		}
+		var out []store.SFTPAccess
+		for _, a := range all {
+			if a.UserID == friend.ID {
+				out = append(out, a)
+			}
+		}
+		return out
+	}
+
+	proxyID := f.server.ID
+	for _, tc := range []struct {
+		name    string
+		inherit bool
+		want    int
+	}{
+		{"a proxy grant without inherit does not reach the backend", false, 0},
+		{"a proxy grant with inherit reaches the backend on its own node", true, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := st.UpsertServerGrant(&proxyID, friend.ID, f.user.ID, nil, store.CapOverrides{Grant: []string{"sftp.access"}}, tc.inherit); err != nil {
+				t.Fatalf("UpsertServerGrant: %v", err)
+			}
+			rows := onB()
+			if len(rows) != tc.want {
+				t.Fatalf("got %d rows for the member on the backend's node, want %d", len(rows), tc.want)
+			}
+			if tc.want == 1 && (rows[0].ServerID != backend.ID || rows[0].IsOwner) {
+				t.Errorf("row = %+v, want the backend %d, not marked owner", rows[0], backend.ID)
+			}
+		})
+	}
+}
+
 // TestIntegrationShareExpiryWrites covers the two statements that gave
 // server_tabs.share_expires_at a writer at last. The column had been readable,
 // gated on and rendered since it was added, and no code path ever set it - so

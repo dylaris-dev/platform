@@ -969,9 +969,6 @@ func (h *SettingsHandler) SaveBeamSettings(w http.ResponseWriter, r *http.Reques
 	if req.Enabled {
 		enabledStr = "true"
 	}
-	// Read before the save: only the flip from on to off retires sessions.
-	prevEnabled, _ := h.d.Store.GetSetting("beam.enabled")
-	turningOff := prevEnabled != "false" && !req.Enabled
 
 	// Until per-direction throttles exist, the effective Node cap is the
 	// lower bound of the two internal directions (file write/read both
@@ -1031,7 +1028,9 @@ func (h *SettingsHandler) SaveBeamSettings(w http.ResponseWriter, r *http.Reques
 		// Minting is refused from now on, but the node never reads beam.enabled:
 		// stamping every server is what ends already-minted tickets and open
 		// sessions (at their next operation) without a new key the node reads.
-		if turningOff {
+		// Every save with Beam off, not only the flip: StampAll is best-effort
+		// and forward-only, so saving again is how a failed stamp is retried.
+		if !req.Enabled {
 			beamaccess.StampAll(ctx, h.d.Store, h.d.Redis)
 		}
 	}
