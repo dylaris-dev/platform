@@ -13,3 +13,7 @@ func tagProjectTree(string, uint32) error {
 func setProjectTree(string, string, uint32) error {
 	return errors.New("project quotas need Linux")
 }
+
+func projectTagsMoved(string, string, uint32) (bool, error) {
+	return false, errors.New("project quotas need Linux")
+}

@@ -73,6 +73,63 @@ func projectAttrs(fa fsxattr, pid uint32, dir bool) fsxattr {
 	return fa
 }
 
+// projectTagsMoved reports whether root, or a directory directly below it
+// other than skip, is no longer tagged pid with inheritance. It is the cheap
+// check the stats pass runs; a full tagProjectTree only follows a hit.
+func projectTagsMoved(root, skip string, pid uint32) (bool, error) {
+	return topLevelTagsMoved(root, skip, pid, func(fd int) (fsxattr, error) {
+		var fa fsxattr
+		return fa, fsxattrIoctl(fd, fsIocFsgetxattr, &fa)
+	})
+}
+
+func topLevelTagsMoved(root, skip string, pid uint32, get func(fd int) (fsxattr, error)) (bool, error) {
+	fd, err := unix.Open(root, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return false, fmt.Errorf("open %s: %w", root, err)
+	}
+	defer unix.Close(fd)
+	var rootSt unix.Stat_t
+	if err := unix.Fstat(fd, &rootSt); err != nil {
+		return false, fmt.Errorf("stat %s: %w", root, err)
+	}
+	moved := func(fd int) (bool, error) {
+		fa, err := get(fd)
+		if err != nil {
+			return false, err
+		}
+		return projectAttrs(fa, pid, true) != fa, nil
+	}
+	if m, err := moved(fd); m || err != nil {
+		return m, err
+	}
+	names, err := readDirNames(fd)
+	if err != nil {
+		return false, fmt.Errorf("list %s: %w", root, err)
+	}
+	for _, n := range names {
+		if n == skip {
+			continue
+		}
+		// O_DIRECTORY fails a file, fifo or device before it is opened, and
+		// O_NOFOLLOW a symlink: only real directories are looked at.
+		cfd, err := unix.Openat(fd, n, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+		if err != nil {
+			continue
+		}
+		var st unix.Stat_t
+		m := false
+		if err = unix.Fstat(cfd, &st); err == nil && st.Dev == rootSt.Dev {
+			m, err = moved(cfd)
+		}
+		unix.Close(cfd)
+		if m || err != nil {
+			return m, err
+		}
+	}
+	return false, nil
+}
+
 func fsxattrIoctl(fd int, req uintptr, fa *fsxattr) error {
 	if _, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd), req, uintptr(unsafe.Pointer(fa))); errno != 0 {
 		return errno

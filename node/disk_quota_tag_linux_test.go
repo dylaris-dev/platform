@@ -196,3 +196,51 @@ func TestProjectAttrs(t *testing.T) {
 		}
 	}
 }
+
+// A tenant container created before the seccomp profile can still re-tag its
+// tree; the stats pass checks the server dir and each sub-server dir below it
+// and re-tags when one left the server's project or lost inheritance.
+func TestTopLevelTagsMoved(t *testing.T) {
+	root := t.TempDir()
+	for _, d := range []string{"lobby/world", "survival", backupDirName} {
+		if err := os.MkdirAll(filepath.Join(root, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, "eula.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tagged := fsxattr{projid: 7, xflags: fsXflagProjinherit}
+	for _, tc := range []struct {
+		name  string
+		attrs map[string]fsxattr // by path below root, "" is root
+		want  bool
+	}{
+		{"all tagged", nil, false},
+		{"root untagged", map[string]fsxattr{"": {}}, true},
+		{"a sub-server moved to project 0", map[string]fsxattr{"survival": {xflags: fsXflagProjinherit}}, true},
+		{"a sub-server lost inheritance", map[string]fsxattr{"lobby": {projid: 7}}, true},
+		// The backup folder has its own budget, and deeper entries are the
+		// full walk's business.
+		{"backup folder untagged", map[string]fsxattr{backupDirName: {}}, false},
+		{"deeper dir untagged", map[string]fsxattr{"lobby/world": {}}, false},
+	} {
+		byIno := map[uint64]fsxattr{}
+		for p, fa := range tc.attrs {
+			byIno[inodeOf(t, filepath.Join(root, p))] = fa
+		}
+		moved, err := topLevelTagsMoved(root, backupDirName, 7, func(fd int) (fsxattr, error) {
+			var st syscall.Stat_t
+			if err := syscall.Fstat(fd, &st); err != nil {
+				return fsxattr{}, err
+			}
+			if fa, ok := byIno[st.Ino]; ok {
+				return fa, nil
+			}
+			return tagged, nil
+		})
+		if err != nil || moved != tc.want {
+			t.Errorf("%s: moved = %v, %v; want %v", tc.name, moved, err, tc.want)
+		}
+	}
+}

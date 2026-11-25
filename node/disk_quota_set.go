@@ -75,6 +75,14 @@ func (qs *QuotaSet) SetLimit(uuid string, limitMB int64) error {
 	return qp.SetLimit(uuid, limitMB)
 }
 
+// RetagIfMoved re-tags a server whose files left its quota project; see
+// QuotaProvider.RetagIfMoved.
+func (qs *QuotaSet) RetagIfMoved(uuid string) {
+	if qp := qs.forServer(uuid); qp != nil {
+		qp.RetagIfMoved(uuid)
+	}
+}
+
 // GetDiskUsage reports usage for a server, or nil when its filesystem has no
 // quota support (the caller falls back to a du scan).
 func (qs *QuotaSet) GetDiskUsage(uuid string) *DiskUsagePayload {

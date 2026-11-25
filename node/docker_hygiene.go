@@ -82,6 +82,11 @@ func (dm *DockerManager) startDockerHygiene(ctx context.Context) {
 		// Docker then creates every server with no memory limit and says so
 		// only in its own daemon log: the booked RAM is not enforced.
 		daemonNoMemoryLimit.Store(!info.MemoryLimit)
+		daemonNoSeccomp.Store(!daemonHasSeccomp(info.SecurityOptions))
+		if daemonNoSeccomp.Load() {
+			log.Printf("WARNING: this Docker daemon has no seccomp support, so server containers run without the " +
+				"seccomp profile and can move their files out of their disk quota on project-quota storage.")
+		}
 		if !info.MemoryLimit {
 			log.Printf("WARNING: this host has no memory cgroup, so server RAM limits are NOT enforced. " +
 				"On Raspberry Pi OS add 'cgroup_enable=memory' to /boot/firmware/cmdline.txt and reboot.")

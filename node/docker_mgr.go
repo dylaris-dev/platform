@@ -2583,6 +2583,12 @@ func hardenTenantContainer(hc *container.HostConfig) {
 	// capped here too; see boundedLogConfig.
 	hc.LogConfig = currentLogConfig()
 	hc.SecurityOpt = append(hc.SecurityOpt, "no-new-privileges:true")
+	// Docker's default profile, minus the ioctls that move a file out of its
+	// quota project; see tenantSeccompProfile. A running container keeps the
+	// profile it was created with until its next recreate.
+	if !daemonNoSeccomp.Load() {
+		hc.SecurityOpt = append(hc.SecurityOpt, "seccomp="+tenantSeccompProfile)
+	}
 	hc.CapDrop = []string{"ALL"}
 	// No DNS search domain: the container resolves "redis" and "core" on the
 	// server network, and when such a name fails (the container landed on the
