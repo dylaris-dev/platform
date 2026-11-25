@@ -123,6 +123,29 @@ func StampUUIDs(ctx context.Context, rdb *redis.Client, uuids []string) {
 	}
 }
 
+// StampAll marks every server on the platform. Used when Beam itself is
+// switched off: the node never reads that setting, so without this a ticket
+// already minted and every open session kept working for up to a day.
+func StampAll(ctx context.Context, st store.Store, rdb *redis.Client) {
+	if rdb == nil {
+		return
+	}
+	all, err := st.ListAllServers()
+	if err != nil {
+		log.Printf("beam access stamp: could not list servers: %v", err)
+		return
+	}
+	uuids := make([]string, 0, len(all))
+	for _, s := range all {
+		uuids = append(uuids, s.UUID)
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	if err := beamauth.BumpAccessEpochs(ctx, rdb, uuids); err != nil {
+		log.Printf("beam access stamp: all %d servers: %v", len(uuids), err)
+	}
+}
+
 func stampUUID(ctx context.Context, rdb *redis.Client, uuid string) {
 	if uuid == "" {
 		return

@@ -164,3 +164,36 @@ func TestATicketFromTheSameSecondAsTheChangeIsStale(t *testing.T) {
 		t.Fatalf("same-second ticket: stale=%v err=%v", stale, err)
 	}
 }
+
+// Stamping every server goes through batched pipelines; every server across a
+// batch boundary must be stamped, an empty uuid skipped, and a stamp still only
+// moves forward.
+func TestBumpAccessEpochsStampsEveryServerAcrossBatches(t *testing.T) {
+	rdb, mr := epochFixture(t)
+	ctx := context.Background()
+	future := strconv.FormatInt(time.Now().Add(time.Hour).Unix(), 10)
+	if err := mr.Set(AccessEpochKey("srv-0"), future); err != nil {
+		t.Fatal(err)
+	}
+	uuids := []string{""}
+	for i := 0; i < bumpBatch+3; i++ {
+		uuids = append(uuids, "srv-"+strconv.Itoa(i))
+	}
+	if err := BumpAccessEpochs(ctx, rdb, uuids); err != nil {
+		t.Fatalf("bump: %v", err)
+	}
+	for _, u := range uuids[1:] {
+		if !mr.Exists(AccessEpochKey(u)) {
+			t.Fatalf("%s not stamped", u)
+		}
+	}
+	if mr.Exists(AccessEpochKey("")) {
+		t.Error("an empty uuid was stamped")
+	}
+	if got, _ := mr.Get(AccessEpochKey("srv-0")); got != future {
+		t.Errorf("srv-0 stamp = %s, want the newer %s kept", got, future)
+	}
+	if ttl := mr.TTL(AccessEpochKey("srv-1")); ttl <= 0 {
+		t.Errorf("srv-1 has no TTL")
+	}
+}

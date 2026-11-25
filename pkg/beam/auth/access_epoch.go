@@ -56,6 +56,37 @@ func BumpAccessEpoch(ctx context.Context, rdb *redis.Client, serverUUID string) 
 		time.Now().Unix(), int64(AccessEpochTTL/time.Second)).Err()
 }
 
+// bumpBatch bounds one pipeline, so stamping every server on a large platform
+// is a handful of round trips rather than one per server or one huge request.
+const bumpBatch = 500
+
+// BumpAccessEpochs stamps many servers, pipelined in batches. Same semantics as
+// BumpAccessEpoch per server; the first failed batch is returned.
+//
+// Eval rather than the script's EvalSha: inside a pipeline the NOSCRIPT
+// fallback cannot run, and the script is a few hundred bytes.
+func BumpAccessEpochs(ctx context.Context, rdb *redis.Client, serverUUIDs []string) error {
+	if rdb == nil {
+		return nil
+	}
+	now, ttl := time.Now().Unix(), int64(AccessEpochTTL/time.Second)
+	for start := 0; start < len(serverUUIDs); start += bumpBatch {
+		pipe := rdb.Pipeline()
+		for _, u := range serverUUIDs[start:min(start+bumpBatch, len(serverUUIDs))] {
+			if u != "" {
+				bumpEpochScript.Eval(ctx, pipe, []string{AccessEpochKey(u)}, now, ttl)
+			}
+		}
+		if pipe.Len() == 0 {
+			continue
+		}
+		if _, err := pipe.Exec(ctx); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // The stamp may only move forward. A plain SET was last-writer-wins: a delayed
 // earlier bump, or a Core replica whose clock runs behind, wrote an older value
 // over a newer one and revived every ticket minted in between. The TTL is

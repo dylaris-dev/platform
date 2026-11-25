@@ -969,6 +969,9 @@ func (h *SettingsHandler) SaveBeamSettings(w http.ResponseWriter, r *http.Reques
 	if req.Enabled {
 		enabledStr = "true"
 	}
+	// Read before the save: only the flip from on to off retires sessions.
+	prevEnabled, _ := h.d.Store.GetSetting("beam.enabled")
+	turningOff := prevEnabled != "false" && !req.Enabled
 
 	// Until per-direction throttles exist, the effective Node cap is the
 	// lower bound of the two internal directions (file write/read both
@@ -1025,6 +1028,12 @@ func (h *SettingsHandler) SaveBeamSettings(w http.ResponseWriter, r *http.Reques
 		// allowed", which is the opposite of what the operator asked for.
 		publishLimit(ctx, h.d.Redis, "beam:max_upload_bytes", req.MaxUploadBytes)
 		publishLimit(ctx, h.d.Redis, "beam:daily_upload_bytes", req.DailyUploadBytes)
+		// Minting is refused from now on, but the node never reads beam.enabled:
+		// stamping every server is what ends already-minted tickets and open
+		// sessions (at their next operation) without a new key the node reads.
+		if turningOff {
+			beamaccess.StampAll(ctx, h.d.Store, h.d.Redis)
+		}
 	}
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
