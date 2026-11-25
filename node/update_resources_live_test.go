@@ -223,3 +223,41 @@ func TestUpdateResourcesClaimsANewHostPortBeforeTheRecreate(t *testing.T) {
 		t.Error("a host port change did not recreate the container")
 	}
 }
+
+// On a shared docker.sock mc_<uuid> can be another node's container (a move
+// between two nodes on one host). A CPU-only change live-updated it by name,
+// pinning that node's running server to this node's cores; it now only
+// reaches this node's saved config, like a server with no container here.
+func TestUpdateResourcesLeavesAnotherNodesContainerAlone(t *testing.T) {
+	prev := nodeSecretDir
+	nodeSecretDir = t.TempDir()
+	t.Cleanup(func() { nodeSecretDir = prev })
+	t.Setenv("NODE_ID", "node-a")
+	for _, tc := range []struct {
+		name, labels string
+		updates      int32
+	}{
+		{"own container", `{"com.dylaris.node":"node-a"}`, 1},
+		{"unlabelled container", `{}`, 1},
+		{"another node's container", `{"com.dylaris.node":"node-b"}`, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			const uuid = "34343434-2222-3333-4444-555555555555"
+			dm, calls, _ := paddedContainerDocker(t, 512, tc.labels)
+			if err := dm.portMgr.SetPort(uuid, 25601); err != nil {
+				t.Fatal(err)
+			}
+			cfg := ServerConfig{UUID: uuid}
+			cfg.Docker.RAM, cfg.Docker.CPULimit, cfg.Docker.CpusetCpus = 4096, 2, "0-1"
+			if _, err := dm.UpdateResources(cfg); err != nil {
+				t.Fatalf("UpdateResources: %v", err)
+			}
+			if got := calls["update"].Load(); got != tc.updates {
+				t.Errorf("live updates = %d, want %d", got, tc.updates)
+			}
+			if calls["stop"].Load() != 0 || calls["create"].Load() != 0 {
+				t.Errorf("stop=%d create=%d, want neither", calls["stop"].Load(), calls["create"].Load())
+			}
+		})
+	}
+}

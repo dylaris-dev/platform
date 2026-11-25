@@ -1727,7 +1727,15 @@ func (dm *DockerManager) UpdateResources(config ServerConfig) (ServerConfig, err
 		// running container kept its old settings.
 		return config, fmt.Errorf("inspect %s: %w", containerName, err)
 	}
-	if err == nil {
+	// On a shared docker.sock the name can be another node's container (a
+	// move between two nodes on one host). Its CPU was live-updated by name;
+	// like RecreateKeepingRunState's guard, it is not ours to change, so the
+	// change only reaches this node's saved config, as with no container.
+	foreign := err == nil && info.Config != nil && !ownsContainer(info.Config.Labels, nodeIdentities(nodeSecretDir))
+	if foreign {
+		log.Printf("UpdateResources %s: %s belongs to node %s on this Docker daemon, saving the change only", config.UUID, containerName, info.Config.Labels[ownerLabel])
+	}
+	if err == nil && !foreign {
 		if config.Docker.Image == "" {
 			config.Docker.Image = info.Config.Image
 		}
@@ -1816,7 +1824,7 @@ func (dm *DockerManager) UpdateResources(config ServerConfig) (ServerConfig, err
 			// CPU and cpuset are cgroup settings Docker changes on the live
 			// container, so a running server is not restarted for them.
 			if want.NanoCPUs != have.NanoCPUs || want.Cpuset != have.Cpuset {
-				if _, uerr := dm.cli.ContainerUpdate(dm.ctx, containerName, container.UpdateConfig{
+				if _, uerr := dm.cli.ContainerUpdate(dm.ctx, info.ID, container.UpdateConfig{
 					Resources: container.Resources{NanoCPUs: want.NanoCPUs, CpusetCpus: want.Cpuset},
 				}); uerr != nil {
 					return config, fmt.Errorf("live resource update of %s: %w", containerName, uerr)
