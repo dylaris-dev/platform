@@ -32,6 +32,9 @@ type sharedDaemon struct {
 	// extraPorts is mc_<uuid>'s extraPortsLabel; startErr, when set, is what
 	// a start of it answers (500), as a host port taken by something else.
 	extraPorts, startErr string
+	// securityOpt is mc_<uuid>'s HostConfig.SecurityOpt; nil is a container
+	// created with the current tenant seccomp profile.
+	securityOpt []string
 }
 
 func (d *sharedDaemon) changed() []string {
@@ -69,6 +72,11 @@ func newSharedDaemon(t *testing.T, owner string, running bool, onPull func()) (*
 			}
 			d.mu.Lock()
 			env, _ := json.Marshal(d.env)
+			secOpt := d.securityOpt
+			if secOpt == nil {
+				secOpt = []string{"seccomp=" + tenantSeccompProfile}
+			}
+			sec, _ := json.Marshal(secOpt)
 			lbl := labels
 			if d.extraPorts != "" {
 				l := map[string]string{extraPortsLabel: d.extraPorts}
@@ -79,7 +87,7 @@ func newSharedDaemon(t *testing.T, owner string, running bool, onPull func()) (*
 				lbl = string(b)
 			}
 			d.mu.Unlock()
-			w.Write([]byte(`{"Id":"c-id","State":{"Running":` + run + `},"Config":{"Image":"img:1","WorkingDir":"/data/main","Env":` + string(env) + `,"Labels":` + lbl + `},"HostConfig":{},"NetworkSettings":{"Networks":{}}}`))
+			w.Write([]byte(`{"Id":"c-id","State":{"Running":` + run + `},"Config":{"Image":"img:1","WorkingDir":"/data/main","Env":` + string(env) + `,"Labels":` + lbl + `},"HostConfig":{"SecurityOpt":` + string(sec) + `},"NetworkSettings":{"Networks":{}}}`))
 		case r.Method == http.MethodGet && strings.HasSuffix(p, "/containers/new-id-0123456789ab/json"):
 			w.Write([]byte(`{"Id":"new-id-0123456789ab","State":{"Running":true},"Config":{"Labels":{}},"NetworkSettings":{"Networks":{"dylaris_net":{}}}}`))
 		case strings.HasSuffix(p, "/images/create"):

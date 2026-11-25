@@ -1276,8 +1276,10 @@ func (dm *DockerManager) PowerAction(uuid string, action string) error {
 		// same source RestartContainer reads it from.
 		var env []string
 		activeSub, extraPorts := "", ""
+		oldSeccomp := false
 		if info, ierr := dm.cli.ContainerInspect(dm.ctx, mcName); ierr == nil {
 			env = info.Config.Env
+			oldSeccomp = !daemonNoSeccomp.Load() && (info.HostConfig == nil || !onTenantSeccomp(info.HostConfig.SecurityOpt))
 			extraPorts = containerLabel(info, extraPortsLabel)
 			if sub := strings.TrimPrefix(info.Config.WorkingDir, "/data/"); sub != "" && sub != info.Config.WorkingDir {
 				activeSub = sub
@@ -1288,6 +1290,12 @@ func (dm *DockerManager) PowerAction(uuid string, action string) error {
 		}
 		if startAbandoned(uuid) {
 			return errStartAbandoned
+		}
+		// Created before the tenant seccomp profile; ReconcileSeccomp covers the
+		// running ones only, and a plain start keeps the profile of the create.
+		if oldSeccomp {
+			log.Printf("start %s: created without the tenant seccomp profile, recreating", mcName)
+			return dm.RestartContainer(uuid)
 		}
 		// After a host reboot every MC container is exited, so ReconcileRedisEnv
 		// (running containers only) fixed none of them and this start is the

@@ -11,6 +11,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.25.2
+
+### Features
+- Nothing.
+
+### Breaking
+- Your servers restart once when your node picks up this update (it updates itself): the world is saved first,
+  then each server restarts on its own, about 30 seconds apart. Players on them are disconnected for a moment. `node`
+
+### Security
+- This finishes the 2026.11.25 disk limit fix for servers that were already running: they now get the same
+  protection, so code inside one server cannot fill another server's disk limit. `node`
+
+### Fixes
+- Nothing.
+
 ## 2026.11.25
 
 ### Features

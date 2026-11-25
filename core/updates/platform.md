@@ -8,6 +8,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.25.2
+
+### Features
+- Nothing.
+
+### Breaking
+- Once, after this node update: every running server created before 2026.11.25 is restarted (world saved first)
+  so it runs under the tenant seccomp profile. One server at a time, 30 seconds apart; players are disconnected. `node`
+
+### Security
+- Servers that were already running when 2026.11.25 arrived kept their old container profile and could still move
+  files into another server's disk quota. The node now moves every such container onto the profile, and a stopped
+  one gets it at its next start. `node`
+
+### Fixes
+- Nothing.
+
 ## 2026.11.25
 
 ### Features
