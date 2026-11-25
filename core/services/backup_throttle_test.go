@@ -2,6 +2,8 @@ package services
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 
 	"dylaris-core/models"
@@ -67,14 +69,45 @@ func TestPublishBackupPoliciesWireShape(t *testing.T) {
 	PublishBackupPolicies(context.Background(), st, rdb)
 
 	want := map[string]string{
-		"tok-a": `{"uplinkMbit":1000,"readMBps":null,"headroomPct":30,"saveOffMaxMin":null,"spoolEnabled":true,"spoolMaxGB":50}`,
+		"tok-a": `{"uplinkMbit":1000,"readMBps":null,"headroomPct":30,"saveOffMaxMin":null,"spoolEnabled":true,"spoolMaxGB":50,"shareQuotaWithServer":false}`,
 		// A node with nothing set still gets the globals, for an env uplink.
-		"tok-b": `{"uplinkMbit":null,"readMBps":null,"headroomPct":30,"saveOffMaxMin":null,"spoolEnabled":false,"spoolMaxGB":0}`,
+		"tok-b": `{"uplinkMbit":null,"readMBps":null,"headroomPct":30,"saveOffMaxMin":null,"spoolEnabled":false,"spoolMaxGB":0,"shareQuotaWithServer":false}`,
 	}
 	for tok, w := range want {
 		got, err := rdb.Get(context.Background(), NodeBackupPolicyKey(tok)).Result()
 		if err != nil || got != w {
 			t.Errorf("%s: got %q (%v), want %q", tok, got, err, w)
+		}
+	}
+}
+
+// R54-02/R54-04: the share mode rides on the policy every node gets, so a
+// node without backups learns a change. R54-03: an unreadable setting leaves
+// the field out (the node keeps its mode) instead of sending false.
+func TestPublishBackupPoliciesCarriesTheShareMode(t *testing.T) {
+	tests := []struct {
+		name string
+		st   *settingsStub
+		want string
+	}{
+		{"never saved: separate budget", &settingsStub{}, `"shareQuotaWithServer":false`},
+		{"shared", &settingsStub{values: map[string]string{"backup.share_quota_with_server": "true"}}, `"shareQuotaWithServer":true`},
+		{"unreadable: no field", &settingsStub{errs: map[string]error{"backup.share_quota_with_server": errors.New("timeout")}}, ""},
+	}
+	for _, tt := range tests {
+		rdb := newQueueTestRedis(t)
+		tt.st.nodes = []models.Node{{ID: 1, Token: "tok-a"}}
+		PublishBackupPolicies(context.Background(), tt.st, rdb)
+		got, err := rdb.Get(context.Background(), NodeBackupPolicyKey("tok-a")).Result()
+		if err != nil {
+			t.Fatalf("%s: %v", tt.name, err)
+		}
+		if tt.want == "" {
+			if strings.Contains(got, "shareQuotaWithServer") {
+				t.Errorf("%s: got %s, want no share field", tt.name, got)
+			}
+		} else if !strings.Contains(got, tt.want) {
+			t.Errorf("%s: got %s, want %s", tt.name, got, tt.want)
 		}
 	}
 }

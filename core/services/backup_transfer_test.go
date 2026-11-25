@@ -38,6 +38,8 @@ type transferFakeStore struct {
 	updates  []reapUpdate
 	// shareQuota is backup.share_quota_with_server.
 	shareQuota bool
+	// shareErr makes reading backup.share_quota_with_server fail.
+	shareErr error
 	// setUploadHook runs inside SetBackupRunUpload before the condition is
 	// evaluated, for tests that need to line up concurrent callers.
 	setUploadHook func()

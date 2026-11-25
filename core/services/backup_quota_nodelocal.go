@@ -1,6 +1,8 @@
 package services
 
 import (
+	"database/sql"
+	"errors"
 	"time"
 
 	nodegrpc "dylaris-core/grpc"
@@ -72,12 +74,24 @@ func NodeLocalBackupQuotaExceeded(st store.Store, reg *nodegrpc.Registry, srv *m
 }
 
 // ShareBackupQuotaWithServer reports backup.share_quota_with_server: the
-// node-local backup folder is folded into the server's own disk quota. Every
-// backup_run carries it, so the node counts the folder the same way; a node
-// told nothing (an older Core) keeps it a separate budget.
+// node-local backup folder is folded into the server's own disk quota. An
+// unreadable setting reads as false, so Core's own per-server cap still holds.
 func ShareBackupQuotaWithServer(st store.Store) bool {
-	v, _ := st.GetSetting("backup.share_quota_with_server")
-	return v == "true"
+	on := BackupShareQuotaMode(st)
+	return on != nil && *on
+}
+
+// BackupShareQuotaMode is the share mode as the node is told it, on every
+// backup_run and in its backup policy. Nil when the setting could not be read:
+// the node takes an explicit false as a mode change and re-tags every backup
+// folder, so a DB blip must send nothing and let the node keep its mode.
+func BackupShareQuotaMode(st store.Store) *bool {
+	v, err := st.GetSetting("backup.share_quota_with_server")
+	if err != nil && !errors.Is(err, sql.ErrNoRows) && !errors.Is(err, store.ErrSettingNull) {
+		return nil
+	}
+	on := v == "true"
+	return &on
 }
 
 // nodeLocalBackupQuotaExceeded is the decision itself, with the node round-trip

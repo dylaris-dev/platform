@@ -1236,8 +1236,11 @@ func (b *BackupScheduler) dispatch(ctx context.Context, job models.BackupJob) er
 	// Platform-wide, so sent on every run, not only node-local ones: the node
 	// keeps the last value for its disk accounting. Sent as false too: the node
 	// reads an absent field as an older Core and keeps charging the archives to
-	// the server. An older node ignores it.
-	payload["shareQuotaWithServer"] = ShareBackupQuotaWithServer(b.store)
+	// the server. Left out only when the setting is unreadable, so the node
+	// keeps its mode. An older node ignores it.
+	if on := BackupShareQuotaMode(b.store); on != nil {
+		payload["shareQuotaWithServer"] = *on
+	}
 	// The storage's own cap, applied by the node to every byte it sends there,
 	// players or not. An older node ignores the field.
 	if storage.UploadCapMbit != nil {

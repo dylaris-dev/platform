@@ -100,6 +100,9 @@ func (f *transferFakeStore) GetSetting(key string) (string, error) {
 	case SettingBackupDefaultUserQuota:
 		return f.quotaGB, nil
 	case "backup.share_quota_with_server":
+		if f.shareErr != nil {
+			return "", f.shareErr
+		}
 		return fmt.Sprintf("%t", f.shareQuota), nil
 	}
 	return "", nil
@@ -417,6 +420,33 @@ func TestDispatch_TellsTheNodeWhetherBackupsShareTheServerQuota(t *testing.T) {
 				t.Fatalf("shareQuotaWithServer = %v, want %v: %s", cmd["shareQuotaWithServer"], share, cmds[0])
 			}
 		})
+	}
+}
+
+// R54-03: a failed settings read is not "separate budget". The node takes an
+// explicit false as a mode change and re-tags every backup folder off the
+// server quota, so an unreadable setting sends no field: the node keeps its
+// mode.
+func TestDispatch_UnreadableShareSettingSendsNoField(t *testing.T) {
+	st := newTransferFakeStore()
+	st.storage = ownedConnectionStorage()
+	st.shareErr = errors.New("settings snapshot: timeout")
+	st.servers[100].UUID = "srv-uuid"
+	rdb := heartbeatRedis(t, map[string]string{"node-hosting": presignedMultipartSince})
+	b := transferScheduler(st, &fakeMultipartStorage{}, rdb)
+	if err := b.dispatch(context.Background(), models.BackupJob{ID: 10, ServerID: 100, Schedule: "every 1d"}); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	cmds := dispatchedCommands(t, rdb, "node-hosting")
+	if len(cmds) != 1 {
+		t.Fatalf("commands = %d, want 1", len(cmds))
+	}
+	var cmd map[string]interface{}
+	if err := json.Unmarshal([]byte(cmds[0]), &cmd); err != nil {
+		t.Fatal(err)
+	}
+	if v, ok := cmd["shareQuotaWithServer"]; ok {
+		t.Fatalf("shareQuotaWithServer = %v sent on a read error: %s", v, cmds[0])
 	}
 }
 

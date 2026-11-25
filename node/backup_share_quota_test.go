@@ -170,3 +170,56 @@ func TestBackupFoldersFollowTheShareMode(t *testing.T) {
 		}
 	}
 }
+
+// R54-02/R54-04: the share mode rides on the backup policy Core republishes
+// to every node, so a node with no backups still learns a change, and once a
+// policy has carried it a backup_run (a redelivered old one included) no
+// longer overrides it. A policy without the field is an older Core: the run
+// still decides.
+func TestBackupPolicyCarriesTheShareMode(t *testing.T) {
+	prevSecret, prevSeen, prevPolicy := nodeSecretDir, backupSharePolicySeen.Load(), backupPolicyNow.Load()
+	t.Cleanup(func() {
+		nodeSecretDir = prevSecret
+		backupShareQuotaMem.Store(0)
+		backupSharePolicySeen.Store(prevSeen)
+		backupPolicyNow.Store(prevPolicy)
+	})
+	on, off := true, false
+	for _, tc := range []struct {
+		name   string
+		policy string  // "" is no policy key
+		runs   []*bool // backup_runs after the policy load
+		want   bool
+	}{
+		{"policy turns sharing off without a run", `{"shareQuotaWithServer":false}`, nil, false},
+		{"policy turns sharing on without a run", `{"shareQuotaWithServer":true}`, nil, true},
+		{"redelivered old run cannot flip the policy's share", `{"shareQuotaWithServer":true}`, []*bool{&off}, true},
+		{"redelivered old run cannot flip the policy's separate budget", `{"shareQuotaWithServer":false}`, []*bool{&on}, false},
+		{"older Core policy: the run decides", `{"headroomPct":30}`, []*bool{&off}, false},
+		{"no policy: the run decides", "", []*bool{&off}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			nodeSecretDir = t.TempDir()
+			backupShareQuotaMem.Store(0)
+			backupSharePolicySeen.Store(false)
+			// Start from the opposite of what the policy says, so a missed
+			// apply shows.
+			setBackupShareQuota(map[bool]*bool{true: &off, false: &on}[tc.want])
+			rdb := newMiniRedis(t)
+			if tc.policy != "" {
+				if err := rdb.Set(context.Background(), backupPolicyKey(nodeID), tc.policy, 0).Err(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			watchBackupPolicy(ctx, rdb, nodeID, t.TempDir())
+			for _, r := range tc.runs {
+				noteRunShareQuota(r)
+			}
+			if got := backupShareQuota(); got != tc.want {
+				t.Fatalf("share = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

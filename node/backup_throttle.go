@@ -56,6 +56,10 @@ type backupPolicy struct {
 	// SpoolMaxGB is the largest server (uncompressed) that is spooled; a larger
 	// one is uploaded directly.
 	SpoolMaxGB int64 `json:"spoolMaxGB"`
+	// ShareQuotaWithServer is Core's backup.share_quota_with_server, so the
+	// mode reaches a node that gets no backup_run. Nil is an older Core, or one
+	// that could not read the setting: the node keeps the mode it has.
+	ShareQuotaWithServer *bool `json:"shareQuotaWithServer"`
 }
 
 const (
@@ -115,7 +119,12 @@ func watchBackupPolicy(ctx context.Context, rdb *redis.Client, nodeID, spoolDir 
 		case err != nil:
 			// NOPERM from an older Core's ACL lands here too, and keeps nil.
 		default:
-			backupPolicyNow.Store(parseBackupPolicy(raw))
+			p := parseBackupPolicy(raw)
+			backupPolicyNow.Store(p)
+			if p != nil && p.ShareQuotaWithServer != nil {
+				backupSharePolicySeen.Store(true)
+				setBackupShareQuota(p.ShareQuotaWithServer)
+			}
 		}
 		_, free := getDiskSpace(spoolDir)
 		env := map[string]any{"spoolDir": spoolDir, "spoolFreeBytes": free, "uplinkMbit": nil}

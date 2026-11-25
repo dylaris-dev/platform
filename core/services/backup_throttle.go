@@ -125,14 +125,18 @@ type backupPolicy struct {
 	SaveOffMaxMin *int64 `json:"saveOffMaxMin"`
 	SpoolEnabled  bool   `json:"spoolEnabled"`
 	SpoolMaxGB    int64  `json:"spoolMaxGB"`
+	// ShareQuotaWithServer reaches a node that gets no backup_run, and
+	// overrides the copy a backup_run carries. Omitted when unreadable.
+	ShareQuotaWithServer *bool `json:"shareQuotaWithServer,omitempty"`
 }
 
 // BackupPolicyJSON is what a node with these values is sent.
-func BackupPolicyJSON(t NodeBackupThrottle, headroomPct int64, saveOffMaxMin *int64) string {
+func BackupPolicyJSON(t NodeBackupThrottle, headroomPct int64, saveOffMaxMin *int64, share *bool) string {
 	b, _ := json.Marshal(backupPolicy{
 		UplinkMbit: t.UplinkMbit, ReadMBps: t.ReadMBps,
 		HeadroomPct: headroomPct, SaveOffMaxMin: saveOffMaxMin,
 		SpoolEnabled: t.SpoolEnabled, SpoolMaxGB: t.SpoolMaxGB,
+		ShareQuotaWithServer: share,
 	})
 	return string(b)
 }
@@ -143,11 +147,11 @@ func PublishBackupPolicy(ctx context.Context, st store.Store, rdb *redis.Client,
 		return nil
 	}
 	headroom, ceiling := BackupThrottleGlobals(st)
-	return publishBackupPolicy(ctx, st, rdb, node, headroom, ceiling)
+	return publishBackupPolicy(ctx, st, rdb, node, headroom, ceiling, BackupShareQuotaMode(st))
 }
 
-func publishBackupPolicy(ctx context.Context, st store.Store, rdb *redis.Client, node models.Node, headroom int64, ceiling *int64) error {
-	return rdb.Set(ctx, NodeBackupPolicyKey(node.Token), BackupPolicyJSON(LoadNodeBackupThrottle(st, node.ID), headroom, ceiling), 0).Err()
+func publishBackupPolicy(ctx context.Context, st store.Store, rdb *redis.Client, node models.Node, headroom int64, ceiling *int64, share *bool) error {
+	return rdb.Set(ctx, NodeBackupPolicyKey(node.Token), BackupPolicyJSON(LoadNodeBackupThrottle(st, node.ID), headroom, ceiling, share), 0).Err()
 }
 
 // PublishBackupPolicies writes every node's policy. Every node gets one, set
@@ -159,11 +163,12 @@ func PublishBackupPolicies(ctx context.Context, st store.Store, rdb *redis.Clien
 		return
 	}
 	headroom, ceiling := BackupThrottleGlobals(st)
+	share := BackupShareQuotaMode(st)
 	for _, n := range nodes {
 		if n.Token == "" {
 			continue
 		}
-		if err := publishBackupPolicy(ctx, st, rdb, n, headroom, ceiling); err != nil {
+		if err := publishBackupPolicy(ctx, st, rdb, n, headroom, ceiling, share); err != nil {
 			log.Printf("backup policy publisher: node %d: %v", n.ID, err)
 		}
 	}

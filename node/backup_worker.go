@@ -102,6 +102,10 @@ func setBackupShareQuota(on *bool) {
 	if !*on {
 		mode, content = backupShareQuotaOff, backupShareQuotaOffMarker
 	}
+	// Already applied in this process: the policy repeats it every reload.
+	if backupShareQuotaMem.Load() == mode {
+		return
+	}
 	backupShareQuotaMem.Store(mode)
 	if nodeSecretDir != "" {
 		if err := os.WriteFile(backupShareQuotaPath(), []byte(content), 0o600); err != nil {
@@ -113,6 +117,21 @@ func setBackupShareQuota(on *bool) {
 	if changed {
 		globalQuotaSet.TagBackupDirs()
 	}
+}
+
+// backupSharePolicySeen is set once Core's backup policy has carried the share
+// mode. From then on the policy, republished every 30 s, is the only source: a
+// backup_run's copy is as old as its dispatch, and a run the queue redelivers
+// after a restart would otherwise write an older mode back.
+var backupSharePolicySeen atomic.Bool
+
+// noteRunShareQuota applies a backup_run's share mode, for an older Core whose
+// policy does not carry it.
+func noteRunShareQuota(on *bool) {
+	if backupSharePolicySeen.Load() {
+		return
+	}
+	setBackupShareQuota(on)
 }
 
 // backupShareQuota reports whether node-local archives count toward their
@@ -706,7 +725,7 @@ func (g *worldSaveGuard) watchCrashRestarts(rdb *redis.Client) (stop func()) {
 }
 
 func RunBackup(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *DockerManager, cmd BackupRunCommand) {
-	setBackupShareQuota(cmd.ShareQuotaWithServer)
+	noteRunShareQuota(cmd.ShareQuotaWithServer)
 	// Not while the server moves off this node: the move's cleanup deletes the
 	// tree a node-local archive lands in, and the writer hold below fails a
 	// staging move. Checked before that hold so a refusal counts as no write.
