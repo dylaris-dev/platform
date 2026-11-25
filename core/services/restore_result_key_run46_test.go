@@ -20,6 +20,8 @@ type restoreResultStore struct {
 	run      models.BackupRun
 	updated  []string
 	replaced []string
+	// updateFails makes the next that many row writes fail.
+	updateFails int
 }
 
 func (f *restoreResultStore) GetBackupRestore(id int) (*models.BackupRestore, error) {
@@ -28,6 +30,10 @@ func (f *restoreResultStore) GetBackupRestore(id int) (*models.BackupRestore, er
 }
 
 func (f *restoreResultStore) UpdateBackupRestoreStatus(id int, status, msg string, completed time.Time) error {
+	if f.updateFails > 0 {
+		f.updateFails--
+		return fmt.Errorf("db blip")
+	}
 	f.updated = append(f.updated, status+":"+msg)
 	return nil
 }

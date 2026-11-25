@@ -283,7 +283,10 @@ func (b *BackupScheduler) applyRestoreResult(restore *models.BackupRestore, resu
 		logErrf("backup-scheduler", "restore result: update failed for id=%d: %v", restore.ID, err)
 		written = false
 	}
-	if result.Status == "success" && reconcile {
+	// Only once the row holds the result: a failed write keeps the result for
+	// a retry, and reconciling here too would follow the archive twice and
+	// overwrite what the customer changed in between.
+	if written && result.Status == "success" && reconcile {
 		b.restoreInstalls(restore.RunID, restore.ServerID, restore.Overlay)
 		b.restoreMods(restore.RunID, restore.ServerID, restore.Overlay)
 		b.forgetSubServersRestoredAway(restore.RunID, restore.ServerID, restore.Overlay)
