@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -292,15 +293,22 @@ var serverSlotWait = 2 * time.Minute
 // create then skipped placement and the quota. Its directory is made under
 // the create's lock, so once it exists the setup's lock waits for the rest.
 // An unresolved path and a deleted server are left to the setup's own guards.
+// An unread storage key is neither: the create gives up its lock on one, and
+// a setup let through then beat it again (R54-01), so it keeps waiting.
 func awaitServerSlot(storage *StorageManager, uuid string) bool {
 	deadline := time.Now().Add(serverSlotWait)
 	for {
-		dir := storage.GetServerDir(uuid)
-		if dir == "" || serverDeleted(uuid) {
+		if serverDeleted(uuid) {
 			return true
 		}
-		if _, err := os.Stat(dir); !errors.Is(err, fs.ErrNotExist) {
+		base, keyErr := storage.resolveServerPath(uuid)
+		if base == "" && keyErr == nil {
 			return true
+		}
+		if base != "" {
+			if _, err := os.Stat(filepath.Join(base, uuid)); !errors.Is(err, fs.ErrNotExist) {
+				return true
+			}
 		}
 		if time.Now().After(deadline) {
 			return false
