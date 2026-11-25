@@ -21,6 +21,8 @@ Newest release first. The format is fixed and checked in CI - see the
   the disk limit and the disk guard stopped counting them. Server and installer containers now run under Docker's
   default seccomp profile minus the two ioctls that change a file's quota project. A running server gets it at its
   next restart. `node`
+- gorilla/websocket and OpenTelemetry are updated past two published advisories (GO-2026-6278, GO-2026-6974).
+  Tabs and their live connections work as before. `core` `node`
 
 ### Fixes
 - Nothing.
