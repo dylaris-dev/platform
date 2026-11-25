@@ -6,7 +6,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
+
+	"github.com/redis/go-redis/v9"
 )
 
 // B06: node-local archives live inside the server directory, and the du path
@@ -149,6 +153,7 @@ func TestBackupFoldersFollowTheShareMode(t *testing.T) {
 
 	off, on := false, true
 	setBackupShareQuota(&off) // persisted mode, before the node restart
+	waitBackupRetag(t)
 	clear(tags)
 	backupShareQuotaMem.Store(0)
 
@@ -165,6 +170,7 @@ func TestBackupFoldersFollowTheShareMode(t *testing.T) {
 	} {
 		clear(tags)
 		tc.step()
+		waitBackupRetag(t)
 		if fmt.Sprint(tags) != fmt.Sprint(tc.want) {
 			t.Errorf("%s: tagged %v, want %v", tc.name, tags, tc.want)
 		}
@@ -217,6 +223,144 @@ func TestBackupPolicyCarriesTheShareMode(t *testing.T) {
 			for _, r := range tc.runs {
 				noteRunShareQuota(r)
 			}
+			if got := backupShareQuota(); got != tc.want {
+				t.Fatalf("share = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// waitBackupRetag waits for the background re-tag setBackupShareQuota started.
+func waitBackupRetag(t *testing.T) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		backupRetag.mu.Lock()
+		running := backupRetag.running
+		backupRetag.mu.Unlock()
+		if !running {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("backup folder re-tag did not finish")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// R55-03: a share-mode change while a server's storage move holds its fence
+// must not stall the caller (the policy watcher) until the move ends; the
+// folder is still re-tagged once the fence lifts.
+func TestShareModeChangeDoesNotWaitOnAStorageMove(t *testing.T) {
+	prevSecret, prevSet, prevTag := nodeSecretDir, globalQuotaSet, setBackupDirProject
+	t.Cleanup(func() {
+		nodeSecretDir, globalQuotaSet, setBackupDirProject = prevSecret, prevSet, prevTag
+		backupShareQuotaMem.Store(0)
+	})
+	nodeSecretDir = t.TempDir()
+	backupShareQuotaMem.Store(0)
+
+	const uuid = "0b6c1a52-0000-4000-8000-000000000003"
+	root := t.TempDir()
+	storage := NewStorageManager(root, nil)
+	if err := os.MkdirAll(filepath.Join(root, uuid, backupDirName), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	tagged := map[string]bool{}
+	setBackupDirProject = func(dir string, pid uint32, share bool) error {
+		mu.Lock()
+		tagged[dir] = share
+		mu.Unlock()
+		return nil
+	}
+	globalQuotaSet = &QuotaSet{storage: storage, providers: map[string]*QuotaProvider{root: {basePath: root, available: true}}}
+
+	fence := make(chan struct{})
+	storage.movingMu.Lock()
+	if storage.moving == nil {
+		storage.moving = map[string]chan struct{}{}
+	}
+	storage.moving[uuid] = fence
+	storage.movingMu.Unlock()
+
+	off, on := false, true
+	returned := make(chan struct{})
+	go func() {
+		setBackupShareQuota(&off)
+		setBackupShareQuota(&on)
+		close(returned)
+	}()
+	select {
+	case <-returned:
+	case <-time.After(2 * time.Second):
+		close(fence)
+		t.Fatal("setBackupShareQuota waited on the storage move fence")
+	}
+	if !backupShareQuota() {
+		t.Fatal("share mode not applied while the move runs")
+	}
+
+	storage.movingMu.Lock()
+	delete(storage.moving, uuid)
+	storage.movingMu.Unlock()
+	close(fence)
+	waitBackupRetag(t)
+	mu.Lock()
+	defer mu.Unlock()
+	if got, ok := tagged[filepath.Join(root, uuid, backupDirName)]; !ok || !got {
+		t.Fatalf("after the move: tagged = %v, want the folder tagged for share", tagged)
+	}
+}
+
+// R55-02: a node that has seen the share mode in Core's policy restarts, and
+// its first policy read fails. A backup_run the queue redelivers at boot must
+// not write its older mode back: the "policy carries it" marker is on disk.
+func TestRedeliveredRunAfterFailedFirstPolicyRead(t *testing.T) {
+	prevSecret, prevSeen, prevPolicy := nodeSecretDir, backupSharePolicySeen.Load(), backupPolicyNow.Load()
+	t.Cleanup(func() {
+		nodeSecretDir = prevSecret
+		backupShareQuotaMem.Store(0)
+		backupSharePolicySeen.Store(prevSeen)
+		backupPolicyNow.Store(prevPolicy)
+	})
+	on, off := true, false
+	for _, tc := range []struct {
+		name   string
+		before string // the policy the previous process last read
+		want   bool
+	}{
+		{"policy said separate: old share run stays out", `{"shareQuotaWithServer":false}`, false},
+		{"older Core policy cleared the marker: the run decides", `{"headroomPct":30}`, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			nodeSecretDir = t.TempDir()
+			backupShareQuotaMem.Store(0)
+			backupSharePolicySeen.Store(false)
+			setBackupShareQuota(&off)
+			// A marker from an earlier policy, so the older-Core case must
+			// actively clear it.
+			markBackupSharePolicySeen(true)
+			backupSharePolicySeen.Store(false)
+
+			rdb := newMiniRedis(t)
+			if err := rdb.Set(context.Background(), backupPolicyKey(nodeID), tc.before, 0).Err(); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			watchBackupPolicy(ctx, rdb, nodeID, t.TempDir())
+			cancel()
+
+			// Restart: in-memory state is gone, Redis does not answer.
+			backupShareQuotaMem.Store(0)
+			backupSharePolicySeen.Store(false)
+			dead := redis.NewClient(&redis.Options{Addr: "127.0.0.1:1", MaxRetries: -1, DialTimeout: 200 * time.Millisecond})
+			defer dead.Close()
+			ctx2, cancel2 := context.WithCancel(context.Background())
+			defer cancel2()
+			watchBackupPolicy(ctx2, dead, nodeID, t.TempDir())
+			noteRunShareQuota(&on) // the redelivered run, dispatched before the change
+			waitBackupRetag(t)
 			if got := backupShareQuota(); got != tc.want {
 				t.Fatalf("share = %v, want %v", got, tc.want)
 			}

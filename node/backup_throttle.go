@@ -116,14 +116,19 @@ func watchBackupPolicy(ctx context.Context, rdb *redis.Client, nodeID, spoolDir 
 		switch {
 		case errors.Is(err, redis.Nil):
 			backupPolicyNow.Store(nil)
+			markBackupSharePolicySeen(false)
 		case err != nil:
 			// NOPERM from an older Core's ACL lands here too, and keeps nil.
 		default:
 			p := parseBackupPolicy(raw)
 			backupPolicyNow.Store(p)
-			if p != nil && p.ShareQuotaWithServer != nil {
-				backupSharePolicySeen.Store(true)
+			switch {
+			case p == nil:
+			case p.ShareQuotaWithServer != nil:
+				markBackupSharePolicySeen(true)
 				setBackupShareQuota(p.ShareQuotaWithServer)
+			default:
+				markBackupSharePolicySeen(false)
 			}
 		}
 		_, free := getDiskSpace(spoolDir)

@@ -115,8 +115,42 @@ func setBackupShareQuota(on *bool) {
 	// Every server's folder, not only this run's: otherwise each one kept the
 	// old mode's project until its own next node-local backup.
 	if changed {
-		globalQuotaSet.TagBackupDirs()
+		retagBackupDirs()
 	}
+}
+
+// backupRetag keeps the folder re-tag single-flight. A change while one runs
+// sets again, and the running pass goes once more for the newest mode.
+var backupRetag struct {
+	mu             sync.Mutex
+	running, again bool
+}
+
+// retagBackupDirs runs TagBackupDirs in the background: it resolves every
+// server's path, which waits out a storage move's fence, and the caller is the
+// policy watcher (or a backup_run) that must not stall for the whole move.
+func retagBackupDirs() {
+	qs := globalQuotaSet
+	backupRetag.mu.Lock()
+	defer backupRetag.mu.Unlock()
+	if backupRetag.running {
+		backupRetag.again = true
+		return
+	}
+	backupRetag.running = true
+	go func() {
+		for {
+			qs.TagBackupDirs()
+			backupRetag.mu.Lock()
+			if !backupRetag.again {
+				backupRetag.running = false
+				backupRetag.mu.Unlock()
+				return
+			}
+			backupRetag.again = false
+			backupRetag.mu.Unlock()
+		}
+	}()
 }
 
 // backupSharePolicySeen is set once Core's backup policy has carried the share
@@ -125,11 +159,43 @@ func setBackupShareQuota(on *bool) {
 // after a restart would otherwise write an older mode back.
 var backupSharePolicySeen atomic.Bool
 
+// backupSharePolicyPath marks on disk that the policy carries the share mode,
+// so the redelivered run is still ignored after a restart whose first policy
+// read failed. An older node ignores the file.
+func backupSharePolicyPath() string {
+	return filepath.Join(nodeSecretDir, "backup_share_policy")
+}
+
+// markBackupSharePolicySeen records whether Core's policy carries the share
+// mode. false (a policy without it, or none: an older Core) hands the decision
+// back to the runs.
+func markBackupSharePolicySeen(seen bool) {
+	// Removal does not trust the in-memory flag: after a restart it is false
+	// while the file from the last process is still there.
+	if backupSharePolicySeen.Swap(seen) && seen || nodeSecretDir == "" {
+		return
+	}
+	var err error
+	if seen {
+		err = os.WriteFile(backupSharePolicyPath(), nil, 0o600)
+	} else if err = os.Remove(backupSharePolicyPath()); errors.Is(err, os.ErrNotExist) {
+		err = nil
+	}
+	if err != nil {
+		log.Printf("backup: share-policy marker not updated: %v", err)
+	}
+}
+
 // noteRunShareQuota applies a backup_run's share mode, for an older Core whose
 // policy does not carry it.
 func noteRunShareQuota(on *bool) {
 	if backupSharePolicySeen.Load() {
 		return
+	}
+	if nodeSecretDir != "" {
+		if _, err := os.Stat(backupSharePolicyPath()); err == nil {
+			return
+		}
 	}
 	setBackupShareQuota(on)
 }
