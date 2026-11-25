@@ -28,6 +28,10 @@ func TestInstallsWaitForTheServersPowerAction(t *testing.T) {
 			if err := os.MkdirAll(filepath.Join(root, uuid, "server"), 0o755); err != nil {
 				t.Fatal(err)
 			}
+			// The create's saved config, which setup waits for (awaitServerSlot).
+			if err := os.WriteFile(filepath.Join(root, uuid, ".node_config.json"), []byte("{}"), 0o644); err != nil {
+				t.Fatal(err)
+			}
 			payload := `{"config":{"uuid":"` + uuid + `","activeSubServer":"server"}}`
 			release, ok := tryLockServerPower(uuid)
 			if !ok {

@@ -97,8 +97,9 @@ func TestSetupAnswersNoOnEveryEarlyReturn(t *testing.T) {
 			rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 			storage := NewStorageManager(t.TempDir(), rdb)
 			uuid := uuids[name]
-			// The create's directory, which setup waits for (awaitServerSlot).
+			// The create's slot, which setup waits for (awaitServerSlot).
 			os.MkdirAll(storage.GetServerDir(uuid), 0o755)
+			os.WriteFile(filepath.Join(storage.GetServerDir(uuid), ".node_config.json"), []byte("{}"), 0o644)
 			if c.prepare != nil {
 				c.prepare(t, filepath.Join(storage.GetServerDir(uuid), "main"))
 			}

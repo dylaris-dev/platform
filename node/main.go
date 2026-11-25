@@ -1055,6 +1055,21 @@ func finishStorageMove(ctx context.Context, rdb *redis.Client, dm *DockerManager
 	return rmErr
 }
 
+// recordSavedDiskLimit puts limitMB into the server's saved config, if it has
+// one, so the boot recount finds it when Redis lost the cache.
+func recordSavedDiskLimit(serverDir string, limitMB int64) {
+	data, err := readServerRootFile(serverDir, ".node_config.json")
+	if err != nil {
+		return
+	}
+	var saved ServerConfig
+	if err := json.Unmarshal(data, &saved); err != nil {
+		return
+	}
+	saved.Docker.DiskLimit = limitMB
+	saveNodeConfigWithDiskLimit(serverDir, saved)
+}
+
 // saveNodeConfigWithDiskLimit is saveNodeConfig for the commands whose payload
 // carries the disk limit, 0 (unlimited) included.
 func saveNodeConfigWithDiskLimit(serverDir string, config ServerConfig) {
@@ -1786,6 +1801,14 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		}
 		if _, err := readServerRootFile(dir, ".active_server"); err == nil {
 			log.Printf("create %s: the server is already set up on this node, leaving it as it is", cmd.Config.UUID)
+			// A setup that beat this create ran with no disk limit, which only
+			// the create carries (R55-01). Unlimited is no record at all, so a
+			// limit is put on only while none is known.
+			if limitMB := cmd.Config.Docker.DiskLimit; quota != nil && limitMB > 0 && knownDiskLimitMB(ctx, rdb, quota, cmd.Config.UUID) == 0 {
+				log.Printf("create %s: no disk limit is recorded for it, applying the create's %d MB", cmd.Config.UUID, limitMB)
+				applyDiskLimit(ctx, rdb, quota, cmd.Config.UUID, limitMB)
+				recordSavedDiskLimit(dir, limitMB)
+			}
 			return
 		}
 
@@ -1795,10 +1818,21 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		// server row with no directory.
 		// A slot an earlier delivery of this create made is kept: picking again
 		// could choose a second path and leave two copies no marker tells
-		// apart once the key is lost (R36-10).
+		// apart once the key is lost (R36-10). One a write made ahead of the
+		// create (a template push, an upload) holds files but no node file
+		// yet, and is moved, whole, to the path the create would have chosen
+		// (R55-01). An empty one is the earlier delivery's and stays.
 		var storagePath string
 		if st, serr := os.Stat(dir); serr == nil && st.IsDir() {
 			storagePath = filepath.Dir(dir)
+			if entries, rerr := os.ReadDir(dir); rerr == nil && len(entries) > 0 && !slotSetUp(dir) {
+				// The create's own writer hold (holdCommandWriter) is the 1.
+				if storagePath, err = storage.placeEarlySlot(cmd.Config.UUID, storagePath, cmd.Config.StoragePath, 1); err != nil {
+					log.Printf("create %s: moving the slot a write made to its storage path left the storage key unsure; the create will be delivered again: %v", cmd.Config.UUID, err)
+					askRedelivery(ctx, fmt.Errorf("create %s: place the slot: %w", cmd.Config.UUID, err))
+					return
+				}
+			}
 		} else {
 			storagePath, err = storage.SelectStoragePath(cmd.Config.UUID, cmd.Config.StoragePath)
 		}
@@ -1823,6 +1857,12 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		if err := dm.CreateServerPodStopped(cmd.Config); err != nil {
 			log.Printf("Failed to create server pod %s: %v", cmd.Config.UUID, err)
 			dropLimitsIfDeleted(ctx, rdb, quota, cmd.Config.UUID)
+			// Saved anyway: it is what tells a waiting setup (awaitServerSlot)
+			// that placement and the quota are done, and setup makes the
+			// container itself.
+			if !serverDeleted(cmd.Config.UUID) {
+				saveNodeConfigWithDiskLimit(serverPath, cmd.Config)
+			}
 		} else {
 			log.Printf("Server slot %s created (pending setup)", cmd.Config.UUID)
 			saveNodeConfigWithDiskLimit(serverPath, cmd.Config)

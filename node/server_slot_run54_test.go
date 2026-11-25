@@ -38,6 +38,7 @@ func TestAwaitServerSlotWaitsWhileTheStorageKeyIsUnreadable(t *testing.T) {
 					time.Sleep(100 * time.Millisecond)
 					mr.SetError("")
 					os.MkdirAll(filepath.Join(root, uuid), 0o755)
+					os.WriteFile(filepath.Join(root, uuid, ".node_config.json"), []byte("{}"), 0o644)
 				}()
 			}
 			if got := awaitServerSlot(storage, uuid); got != tc.want {

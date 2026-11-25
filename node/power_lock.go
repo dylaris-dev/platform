@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"os"
 	"path/filepath"
 	"sync"
 	"time"
@@ -286,12 +285,13 @@ func waitInstallOfServer(ctx context.Context, uuid string) (unlock func(), reaso
 // have made the server's directory; a variable so a test need not sit it out.
 var serverSlotWait = 2 * time.Minute
 
-// awaitServerSlot reports whether the create of uuid has made its directory,
-// waiting up to serverSlotWait for it. A create and setup queued together run
-// in parallel, and a setup that took the install lock first installed into
-// the first storage path, not the one the create was asked for, and the
-// create then skipped placement and the quota. Its directory is made under
-// the create's lock, so once it exists the setup's lock waits for the rest.
+// awaitServerSlot reports whether the create of uuid has run, waiting up to
+// serverSlotWait for it. A create and setup queued together run in parallel,
+// and a setup that took the install lock first installed into the first
+// storage path, not the one the create was asked for, and the create then
+// skipped placement and the quota. Not the bare directory: a template push or
+// an upload ahead of the create makes that too (R55-01). What it waits for is
+// slotSetUp, which the create writes under its lock.
 // An unresolved path and a deleted server are left to the setup's own guards.
 // An unread storage key is neither: the create gives up its lock on one, and
 // a setup let through then beat it again (R54-01), so it keeps waiting.
@@ -305,14 +305,26 @@ func awaitServerSlot(storage *StorageManager, uuid string) bool {
 		if base == "" && keyErr == nil {
 			return true
 		}
-		if base != "" {
-			if _, err := os.Stat(filepath.Join(base, uuid)); !errors.Is(err, fs.ErrNotExist) {
-				return true
-			}
+		if base != "" && slotSetUp(filepath.Join(base, uuid)) {
+			return true
 		}
 		if time.Now().After(deadline) {
 			return false
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
+}
+
+// slotSetUp reports whether dir is a server's slot rather than what a write
+// made ahead of its create: one of the node's own files is in it, the saved
+// config a create writes, the .active_server a setup writes, or the live mark
+// a server moved in or across paths carries. No tenant write can make them
+// (isProtectedFile). Unreadable is not proof of absence.
+func slotSetUp(dir string) bool {
+	for _, name := range []string{".node_config.json", ".active_server", storageLiveMarker} {
+		if _, err := readServerRootFile(dir, name); !errors.Is(err, fs.ErrNotExist) {
+			return true
+		}
+	}
+	return false
 }

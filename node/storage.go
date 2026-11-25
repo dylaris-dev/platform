@@ -922,11 +922,20 @@ func pickByPriority(ordered []string) string {
 // path never return, and under the lock they stalled every GetServerPath on
 // the node. sm.paths is fixed after NewStorageManager.
 func (sm *StorageManager) SelectStoragePath(serverUUID string, preferredPath string) (string, error) {
+	p, err := sm.chooseStoragePath(preferredPath)
+	if err != nil {
+		return "", err
+	}
+	return sm.assignPath(serverUUID, p)
+}
+
+// chooseStoragePath is SelectStoragePath's choice, making nothing.
+func (sm *StorageManager) chooseStoragePath(preferredPath string) (string, error) {
 	// If admin explicitly chose a path, use it (if valid)
 	if preferredPath != "" {
 		for _, p := range sm.paths {
 			if p == preferredPath {
-				return sm.assignPath(serverUUID, p)
+				return p, nil
 			}
 		}
 		return "", fmt.Errorf("preferred path %q not available", preferredPath)
@@ -939,7 +948,7 @@ func (sm *StorageManager) SelectStoragePath(serverUUID string, preferredPath str
 
 	if manual {
 		if p := pickByPriority(ordered); p != "" {
-			return sm.assignPath(serverUUID, p)
+			return p, nil
 		}
 		// Every path in the order is gone or full. Fall through to free-space
 		// selection instead of refusing: a stale order must not take the node
@@ -963,7 +972,32 @@ func (sm *StorageManager) SelectStoragePath(serverUUID string, preferredPath str
 		return "", fmt.Errorf("no storage paths available")
 	}
 
-	return sm.assignPath(serverUUID, bestPath)
+	return bestPath, nil
+}
+
+// placeEarlySlot is the storage path for a create that found its directory
+// already made by a write (a template push or an upload ahead of the create,
+// openJailedForWrite) on the default path: the server is moved to the path the
+// create asked for, else the free-space choice, before anything is set up in
+// it. ownWriters are the create's own writer holds; another writer still in
+// the tree refuses the move and the slot stays where it is. An error is a key
+// write that may name either copy (errStorageKeyUnsure).
+func (sm *StorageManager) placeEarlySlot(serverUUID, current, preferredPath string, ownWriters int) (string, error) {
+	target, err := sm.chooseStoragePath(preferredPath)
+	if err != nil && preferredPath != "" {
+		target, err = sm.chooseStoragePath("")
+	}
+	if err != nil || target == current {
+		return current, nil
+	}
+	if err := sm.migrateServerPath(serverUUID, target, ownWriters); err != nil {
+		if errors.Is(err, errStorageKeyUnsure) {
+			return "", err
+		}
+		log.Printf("storage: %s keeps the slot a write made on %s, not moved to %s: %v", serverUUID, current, target, err)
+		return current, nil
+	}
+	return target, nil
 }
 
 // assignPath creates the server directory and stores the path in Redis.
@@ -1298,9 +1332,14 @@ func (sm *StorageManager) dropStaleCopies(serverUUID string) {
 // upload kept writing into the source, the move deleted it, and the client saw
 // the upload succeed. So the fence is refused while a writer holds the server.
 func (sm *StorageManager) fenceMove(serverUUID string) (func(), error) {
+	return sm.fenceMoveBeyond(serverUUID, 0)
+}
+
+// fenceMoveBeyond is fenceMove for a caller that itself holds ownWriters.
+func (sm *StorageManager) fenceMoveBeyond(serverUUID string, ownWriters int) (func(), error) {
 	ch := make(chan struct{})
 	sm.movingMu.Lock()
-	if err := sm.holdsLocked(serverUUID); err != nil {
+	if err := sm.holdsLockedBeyond(serverUUID, ownWriters); err != nil {
 		sm.movingMu.Unlock()
 		return nil, err
 	}
@@ -1320,7 +1359,11 @@ func (sm *StorageManager) fenceMove(serverUUID string) (func(), error) {
 // holdsLocked is the refusal a local move makes for writers and folder
 // downloads. Under movingMu.
 func (sm *StorageManager) holdsLocked(serverUUID string) error {
-	if n := sm.writers[serverUUID]; n > 0 {
+	return sm.holdsLockedBeyond(serverUUID, 0)
+}
+
+func (sm *StorageManager) holdsLockedBeyond(serverUUID string, ownWriters int) error {
+	if n := sm.writers[serverUUID] - ownWriters; n > 0 {
 		return writersInProgress(serverUUID, n)
 	}
 	if n := sm.readers[serverUUID]; n > 0 {
@@ -1618,12 +1661,16 @@ var migrateCopyTree = copyTree
 // to targetPath. The server container must be stopped before calling this.
 // Steps: validate → find current → clear target → check space → copy → verify → update Redis → delete old.
 func (sm *StorageManager) MigrateServerPath(serverUUID, targetPath string) error {
+	return sm.migrateServerPath(serverUUID, targetPath, 0)
+}
+
+func (sm *StorageManager) migrateServerPath(serverUUID, targetPath string, ownWriters int) error {
 	currentPath, err := sm.resolveMigration(serverUUID, targetPath)
 	if err != nil {
 		return err
 	}
 
-	release, err := sm.fenceMove(serverUUID)
+	release, err := sm.fenceMoveBeyond(serverUUID, ownWriters)
 	if err != nil {
 		return err
 	}

@@ -46,6 +46,7 @@ func TestSetupWaitsForTheCreateToMakeTheServerDir(t *testing.T) {
 				go func() {
 					time.Sleep(100 * time.Millisecond)
 					os.MkdirAll(filepath.Join(root, uuid), 0o755)
+					os.WriteFile(filepath.Join(root, uuid, ".node_config.json"), []byte("{}"), 0o644)
 				}()
 			}
 
@@ -143,6 +144,7 @@ func TestSetupRecoversAStrandedJarStash(t *testing.T) {
 	}
 	os.WriteFile(filepath.Join(stash, stashCompleteMark), nil, 0o644)
 	os.WriteFile(filepath.Join(stash, "main", "mods", "old.jar"), []byte("old"), 0o644)
+	os.WriteFile(filepath.Join(dir, ".node_config.json"), []byte("{}"), 0o644)
 
 	cmd := NodeCommand{Action: "setup", Installer: InstallerConfig{Type: "not-an-installer"}}
 	cmd.Config.UUID = uuid

@@ -42,6 +42,7 @@ func TestSetupFailureReportSaysWhetherTheFilesAreBack(t *testing.T) {
 			storage := NewStorageManager(root, rdb)
 			if tc.existing {
 				writeTestFile(t, filepath.Join(root, uuid, "main", "mods", "a.jar"), "mod")
+				writeTestFile(t, filepath.Join(root, uuid, ".node_config.json"), "{}")
 			}
 			sub := rdb.Subscribe(context.Background(), queue.SetupResultsChannel(nodeID))
 			defer sub.Close()
