@@ -235,6 +235,7 @@ func (b *BackupScheduler) consumeRestoreResults(ctx context.Context) {
 			if result.Status == "success" {
 				b.restoreInstalls(restore.RunID, restore.ServerID, restore.Overlay)
 				b.restoreMods(restore.RunID, restore.ServerID, restore.Overlay)
+				b.forgetSubServersRestoredAway(restore.RunID, restore.ServerID, restore.Overlay)
 			}
 		}
 	}
@@ -1226,6 +1227,43 @@ func (b *BackupScheduler) restoreMods(runID, serverID int, overlay *bool) {
 		// applies, for the same reason.
 		if err := b.store.ReplaceServerMods(serverID, entry.SubServer, rows); err != nil {
 			logErrf("backup-scheduler", "restore mods: server %d/%s: %v", serverID, entry.SubServer, err)
+		}
+	}
+}
+
+// forgetSubServersRestoredAway removes the rows of the sub-servers a full
+// whole-server restore deleted. The node replaces the whole server root with the
+// archive, so a sub-server created after the backup is gone from disk, and its
+// mod rows, install record and modpack snapshot would otherwise outlive it the
+// way DeleteSubServer exists to prevent (R44-03). Only a whole-server manifest
+// says which sub-servers the archive held; without one nothing is removed. The
+// active sub-server is kept: the node refuses a restore whose archive lacks it.
+func (b *BackupScheduler) forgetSubServersRestoredAway(runID, serverID int, overlay *bool) {
+	run, err := b.store.GetBackupRun(runID)
+	if err != nil || run == nil {
+		return
+	}
+	if b.overlaidRun(run, overlay) {
+		return
+	}
+	m, ok := DecodeBackupManifest(run.Manifest)
+	if !ok || m.Scope != "" {
+		return
+	}
+	srv, err := b.store.GetServerByID(serverID)
+	if err != nil || srv == nil {
+		return
+	}
+	archived := map[string]bool{srv.ActiveSubServer: true}
+	for _, rec := range m.Installs {
+		archived[rec.SubServerName] = true
+	}
+	for _, entry := range m.Mods {
+		archived[entry.SubServer] = true
+	}
+	for _, sub := range manifestScopeSubServers(b.store, serverID, "") {
+		if !archived[sub] {
+			RemoveCopyTargetRows(b.store, srv, sub)
 		}
 	}
 }
