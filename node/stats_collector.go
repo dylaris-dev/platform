@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"os"
 	"os/exec"
@@ -1039,10 +1040,32 @@ func serverDiskBytes(dir string, share bool) int64 {
 	if total < 0 || share {
 		return total
 	}
-	if b := dirSize(filepath.Join(dir, backupDirName)); b > 0 {
+	if b := nodeLocalArchiveBytes(filepath.Join(dir, backupDirName)); b > 0 {
 		total = max(total-b, 0)
 	}
 	return total
+}
+
+// nodeLocalArchiveBytes is what the node's archives in the backup folder at
+// dir hold, the entries backupEntryProject takes off the server; anything
+// else there stays charged.
+func nodeLocalArchiveBytes(dir string) int64 {
+	root, err := openBackupRoot(dir, false)
+	if err != nil {
+		return 0
+	}
+	defer root.Close()
+	entries, _ := fs.ReadDir(root.FS(), ".")
+	var n int64
+	for _, e := range entries {
+		if !e.Type().IsRegular() || !isNodeLocalArchive(e.Name()) {
+			continue
+		}
+		if fi, err := e.Info(); err == nil && !multiplyLinkedInfo(fi) {
+			n += fi.Size()
+		}
+	}
+	return n
 }
 
 // scanSubServerSizes measures each sub-server directory under a server root.

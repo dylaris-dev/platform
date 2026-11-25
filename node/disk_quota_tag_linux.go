@@ -44,19 +44,73 @@ func tagProjectTree(root string, pid uint32) error {
 // off as well, so new files stay uncharged.
 func setProjectTree(root, skip string, pid uint32) error {
 	return walkProjectTree(root, skip, func(fd int, dir bool) error {
-		var fa fsxattr
-		if err := fsxattrIoctl(fd, fsIocFsgetxattr, &fa); err != nil {
-			return fmt.Errorf("get attributes: %w", err)
+		return setFdProject(fd, pid, dir)
+	})
+}
+
+func setFdProject(fd int, pid uint32, dir bool) error {
+	var fa fsxattr
+	if err := fsxattrIoctl(fd, fsIocFsgetxattr, &fa); err != nil {
+		return fmt.Errorf("get attributes: %w", err)
+	}
+	want := projectAttrs(fa, pid, dir)
+	if want == fa {
+		return nil
+	}
+	if err := fsxattrIoctl(fd, fsIocFssetxattr, &want); err != nil {
+		return fmt.Errorf("set project %d: %w", pid, err)
+	}
+	return nil
+}
+
+// setBackupTree tags the server's backup folder at dir and everything in it
+// with the project backupEntryProject picks.
+func setBackupTree(dir string, serverPid uint32, share bool) error {
+	return walkProjectTreeAt(dir, "", func(fd int, name string, depth int, isDir bool) error {
+		pid, err := backupFdProject(fd, name, depth, isDir, serverPid, share)
+		if err != nil {
+			return err
 		}
-		want := projectAttrs(fa, pid, dir)
-		if want == fa {
+		return setFdProject(fd, pid, isDir)
+	})
+}
+
+// backupTagsMoved reports whether an entry of the backup folder at dir is not
+// on the project backupEntryProject picks: in separate mode the folder has no
+// inheritance, so a file the tenant writes there starts uncharged.
+func backupTagsMoved(dir string, serverPid uint32, share bool) (bool, error) {
+	return backupTreeTagsMoved(dir, serverPid, share, func(fd int) (fsxattr, error) {
+		var fa fsxattr
+		return fa, fsxattrIoctl(fd, fsIocFsgetxattr, &fa)
+	})
+}
+
+func backupTreeTagsMoved(dir string, serverPid uint32, share bool, get func(fd int) (fsxattr, error)) (bool, error) {
+	moved := false
+	err := walkProjectTreeAt(dir, "", func(fd int, name string, depth int, isDir bool) error {
+		if moved {
 			return nil
 		}
-		if err := fsxattrIoctl(fd, fsIocFssetxattr, &want); err != nil {
-			return fmt.Errorf("set project %d: %w", pid, err)
+		pid, err := backupFdProject(fd, name, depth, isDir, serverPid, share)
+		if err != nil {
+			return err
 		}
+		fa, err := get(fd)
+		if err != nil {
+			return fmt.Errorf("get attributes: %w", err)
+		}
+		moved = projectAttrs(fa, pid, isDir) != fa
 		return nil
 	})
+	return moved, err
+}
+
+func backupFdProject(fd int, name string, depth int, dir bool, serverPid uint32, share bool) (uint32, error) {
+	var st unix.Stat_t
+	if err := unix.Fstat(fd, &st); err != nil {
+		return 0, fmt.Errorf("stat: %w", err)
+	}
+	return backupEntryProject(name, depth, dir, st.Nlink > 1, serverPid, share), nil
 }
 
 // projectAttrs is fa with project pid, inherited by a directory's new entries
@@ -124,6 +178,14 @@ func fsxattrIoctl(fd int, req uintptr, fa *fsxattr) error {
 // Like chattr -R, an entry that fails is skipped and the walk goes on; the
 // first failure and the count come back as the error.
 func walkProjectTree(root, skip string, visit func(fd int, dir bool) error) error {
+	return walkProjectTreeAt(root, skip, func(fd int, _ string, _ int, dir bool) error {
+		return visit(fd, dir)
+	})
+}
+
+// walkProjectTreeAt is walkProjectTree with each entry's name and depth below
+// root; root itself is "." at depth 0.
+func walkProjectTreeAt(root, skip string, visit func(fd int, name string, depth int, dir bool) error) error {
 	fd, err := unix.Open(root, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return fmt.Errorf("open %s: %w", root, err)
@@ -151,7 +213,7 @@ var maxProjectTreeDepth = 4096
 // every ancestor's string alive, memory growing with the square of the depth.
 // An error names the entry and its depth below root instead.
 type treeWalk struct {
-	visit  func(fd int, dir bool) error
+	visit  func(fd int, name string, depth int, dir bool) error
 	dev    uint64
 	root   string
 	skip   string
@@ -173,7 +235,7 @@ func (w *treeWalk) dir(dfd int, name string, depth int) {
 	if err != nil {
 		w.fail(name, depth, err)
 	}
-	if err := w.visit(dfd, true); err != nil {
+	if err := w.visit(dfd, name, depth, true); err != nil {
 		w.fail(name, depth, err)
 	}
 	for _, n := range names {
@@ -223,7 +285,7 @@ func (w *treeWalk) entry(dfd int, name string, depth int) {
 			w.fail(name, depth, err)
 			return
 		}
-		if err := w.visit(cfd, false); err != nil {
+		if err := w.visit(cfd, name, depth, false); err != nil {
 			w.fail(name, depth, err)
 		}
 		unix.Close(cfd)

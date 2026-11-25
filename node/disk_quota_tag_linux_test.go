@@ -251,3 +251,69 @@ func TestTreeTagsMoved(t *testing.T) {
 		}
 	}
 }
+
+// R53-03: the backup folder walk decides per entry on the real inode, a hard
+// link to a world file included, and the check sees a tenant file left
+// uncharged.
+func TestBackupTreeProjects(t *testing.T) {
+	const pid = 7
+	root := t.TempDir()
+	dir := filepath.Join(root, backupDirName)
+	if err := os.MkdirAll(filepath.Join(dir, "sub"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{"world.dat", backupDirName + "/a.tar.gz", backupDirName + "/a.tar.gz.partial", backupDirName + "/r.0.0.mca", backupDirName + "/sub/c.tar.gz"} {
+		if err := os.WriteFile(filepath.Join(root, f), []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Link(filepath.Join(root, "world.dat"), filepath.Join(dir, "w.tar.gz")); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]uint32{"": 0, "a.tar.gz": 0, "a.tar.gz.partial": 0, "r.0.0.mca": pid, "w.tar.gz": pid, "sub": pid, "sub/c.tar.gz": pid}
+	for _, share := range []bool{false, true} {
+		got := map[uint64]uint32{}
+		if err := walkProjectTreeAt(dir, "", func(fd int, name string, depth int, isDir bool) error {
+			p, err := backupFdProject(fd, name, depth, isDir, pid, share)
+			var st syscall.Stat_t
+			if serr := syscall.Fstat(fd, &st); serr != nil {
+				return serr
+			}
+			got[st.Ino] = p
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+		for p, w := range want {
+			if share {
+				w = pid
+			}
+			if g := got[inodeOf(t, filepath.Join(dir, p))]; g != w {
+				t.Errorf("share=%v %q: project %d, want %d", share, p, g, w)
+			}
+		}
+	}
+
+	byIno := map[uint64]fsxattr{}
+	for p, w := range want {
+		fa := fsxattr{projid: w}
+		if w != 0 && (p == "" || p == "sub") {
+			fa.xflags = fsXflagProjinherit
+		}
+		byIno[inodeOf(t, filepath.Join(dir, p))] = fa
+	}
+	get := func(fd int) (fsxattr, error) {
+		var st syscall.Stat_t
+		if err := syscall.Fstat(fd, &st); err != nil {
+			return fsxattr{}, err
+		}
+		return byIno[st.Ino], nil
+	}
+	if moved, err := backupTreeTagsMoved(dir, pid, false, get); err != nil || moved {
+		t.Errorf("as tagged: moved = %v, %v; want false", moved, err)
+	}
+	byIno[inodeOf(t, filepath.Join(dir, "r.0.0.mca"))] = fsxattr{}
+	if moved, err := backupTreeTagsMoved(dir, pid, false, get); err != nil || !moved {
+		t.Errorf("tenant file uncharged: moved = %v, %v; want true", moved, err)
+	}
+}

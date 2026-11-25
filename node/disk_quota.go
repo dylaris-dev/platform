@@ -258,8 +258,33 @@ func (qp *QuotaProvider) AssignQuota(uuid string) error {
 	return nil
 }
 
-// setBackupDirProject is setProjectTree; a var so tests can see the calls.
-var setBackupDirProject = setProjectTree
+// setBackupDirProject is setBackupTree; a var so tests can see the calls.
+var setBackupDirProject = setBackupTree
+
+// isNodeLocalArchive reports whether name looks like a node-local archive or a
+// run's partial: every storage key Core makes ends in .tar.gz.
+func isNodeLocalArchive(name string) bool {
+	return strings.HasSuffix(strings.TrimSuffix(name, partialBackupSuffix), ".tar.gz")
+}
+
+// backupEntryProject is the project of an entry in a server's backup folder,
+// depth 0 being the folder itself. In separate-budget mode only the node's own
+// archives come off the server: a tenant that is root in its container
+// (MC_RUN_AS=0) writes, renames or hard-links into the folder too, and a walk
+// that untagged everything there took its world out of the disk limit (R53-03).
+// A linked file keeps the server's project, as its other name is in the world.
+//
+// ponytail: a root tenant can still park data under an archive-shaped name;
+// matching against Core's run list closes that if it shows up.
+func backupEntryProject(name string, depth int, dir, multiLinked bool, serverPid uint32, share bool) uint32 {
+	if share {
+		return serverPid
+	}
+	if depth == 0 || (depth == 1 && !dir && !multiLinked && isNodeLocalArchive(name)) {
+		return 0
+	}
+	return serverPid
+}
 
 // TagBackupDir charges the server's node-local backup folder to the server's
 // project only while Core shares the server's quota with backups. Otherwise
@@ -269,20 +294,17 @@ var setBackupDirProject = setProjectTree
 // here too: at boot and on a share-mode change for every server (see
 // tagBackupDirs), and before each node-local archive.
 //
-// The folder is a flat list of archives, so the walk is short.
+// The folder is a flat list of archives, so the walk is short. Only the
+// archives come off the server; see backupEntryProject.
 func (qp *QuotaProvider) TagBackupDir(uuid string) error {
 	if !qp.available {
 		return nil
-	}
-	var pid uint32
-	if backupShareQuota() {
-		pid = projectID(uuid)
 	}
 	dir := filepath.Join(qp.basePath, uuid, backupDirName)
 	if _, err := os.Lstat(dir); os.IsNotExist(err) {
 		return nil
 	}
-	if err := setBackupDirProject(dir, "", pid); err != nil {
+	if err := setBackupDirProject(dir, projectID(uuid), backupShareQuota()); err != nil {
 		return fmt.Errorf("quota: backup folder project (%s): %w", qp.fsType, err)
 	}
 	return nil
@@ -298,6 +320,17 @@ func (qp *QuotaProvider) TagsMoved(uuid string) bool {
 	moved, err := projectTagsMoved(filepath.Join(qp.basePath, uuid), backupDirName, projectID(uuid))
 	if err != nil && !moved {
 		log.Printf("quota: tag check %s: %v", uuid, err)
+	}
+	if moved {
+		return true
+	}
+	dir := filepath.Join(qp.basePath, uuid, backupDirName)
+	if _, err := os.Lstat(dir); os.IsNotExist(err) {
+		return false
+	}
+	moved, err = backupTagsMoved(dir, projectID(uuid), backupShareQuota())
+	if err != nil && !moved {
+		log.Printf("quota: backup folder tag check %s: %v", uuid, err)
 	}
 	return moved
 }

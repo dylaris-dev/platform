@@ -1,6 +1,10 @@
 package main
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 func TestParseRepquota(t *testing.T) {
 	// `repquota -P -n` on ext4, quota-tools 4.09. Block columns are 1 KiB.
@@ -72,5 +76,60 @@ func TestMountCoversOnlyWholePathComponents(t *testing.T) {
 		if got := mountCovers(tc.mp, tc.path); got != tc.want {
 			t.Errorf("mountCovers(%q, %q) = %v, want %v", tc.mp, tc.path, got, tc.want)
 		}
+	}
+}
+
+// R53-03: in separate-budget mode only the node's own archives come off the
+// server; whatever a root tenant puts in the folder stays charged.
+func TestBackupEntryProject(t *testing.T) {
+	const pid = 7
+	for _, tc := range []struct {
+		name        string
+		entry       string
+		depth       int
+		dir, linked bool
+		share       bool
+		want        uint32
+	}{
+		{"folder, separate", ".", 0, true, false, false, 0},
+		{"archive", "20261125-010203-ab12cd34.tar.gz", 1, false, false, false, 0},
+		{"partial", "20261125-010203-ab12cd34.tar.gz.partial", 1, false, false, false, 0},
+		{"tenant file", "r.0.0.mca", 1, false, false, false, pid},
+		{"hard-linked archive name", "x.tar.gz", 1, false, true, false, pid},
+		{"archive name on a directory", "x.tar.gz", 1, true, false, false, pid},
+		{"archive name below a sub-directory", "x.tar.gz", 2, false, false, false, pid},
+		{"folder, share", ".", 0, true, false, true, pid},
+		{"archive, share", "x.tar.gz", 1, false, false, true, pid},
+	} {
+		if got := backupEntryProject(tc.entry, tc.depth, tc.dir, tc.linked, pid, tc.share); got != tc.want {
+			t.Errorf("%s: project %d, want %d", tc.name, got, tc.want)
+		}
+	}
+}
+
+// R53-03: on the du path the folder's other contents stay charged too.
+func TestServerDiskBytesSubtractsOnlyArchives(t *testing.T) {
+	dir := t.TempDir()
+	backups := filepath.Join(dir, backupDirName)
+	if err := os.MkdirAll(filepath.Join(backups, "sub"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for name, size := range map[string]int{
+		"world.dat":                         1000,
+		backupDirName + "/a.tar.gz":         500,
+		backupDirName + "/b.tar.gz.partial": 50,
+		backupDirName + "/r.0.0.mca":        300,
+		backupDirName + "/sub/c.tar.gz":     200,
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), make([]byte, size), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	total := dirSize(dir)
+	if got, want := serverDiskBytes(dir, false), total-550; got != want {
+		t.Errorf("separate: %d, want %d (only the archives off)", got, want)
+	}
+	if got := serverDiskBytes(dir, true); got != total {
+		t.Errorf("share: %d, want %d", got, total)
 	}
 }

@@ -133,7 +133,13 @@ func TestBackupFoldersFollowTheShareMode(t *testing.T) {
 	}
 
 	tags := map[string]uint32{}
-	setBackupDirProject = func(dir, _ string, pid uint32) error {
+	setBackupDirProject = func(dir string, pid uint32, share bool) error {
+		if pid != projectID(filepath.Base(filepath.Dir(dir))) {
+			t.Errorf("%s tagged with server project %d", dir, pid)
+		}
+		if !share {
+			pid = 0
+		}
 		tags[dir] = pid
 		return nil
 	}
