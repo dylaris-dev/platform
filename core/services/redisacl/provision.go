@@ -49,7 +49,7 @@ func (p *Provisioner) EnsureNodeACLNoSave(ctx context.Context, token, tunnelToke
 }
 
 // SetNodeBeamQuotaGrant replaces the node user's beam-quota selector with one
-// naming exactly `usernames` (see BeamQuotaSelector). Called by the SFTP sync,
+// naming exactly `accounts` (see BeamQuotaSelector). Called by the SFTP sync,
 // which is where that set is resolved.
 //
 // "clearselectors" runs unconditionally, including for a node left with no
@@ -61,9 +61,9 @@ func (p *Provisioner) EnsureNodeACLNoSave(ctx context.Context, token, tunnelToke
 // connected this creates the ACL user - verified against Valkey 8: such a user
 // is "off" with no password and its AUTH is refused, and the node's first
 // connect fills in the rest.
-func (p *Provisioner) SetNodeBeamQuotaGrant(ctx context.Context, token string, usernames []string) error {
+func (p *Provisioner) SetNodeBeamQuotaGrant(ctx context.Context, token string, accounts []BeamQuotaAccount) error {
 	args := []interface{}{"ACL", "SETUSER", NodeUsername(token), "clearselectors"}
-	if sel := BeamQuotaSelector(usernames); sel != "" {
+	if sel := BeamQuotaSelector(accounts); sel != "" {
 		args = append(args, sel)
 	}
 	return p.admin.Do(ctx, args...).Err()

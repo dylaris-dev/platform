@@ -83,7 +83,7 @@ func TestSaveFileContent_EnforcesUploadLimits(t *testing.T) {
 	if !resp.Success {
 		t.Fatalf("expected success, got: %s", resp.Message)
 	}
-	if got, _ := rdb.Get(context.Background(), quota.DailyKey("u", time.Now())).Int64(); got != 5 {
+	if got, _ := rdb.Get(context.Background(), quota.DailyKey(quota.BucketFor("", "u"), time.Now())).Int64(); got != 5 {
 		t.Errorf("daily counter = %d, want 5", got)
 	}
 }
@@ -95,14 +95,14 @@ func TestSFTPWriteLimits(t *testing.T) {
 	ctx := context.Background()
 	const uuid = "srv-1"
 
-	if lim := sftpWriteLimits(ctx, nil, uuid, "u"); lim.file != nil || lim.disk != -1 || lim.daily != nil {
+	if lim := sftpWriteLimits(ctx, nil, uuid, quota.BucketFor("", "u")); lim.file != nil || lim.disk != -1 || lim.daily != nil {
 		t.Errorf("nil rdb = %+v, want no limits", lim)
 	}
 	mr.Set(quota.MaxUploadBytesKey, "500")
 	mr.Set("dylaris:server:"+uuid+":stats:disk", `{"total":900,"limit":1000}`)
 	mr.Set(quota.DailyUploadBytesKey, "1000")
-	mr.Set(quota.DailyKey("u", time.Now()), "950")
-	lim := sftpWriteLimits(ctx, rdb, uuid, "u")
+	mr.Set(quota.DailyKey(quota.BucketFor("", "u"), time.Now()), "950")
+	lim := sftpWriteLimits(ctx, rdb, uuid, quota.BucketFor("", "u"))
 	if lim.file == nil || *lim.file != 500 || lim.disk != 100 || lim.daily == nil || *lim.daily != 50 {
 		t.Errorf("limits = file %v disk %d daily %v, want 500/100/50", lim.file, lim.disk, lim.daily)
 	}
@@ -116,7 +116,7 @@ func TestMeteredSFTPWriter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := &meteredSFTPWriter{f: f, ceil: 100, reason: "server disk limit", rdb: rdb, username: "u"}
+	m := &meteredSFTPWriter{f: f, ceil: 100, reason: "server disk limit", rdb: rdb, bucket: quota.BucketFor("", "u")}
 
 	if _, err := m.WriteAt(make([]byte, 60), 0); err != nil {
 		t.Fatalf("write within ceiling: %v", err)
@@ -128,7 +128,7 @@ func TestMeteredSFTPWriter(t *testing.T) {
 	if err := m.Close(); err != nil {
 		t.Fatalf("close: %v", err)
 	}
-	if got, _ := rdb.Get(context.Background(), quota.DailyKey("u", time.Now())).Int64(); got != 60 {
+	if got, _ := rdb.Get(context.Background(), quota.DailyKey(quota.BucketFor("", "u"), time.Now())).Int64(); got != 60 {
 		t.Errorf("recorded daily bytes = %d, want 60 (the resulting file size)", got)
 	}
 }

@@ -358,7 +358,7 @@ func TestAPlantedUploadTempIsNotTakenAsCharged(t *testing.T) {
 	if err := bs.UploadFile(st); err != nil {
 		t.Fatal(err)
 	}
-	if used, _ := bs.rdb.Get(context.Background(), quota.DailyKey("carol", time.Now())).Int64(); used != 8 {
+	if used, _ := bs.rdb.Get(context.Background(), quota.DailyKey(quota.BucketFor("", "carol"), time.Now())).Int64(); used != 8 {
 		t.Errorf("daily usage = %d, want the 8 bytes streamed", used)
 	}
 }

@@ -156,6 +156,12 @@ func (s *SFTPSyncService) mayUseSFTP(a store.SFTPAccess, isAdmin bool) (bool, fi
 type sftpServerEntry struct {
 	UUID string `json:"uuid"`
 	Name string `json:"name"`
+	// UserID is the account's id, the same on every entry of one list: the
+	// node books the account's SFTP uploads to the daily quota by it
+	// (quota.BucketFor), so a rename does not start a fresh day. Per entry
+	// rather than a new key because a node older than it ignores an unknown
+	// field, and a list it already reads needs no new grant or prune.
+	UserID string `json:"user_id,omitempty"`
 	fileperms.Perms
 }
 
@@ -373,6 +379,7 @@ func (s *SFTPSyncService) sync() {
 		// panel's "show me my SFTP credentials" route, so the gate was on the
 		// doorbell and not on the door.
 		byUser := make(map[string][]sftpServerEntry)
+		idByUser := make(map[string]string)
 		for _, a := range accesses {
 			if blocked[a.Username] || suspended.of(a.ServerID) {
 				continue
@@ -386,8 +393,9 @@ func (s *SFTPSyncService) sync() {
 			if moving.of(a.ServerID) {
 				perms.Write, perms.Delete = false, false
 			}
+			idByUser[a.Username] = a.UserID
 			byUser[a.Username] = append(byUser[a.Username],
-				sftpServerEntry{UUID: a.ServerUUID, Name: a.ServerName, Perms: perms})
+				sftpServerEntry{UUID: a.ServerUUID, Name: a.ServerName, UserID: a.UserID, Perms: perms})
 		}
 
 		// The same set decides which daily upload counters this node's Redis
@@ -407,13 +415,13 @@ func (s *SFTPSyncService) sync() {
 		// INCRBY that stranger out of uploading anywhere for the day, or to
 		// EXPIRE their own count. Uploads to their own disk then go uncounted,
 		// which is the lesser loss.
-		usernames := make([]string, 0, len(byUser))
+		accounts := make([]redisacl.BeamQuotaAccount, 0, len(byUser))
 		if node.Kind() != models.NodeKindBYON {
 			for username := range byUser {
-				usernames = append(usernames, username)
+				accounts = append(accounts, redisacl.BeamQuotaAccount{UserID: idByUser[username], Username: username})
 			}
 		}
-		if err := redisacl.NewProvisioner(s.redis).SetNodeBeamQuotaGrant(ctx, node.Token, usernames); err != nil {
+		if err := redisacl.NewProvisioner(s.redis).SetNodeBeamQuotaGrant(ctx, node.Token, accounts); err != nil {
 			// Loud, because the failure is silent everywhere else: the quota
 			// package fails open, so a node left without this grant stops counting
 			// uploads rather than refusing them.

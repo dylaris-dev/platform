@@ -128,6 +128,10 @@ func TestNodeProofCoversEveryAccessClaim(t *testing.T) {
 	cannotBeCovered := map[string]string{
 		"NodeProof": "it IS the proof and cannot cover itself",
 		"Kit":       "decided by the relay against the tenant key's kits; the node authorizes by node_id and never reads it",
+		// Covered by UserIDProof instead (TestUserIDProof): in proofPayload it
+		// would make every new ticket unreadable to a node older than the id.
+		"UserID":      "covered by UserIDProof, which an old node does not need to read",
+		"UserIDProof": "it IS the id's proof and cannot cover itself",
 	}
 	ty := reflect.TypeOf(BeamClaims{})
 	for i := 0; i < ty.NumField(); i++ {
@@ -203,5 +207,53 @@ func TestNodeProofCoversTheIssueTime(t *testing.T) {
 	redated.IssuedAt = jwt.NewNumericDate(now)
 	if NodeProof(nodeSecret, redated) == good {
 		t.Error("iat is not covered by the proof - a ticket can be re-dated past an access stamp")
+	}
+}
+
+// The user id decides whose daily upload counter a session books to, and the
+// node does not check the signature, so it needs a proof of its own (it is
+// deliberately not in NodeProof - an old node would then refuse every ticket).
+func TestUserIDProof(t *testing.T) {
+	nodeSecret := []byte("per-node-secret-bytes")
+	const id = "3f1c2a9e-0b7d-4e21-9c5a-6d8e7f901234"
+	base := BeamClaims{ServerUUID: "srv-1", NodeID: "node-a", Username: "alice", UserID: id}
+	tok, err := SignBeamTicketWithNodeProof("fleet", base, time.Hour, nodeSecret)
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+	signed, err := ValidateBeamTicketByNodeProof(nodeSecret, tok)
+	if err != nil || signed.UserID != id {
+		t.Fatalf("round trip: claims %+v, err %v", signed, err)
+	}
+	// An old node verifies NodeProof over the fields it knows. Recomputing it
+	// with the id blanked is that node's view, and it must still match.
+	old := *signed
+	old.UserID, old.UserIDProof = "", ""
+	if NodeProof(nodeSecret, old) != signed.NodeProof {
+		t.Error("NodeProof changed with the id: a node older than the id would refuse the ticket")
+	}
+
+	cases := []struct {
+		name string
+		edit func(*BeamClaims)
+		ok   bool
+	}{
+		{"untouched", func(*BeamClaims) {}, true},
+		{"id swapped for another account's", func(c *BeamClaims) { c.UserID = "00000000-0000-4000-8000-000000000000" }, false},
+		{"id kept, its proof dropped", func(c *BeamClaims) { c.UserIDProof = "" }, false},
+		{"id moved onto another user's ticket", func(c *BeamClaims) { c.Username = "bob"; c.NodeProof = NodeProof(nodeSecret, *c) }, false},
+		// The documented residual: without the id the node books by username.
+		{"id and proof both stripped", func(c *BeamClaims) { c.UserID, c.UserIDProof = "", "" }, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			cl := *signed
+			c.edit(&cl)
+			raw, _ := jwt.NewWithClaims(jwt.SigningMethodHS256, cl).SignedString([]byte("not-the-fleet-key"))
+			_, err := ValidateBeamTicketByNodeProof(nodeSecret, raw)
+			if (err == nil) != c.ok {
+				t.Errorf("accepted=%v, want %v (err %v)", err == nil, c.ok, err)
+			}
+		})
 	}
 }

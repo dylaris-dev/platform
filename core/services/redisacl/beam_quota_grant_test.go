@@ -34,7 +34,7 @@ func TestNodeHoldsNoFleetWideBeamCounterGrant(t *testing.T) {
 }
 
 func TestBeamQuotaGrantIsPerUser(t *testing.T) {
-	sel := BeamQuotaSelector([]string{"carol", "alice"})
+	sel := BeamQuotaSelector(names("carol", "alice"))
 
 	// Sorted, so an unchanged tick sends an unchanged string.
 	if want := "(~dylaris:beam:daily:alice:* ~dylaris:beam:daily:carol:* +get +incrby +expire)"; sel != want {
@@ -57,19 +57,19 @@ func TestBeamQuotaGrantIsPerUser(t *testing.T) {
 // error anywhere: the node gets NOPERM, the quota package fails OPEN, and the
 // daily limit silently stops being enforced.
 func TestBeamQuotaGrantMatchesTheRealKey(t *testing.T) {
-	sel := BeamQuotaSelector([]string{"alice"})
+	sel := BeamQuotaSelector(names("alice"))
 	prefix := "~" + quota.DailyKeyPrefix("alice")
 	if !strings.Contains(sel, prefix) {
 		t.Fatalf("selector %s does not carry the key prefix %s", sel, prefix)
 	}
 
-	key := quota.DailyKey("alice", time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC))
+	key := quota.DailyKey(quota.BucketFor("", "alice"), time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC))
 	if !strings.HasPrefix(key, strings.TrimPrefix(prefix, "~")) {
 		t.Errorf("the granted pattern %s does not match the key the node writes, %s", prefix, key)
 	}
 	// And it must not reach the next user along. "alice" and "alice2" are both
 	// valid usernames, and a prefix without the trailing ':' would cover both.
-	if other := quota.DailyKey("alice2", time.Now()); strings.HasPrefix(other, strings.TrimPrefix(prefix, "~")) {
+	if other := quota.DailyKey(quota.BucketFor("", "alice2"), time.Now()); strings.HasPrefix(other, strings.TrimPrefix(prefix, "~")) {
 		t.Errorf("the grant for alice also covers %s", other)
 	}
 }
@@ -87,15 +87,49 @@ func TestBeamQuotaGrantIsEmptyForANodeWithNoUsers(t *testing.T) {
 // every user - or, crafted, widens it. One bad row must cost only that row.
 func TestBeamQuotaSelectorSkipsInvalidNames(t *testing.T) {
 	cases := []struct {
-		in   []string
+		in   []BeamQuotaAccount
 		want string
 	}{
-		{[]string{"alice", "john doe", "x +@all ~*"}, "(~dylaris:beam:daily:alice:* +get +incrby +expire)"},
-		{[]string{"john doe"}, ""},
+		{names("alice", "john doe", "x +@all ~*"), "(~dylaris:beam:daily:alice:* +get +incrby +expire)"},
+		{names("john doe"), ""},
+		{[]BeamQuotaAccount{{UserID: "x:* ~*", Username: "alice"}}, "(~dylaris:beam:daily:alice:* +get +incrby +expire)"},
 	}
 	for _, c := range cases {
 		if got := BeamQuotaSelector(c.in); got != c.want {
 			t.Errorf("BeamQuotaSelector(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func names(usernames ...string) []BeamQuotaAccount {
+	out := make([]BeamQuotaAccount, len(usernames))
+	for i, u := range usernames {
+		out[i] = BeamQuotaAccount{Username: u}
+	}
+	return out
+}
+
+// R34-09: the counter is booked by user id, so the node must be granted the id
+// counter - else it reads NOPERM, which the quota package reads as nothing
+// used. The username counter stays granted for the rollout: a node or a Core
+// older than the id still books there.
+func TestBeamQuotaGrantCoversTheIDCounter(t *testing.T) {
+	const id = "3f1c2a9e-0b7d-4e21-9c5a-6d8e7f901234"
+	sel := BeamQuotaSelector([]BeamQuotaAccount{{UserID: id, Username: "alice"}})
+	want := "(~dylaris:beam:daily-id:" + id + ":* ~dylaris:beam:daily:alice:* +get +incrby +expire)"
+	if sel != want {
+		t.Fatalf("selector\n got: %s\nwant: %s", sel, want)
+	}
+	for _, b := range []quota.Bucket{quota.BucketFor(id, "alice"), quota.BucketFor(id, "alice2"), quota.BucketFor("", "alice")} {
+		key := quota.DailyKey(b, time.Now())
+		covered := false
+		for _, p := range strings.Fields(strings.Trim(sel, "()")) {
+			if strings.HasPrefix(p, "~") && strings.HasPrefix(key, strings.TrimSuffix(p[1:], "*")) {
+				covered = true
+			}
+		}
+		if !covered {
+			t.Errorf("the grant %s does not cover the key the node writes, %s", sel, key)
 		}
 	}
 }

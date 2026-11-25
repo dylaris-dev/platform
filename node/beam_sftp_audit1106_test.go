@@ -207,7 +207,7 @@ func TestBeamAndSFTPShareTheDailyQuotaInFlight(t *testing.T) {
 		p, _ := peer.FromContext(ctx)
 		bs.usernameByPeer.Store(p.Addr.String(), "gina")
 
-		_, release := reserveOn(uploadAccountInflight("gina"), 60)
+		_, release := reserveOn(uploadAccountInflight(quota.BucketFor("", "gina")), 60)
 		defer release()
 		stream := &fakeBeamUploadStream{ctx: ctx, msgs: uploadMsgs("survival", "w.zip", 60)}
 		if err := bs.UploadFile(stream); err == nil {
@@ -221,7 +221,7 @@ func TestBeamAndSFTPShareTheDailyQuotaInFlight(t *testing.T) {
 		mr.Set(quota.DailyUploadBytesKey, "100")
 		sm, _ := newMovableServer(t)
 
-		_, release := reserveOn(uploadAccountInflight("hank"), 60)
+		_, release := reserveOn(uploadAccountInflight(quota.BucketFor("", "hank")), 60)
 		defer release()
 		refs := []sftpServerRef{{UUID: movingUUID, Name: "s", Perms: fileperms.Full()}}
 		w, err := newVirtualFS(refs, sm, rdb, "hank").Filewrite(&sftp.Request{Method: "Put", Filepath: "s/survival/w.zip", Flags: 0x02 | 0x08 | 0x10})

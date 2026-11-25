@@ -119,29 +119,41 @@ func globalReadKeys() []string {
 // the damage here, not the commands: EXPIRE has to be granted (RecordDailyUsage
 // arms the TTL that self-cleans the key), and EXPIRE with a short TTL is a
 // reset. That is only ever reachable for the node's own users.
-func BeamQuotaSelector(usernames []string) string {
-	if len(usernames) == 0 {
+//
+// Each account is granted its id counter (quota.BucketFor books there whenever
+// the id is known) AND its username counter. The name grant is the rollout
+// bridge, not the design: a node older than the id, and a new node handed a
+// ticket or SFTP list by a Core older than the id, still book by name, and
+// without the grant they would stop counting. It can go once no node older
+// than the id and no Core older than the id is left; until then a rename still
+// resets the day for those old pairings only.
+func BeamQuotaSelector(accounts []BeamQuotaAccount) string {
+	var patterns []string
+	for _, a := range accounts {
+		// Ids and usernames cannot contain ':' or glob metacharacters
+		// (validate.UserID / validate.Username), which is what makes this
+		// interpolation unambiguous. A value that slipped past that rule is
+		// skipped: a space in it would make ACL SETUSER reject the node's whole
+		// grant, and a crafted one would widen it.
+		if validate.IsUserID(a.UserID) {
+			patterns = append(patterns, "~"+quota.DailyIDKeyPrefix(a.UserID)+"*")
+		}
+		if validate.IsUsername(a.Username) {
+			patterns = append(patterns, "~"+quota.DailyKeyPrefix(a.Username)+"*")
+		}
+	}
+	if len(patterns) == 0 {
 		return ""
 	}
 	// Sorted so a tick that changed nothing sends the identical string, and a
 	// diff of two nodes' grants is readable.
-	sorted := append([]string(nil), usernames...)
-	sort.Strings(sorted)
-	var b strings.Builder
-	for _, u := range sorted {
-		// Usernames cannot contain ':' or glob metacharacters (validate.Username),
-		// which is what makes this interpolation unambiguous. A row that slipped
-		// past that rule is skipped: a space in it would make ACL SETUSER reject
-		// the node's whole grant, and a crafted one would widen it.
-		if !validate.IsUsername(u) {
-			continue
-		}
-		b.WriteString("~" + quota.DailyKeyPrefix(u) + "* ")
-	}
-	if b.Len() == 0 {
-		return ""
-	}
-	return "(" + b.String() + "+get +incrby +expire)"
+	sort.Strings(patterns)
+	return "(" + strings.Join(patterns, " ") + " +get +incrby +expire)"
+}
+
+// BeamQuotaAccount is one account whose daily upload counters a node is granted.
+type BeamQuotaAccount struct {
+	UserID, Username string
 }
 
 // migrationKeys are the migration grants, split by what the node actually does

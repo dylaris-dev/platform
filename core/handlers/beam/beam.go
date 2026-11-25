@@ -406,7 +406,10 @@ func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 		ServerUUID: server.UUID,
 		NodeID:     nodeDiscoveryID,
 		Username:   username,
-		IsAdmin:    isAdmin,
+		// The daily upload quota is booked to the id, so a rename does not
+		// start a fresh day (quota.BucketFor).
+		UserID:  userID,
+		IsAdmin: isAdmin,
 		// What this ticket may DO, not only which server it may reach. Without
 		// it the node had nothing to check and allowed every file operation to
 		// anyone holding a valid ticket.

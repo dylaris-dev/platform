@@ -87,6 +87,25 @@ func permsField(p *fileperms.Perms) string {
 		strconv.FormatBool(p.Delete)
 }
 
+// userIDProofDomain separates the id proof from NodeProof, which is keyed on
+// the same secret.
+const userIDProofDomain = "dylaris-beam-user-id-proof:v1:"
+
+// UserIDProof derives the per-node authenticator for the ticket's user id, over
+// everything NodeProof covers plus the id, so an id cannot be moved from one
+// ticket to another.
+//
+// A second proof rather than a field in proofPayload, because a node that
+// predates the id verifies NodeProof over the claims it knows: putting the id
+// in there would make every new ticket unreadable to it. The cost is that a
+// client stripping both the id and this proof still holds a valid ticket; the
+// node then books its uploads by username, as before the id existed.
+func UserIDProof(nodeSecret []byte, c BeamClaims) string {
+	m := hmac.New(sha256.New, nodeSecret)
+	m.Write([]byte(userIDProofDomain + proofPayload(c) + "|" + c.UserID))
+	return hex.EncodeToString(m.Sum(nil))
+}
+
 // NodeProof derives the per-node authenticator for a set of claims.
 func NodeProof(nodeSecret []byte, c BeamClaims) string {
 	m := hmac.New(sha256.New, nodeSecret)
@@ -125,6 +144,11 @@ func ValidateBeamTicketByNodeProof(nodeSecret []byte, token string) (*BeamClaims
 	want := NodeProof(nodeSecret, c)
 	if subtle.ConstantTimeCompare([]byte(c.NodeProof), []byte(want)) != 1 {
 		return nil, errors.New("auth: node proof does not verify")
+	}
+	// An id NodeProof does not cover is only trusted with its own proof; one
+	// without it was edited in, or pointed at another account's counter.
+	if c.UserID != "" && subtle.ConstantTimeCompare([]byte(c.UserIDProof), []byte(UserIDProof(nodeSecret, c))) != 1 {
+		return nil, errors.New("auth: user id proof does not verify")
 	}
 	return &c, nil
 }

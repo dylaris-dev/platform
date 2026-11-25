@@ -43,14 +43,19 @@ func newUploadRequest(t *testing.T, serverUUID string, fileSize int) *http.Reque
 	req := httptest.NewRequest(http.MethodPost, "/api/files/upload?server_uuid="+serverUUID, &body)
 	req.Header.Set("Content-Type", mw.FormDataContentType())
 	ctx := context.WithValue(req.Context(), "username", "u")
+	ctx = context.WithValue(ctx, "userID", quotaTestUserID)
 	ctx = context.WithValue(ctx, "isAdmin", true) // the resolver's admin short-circuit
 	return req.WithContext(ctx)
 }
 
+const quotaTestUserID = "3f1c2a9e-0b7d-4e21-9c5a-6d8e7f901234"
+
+// The day is booked to the account id, so what "u" spent under an earlier
+// name still counts (R34-09: a rename used to start a fresh bucket).
 func TestUploadFileHandler_DailyQuotaRejects(t *testing.T) {
 	rdb, mr := handlertest.Redis(t)
 	mr.Set(quota.DailyUploadBytesKey, "1000")
-	mr.Set(quota.DailyKey("u", time.Now()), "900")
+	mr.Set(quota.DailyKey(quota.BucketFor(quotaTestUserID, "before-rename"), time.Now()), "900")
 
 	h := &FileHandler{d: quotaHTTPState(rdb)}
 	rw := httptest.NewRecorder()
@@ -60,7 +65,7 @@ func TestUploadFileHandler_DailyQuotaRejects(t *testing.T) {
 		t.Fatalf("status = %d, want 413 (%s)", rw.Code, rw.Body.String())
 	}
 	// Rejected uploads must not be counted (the increment runs only on success).
-	if got, _ := rdb.Get(context.Background(), quota.DailyKey("u", time.Now())).Int64(); got != 900 {
+	if got, _ := rdb.Get(context.Background(), quota.DailyKey(quota.BucketFor(quotaTestUserID, "u"), time.Now())).Int64(); got != 900 {
 		t.Errorf("counter changed to %d, want 900 (no increment on reject)", got)
 	}
 }

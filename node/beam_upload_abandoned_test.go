@@ -81,7 +81,7 @@ func TestAnAbandonedResumableBeamUploadStillCounts(t *testing.T) {
 			if status.Code(err) != tc.wantCode {
 				t.Fatalf("second upload: err = %v, want code %v", err, tc.wantCode)
 			}
-			if used, _ := bs.rdb.Get(context.Background(), quota.DailyKey("carol", time.Now())).Int64(); used != tc.wantDaily {
+			if used, _ := bs.rdb.Get(context.Background(), quota.DailyKey(quota.BucketFor("", "carol"), time.Now())).Int64(); used != tc.wantDaily {
 				t.Errorf("daily usage = %d, want %d", used, tc.wantDaily)
 			}
 		})

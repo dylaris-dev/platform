@@ -1128,10 +1128,13 @@ func (h *FileHandler) UploadFileHandler(w http.ResponseWriter, r *http.Request) 
 
 	// Beam upload limits (admin-configured), enforced here too so a browser
 	// upload cannot evade the size cap + per-user daily quota the node enforces
-	// on the beam tunnel path. The username is the same context value the beam
-	// ticket carries, so browser and beam uploads share one per-user/day bucket
-	// (shared dylaris-pkg/beam/quota). Fail-open, like the disk check above.
+	// on the beam tunnel path. The user id and username are the same context
+	// values the beam ticket carries, so browser and beam uploads share one
+	// per-account/day bucket (shared dylaris-pkg/beam/quota). Fail-open, like
+	// the disk check above.
 	username, _ := r.Context().Value("username").(string)
+	userID, _ := r.Context().Value("userID").(string)
+	bucket := quota.BucketFor(userID, username)
 	sizeCap := quota.MaxUploadCap(r.Context(), h.d.Redis) // read once, not once per file
 	var quotaUploadSize int64
 	for _, fh := range r.MultipartForm.File["files"] {
@@ -1142,7 +1145,7 @@ func (h *FileHandler) UploadFileHandler(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 	}
-	if ok, used, limit := quota.CheckDailyQuota(r.Context(), h.d.Redis, username, quotaUploadSize); !ok {
+	if ok, used, limit := quota.CheckDailyQuota(r.Context(), h.d.Redis, bucket, quotaUploadSize); !ok {
 		httpx.SendJSONError(w, fmt.Sprintf("Daily upload quota reached — %s of %s used today, upload is %s",
 			formatBytesHuman(used), formatBytesHuman(*limit), formatBytesHuman(quotaUploadSize)),
 			http.StatusRequestEntityTooLarge)
@@ -1268,7 +1271,7 @@ func (h *FileHandler) UploadFileHandler(w http.ResponseWriter, r *http.Request) 
 		// Booked per file, by the bytes actually streamed, as soon as the node
 		// has committed it: a later file failing returns above, and the files
 		// already on disk must still count against the shared daily quota.
-		quota.RecordDailyUsage(r.Context(), h.d.Redis, username, offset)
+		quota.RecordDailyUsage(r.Context(), h.d.Redis, bucket, offset)
 	}
 
 	json.NewEncoder(w).Encode(map[string]interface{}{

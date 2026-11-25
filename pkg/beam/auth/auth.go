@@ -41,6 +41,15 @@ type BeamClaims struct {
 	// so a node that holds no fleet secret can still trust it. Empty on a ticket
 	// minted for a node whose secret Core could not load. See node_proof.go.
 	NodeProof string `json:"node_proof,omitempty"`
+	// UserID is the account's immutable id, which the daily upload quota is
+	// booked to (quota.BucketFor): a username is renamed, and the bucket went
+	// with it. Empty on a ticket from a Core that predates it.
+	//
+	// Its proof is UserIDProof, NOT NodeProof: a node older than this field
+	// computes NodeProof over the claims it knows, so adding the id to that
+	// payload would make every new ticket unreadable to it.
+	UserID      string `json:"user_id,omitempty"`
+	UserIDProof string `json:"user_id_proof,omitempty"`
 	// Kit names the managed-gateway kit a tenant-signed (EdDSA) ticket claims to
 	// belong to. Deliberately NOT part of proofPayload: the relay checks it, the
 	// node does not use it.
@@ -106,6 +115,10 @@ func SignBeamTicketWithNodeProof(secret string, c BeamClaims, ttl time.Duration,
 	// claims as they will actually be serialised.
 	if len(nodeSecret) > 0 {
 		c.NodeProof = NodeProof(nodeSecret, c)
+		c.UserIDProof = ""
+		if c.UserID != "" {
+			c.UserIDProof = UserIDProof(nodeSecret, c)
+		}
 	}
 	t := jwt.NewWithClaims(jwt.SigningMethodHS256, c)
 	return t.SignedString([]byte(secret))

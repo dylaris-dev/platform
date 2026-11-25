@@ -1128,7 +1128,7 @@ func (s *beamServer) SaveFileContent(ctx context.Context, req *pb.BeamFileSaveRe
 	// so the same admin caps apply — otherwise it would be a way to write past
 	// the size cap / disk limit / daily quota. Size is known up front.
 	size := int64(len(req.Content))
-	username := s.extractUsername(ctx)
+	bucket := s.extractQuotaBucket(ctx)
 	// The save replaces the file a link inside the Root points at, as the
 	// in-place write it used to be did (S07), not the link.
 	if name, err = linkTargetIn(root, name); err != nil {
@@ -1147,7 +1147,7 @@ func (s *beamServer) SaveFileContent(ctx context.Context, req *pb.BeamFileSaveRe
 	serverTotal, releaseServer := reserveOn(serverInflightOf(serverUUID), size)
 	defer releaseServer()
 	serverTotal += uploadServerInflight(serverUUID).Load()
-	userTotal, releaseUser := reserveOn(uploadAccountInflight(username), size)
+	userTotal, releaseUser := reserveOn(uploadAccountInflight(bucket), size)
 	defer releaseUser()
 	if total, limit := serverDiskGauge(ctx, s.rdb, serverUUID); beamUploadExceedsDisk(total, limit, serverTotal-prior) {
 		return &pb.BeamOpResp{Success: false, Message: fmt.Sprintf("disk limit reached: %d of %d bytes used", total, limit)}, nil
@@ -1155,7 +1155,7 @@ func (s *beamServer) SaveFileContent(ctx context.Context, req *pb.BeamFileSaveRe
 	if ok, capBytes := quota.CheckSizeCap(ctx, s.rdb, size); !ok {
 		return &pb.BeamOpResp{Success: false, Message: fmt.Sprintf("file of %d bytes exceeds the %d byte per-upload limit", size, *capBytes)}, nil
 	}
-	if ok, used, limit := quota.CheckDailyQuota(ctx, s.rdb, username, userTotal); !ok {
+	if ok, used, limit := quota.CheckDailyQuota(ctx, s.rdb, bucket, userTotal); !ok {
 		return &pb.BeamOpResp{Success: false, Message: fmt.Sprintf("daily upload quota reached: %d of %d bytes used today", used, *limit)}, nil
 	}
 	// Measured while prior is still on disk, so only the growth is charged and
@@ -1213,7 +1213,7 @@ func (s *beamServer) SaveFileContent(ctx context.Context, req *pb.BeamFileSaveRe
 		return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
 	}
 	tmp = ""
-	s.recordBeamDailyUsage(ctx, username, size)
+	s.recordBeamDailyUsage(ctx, bucket, size)
 	noteDiskWrite(ctx, s.rdb, serverUUID, size-prior)
 
 	s.auditBeam(ctx, serverUUID, "write", req.Path)
@@ -1534,7 +1534,7 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 	}
 	ctx := stream.Context()
 	serverUUID := s.extractServerUUID(ctx)
-	username := s.extractUsername(ctx)
+	bucket := s.extractQuotaBucket(ctx)
 	uploadID := readUploadIDFromContext(ctx)
 
 	// upRoot is the server directory the upload writes into, open for the
@@ -1624,7 +1624,7 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 			s.tempsMu.Unlock()
 			if add > 0 {
 				bg := context.WithoutCancel(ctx)
-				s.recordBeamDailyUsage(bg, username, add)
+				s.recordBeamDailyUsage(bg, bucket, add)
 				noteDiskWrite(bg, s.rdb, serverUUID, add)
 			}
 			tmpFile.Close()
@@ -1771,7 +1771,7 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 				reservedServer()
 			}
 			serverTotal += uploadServerInflight(serverUUID).Load()
-			userTotal, releaseUser = reserveOn(uploadAccountInflight(username), need)
+			userTotal, releaseUser = reserveOn(uploadAccountInflight(bucket), need)
 
 			// The node's own free space, less its reserve and what other writes
 			// in progress have claimed: the server's limit alone does not stop
@@ -1826,8 +1826,8 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 			// Per-user daily upload quota (admin-configured). Best-effort
 			// pre-check against today's counter; the counter is bumped by the
 			// final on-disk size on successful completion below.
-			if username != "" {
-				if err := s.checkBeamDailyQuota(ctx, username, userTotal); err != nil {
+			if bucket != "" {
+				if err := s.checkBeamDailyQuota(ctx, bucket, userTotal); err != nil {
 					return err
 				}
 			}
@@ -1877,7 +1877,7 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 				claim.handoff = func(ctx context.Context, size int64) {
 					add := max(size-from, 0)
 					if add > 0 {
-						s.recordBeamDailyUsage(ctx, username, add)
+						s.recordBeamDailyUsage(ctx, bucket, add)
 						noteDiskWrite(ctx, s.rdb, serverUUID, add)
 					}
 					relServer()
@@ -1974,7 +1974,7 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 		// on-disk size, so a resumed multi-session upload is counted once: what
 		// an interrupted stream left in the temp was charged when it ended.
 		if fi, statErr := upRoot.Stat(destName); statErr == nil {
-			s.recordBeamDailyUsage(ctx, username, fi.Size()-resumedAt)
+			s.recordBeamDailyUsage(ctx, bucket, fi.Size()-resumedAt)
 			noteDiskWrite(ctx, s.rdb, serverUUID, fi.Size()-prior-resumedAt)
 		}
 	}
@@ -2046,8 +2046,8 @@ func (s *beamServer) checkBeamUploadSizeCap(ctx context.Context, incoming int64)
 
 // checkBeamDailyQuota rejects an upload that would push the user's bytes uploaded
 // today past the admin-configured daily limit.
-func (s *beamServer) checkBeamDailyQuota(ctx context.Context, username string, incoming int64) error {
-	if ok, used, limit := quota.CheckDailyQuota(ctx, s.rdb, username, incoming); !ok {
+func (s *beamServer) checkBeamDailyQuota(ctx context.Context, b quota.Bucket, incoming int64) error {
+	if ok, used, limit := quota.CheckDailyQuota(ctx, s.rdb, b, incoming); !ok {
 		return status.Errorf(codes.ResourceExhausted,
 			"daily upload quota reached: %d of %d bytes used today, upload is %d bytes", used, *limit, incoming)
 	}
@@ -2055,8 +2055,8 @@ func (s *beamServer) checkBeamDailyQuota(ctx context.Context, username string, i
 }
 
 // recordBeamDailyUsage adds `n` bytes to the user's shared daily upload counter.
-func (s *beamServer) recordBeamDailyUsage(ctx context.Context, username string, n int64) {
-	bookDailyUsage(ctx, s.rdb, username, n)
+func (s *beamServer) recordBeamDailyUsage(ctx context.Context, b quota.Bucket, n int64) {
+	bookDailyUsage(ctx, s.rdb, b, n)
 }
 
 func (s *beamServer) DownloadSelective(req *pb.BeamSelectiveReq, stream grpc.ServerStreamingServer[pb.BeamChunk]) error {
@@ -2264,8 +2264,8 @@ func (s *beamServer) GetTransferQuota(ctx context.Context, req *pb.BeamQuotaReq)
 		if v, err := s.rdb.Get(ctx, quota.DailyUploadBytesKey).Int64(); err == nil {
 			dailyLimit = v
 		}
-		if username := s.extractUsername(ctx); username != "" {
-			if v, err := s.rdb.Get(ctx, quota.DailyKey(username, time.Now())).Int64(); err == nil {
+		if b := s.extractQuotaBucket(ctx); b != "" {
+			if v, err := s.rdb.Get(ctx, quota.DailyKey(b, time.Now())).Int64(); err == nil {
 				dailyUsed = v
 			}
 		}
@@ -2319,6 +2319,23 @@ func (s *beamServer) extractUsername(ctx context.Context) string {
 	}
 	name, _ := v.(string)
 	return name
+}
+
+// extractQuotaBucket is the daily-quota bucket of the ticket this peer
+// authenticated with: its user id when the ticket carries one, which a rename
+// does not change, else its username (a ticket from a Core older than the id).
+// "" when the peer has no session, which disables the daily quota rather than
+// bucketing distinct users together.
+func (s *beamServer) extractQuotaBucket(ctx context.Context) quota.Bucket {
+	var id string
+	if p, ok := peer.FromContext(ctx); ok && p != nil && p.Addr != nil {
+		if v, ok := s.sessionByPeer.Load(p.Addr.String()); ok {
+			if sess, _ := v.(*beamSession); sess != nil && sess.claims != nil {
+				id = sess.claims.UserID
+			}
+		}
+	}
+	return quota.BucketFor(id, s.extractUsername(ctx))
 }
 
 // copyDir and copyFile are defined in installer.go — reused here.

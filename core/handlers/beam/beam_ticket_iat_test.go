@@ -59,6 +59,10 @@ func TestBeamTicketIsDatedWhenTheIdentityWasRead(t *testing.T) {
 			if claims.IssuedAt == nil || claims.IssuedAt.Unix() != loaded.Unix() {
 				t.Fatalf("iat = %v, want the identity read at %v", claims.IssuedAt, loaded)
 			}
+			// The node books the daily upload quota to it (R34-09).
+			if claims.UserID != "member-id" {
+				t.Errorf("ticket user_id = %q, want the caller's id", claims.UserID)
+			}
 		})
 	}
 }

@@ -45,6 +45,12 @@ var (
 	// safe identifier of hex/alnum plus '-' and '_'. Length bounds keep it sane.
 	ServerUUID = regexp.MustCompile(`^[a-zA-Z0-9_-]{8,80}$`)
 
+	// UserID is an account id: users.id is a Postgres UUID, so its canonical
+	// text form. Strict, because it is interpolated into the per-account daily
+	// upload counter dylaris:beam:daily-id:<id>:<date> and into a node's Redis
+	// ACL pattern for it, where a glob metacharacter would widen the grant.
+	UserID = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+
 	// Slug is a pack slug: length 2-64, lowercase alphanumeric, inner - / _ .
 	// (Was packs.go packSlugRe.)
 	Slug = regexp.MustCompile(`^[a-z0-9]([a-z0-9_-]{1,62}[a-z0-9])?$`)
@@ -84,6 +90,7 @@ func IsUsername(s string) bool          { return Username.MatchString(s) }
 func IsServerName(s string) bool        { return ServerName.MatchString(s) }
 func IsSubServerName(s string) bool     { return SubServerName.MatchString(s) }
 func IsServerUUID(s string) bool        { return ServerUUID.MatchString(s) }
+func IsUserID(s string) bool            { return UserID.MatchString(s) }
 func IsSlug(s string) bool              { return Slug.MatchString(s) }
 func IsLabel(s string) bool             { return Label.MatchString(s) }
 func IsLocationName(s string) bool      { return LocationName.MatchString(s) }

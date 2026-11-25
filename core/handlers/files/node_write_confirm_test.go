@@ -201,7 +201,7 @@ func TestEveryCommittedUploadIsBookedAgainstTheDailyQuota(t *testing.T) {
 			if w.Code != c.wantCode {
 				t.Fatalf("answered %d, want %d: %s", w.Code, c.wantCode, w.Body)
 			}
-			got, _ := rdb.Get(context.Background(), quota.DailyKey("alice", time.Now())).Int64()
+			got, _ := rdb.Get(context.Background(), quota.DailyKey(quota.BucketFor("u1", "alice"), time.Now())).Int64()
 			if got != c.wantBooked {
 				t.Errorf("booked %d bytes, want %d", got, c.wantBooked)
 			}

@@ -95,6 +95,11 @@ var sftpDummyHash, _ = bcrypt.GenerateFromPassword([]byte("dylaris-sftp-no-such-
 type sftpServerRef struct {
 	UUID string `json:"uuid"`
 	Name string `json:"name"`
+	// UserID is the account's id, the same on every entry of one list, which
+	// the daily upload quota is booked to (quota.BucketFor), so a rename does
+	// not start a fresh day. Empty from a Core older than it: the username
+	// bucket then, as before.
+	UserID string `json:"user_id,omitempty"`
 	// What this account may do to this server's files, published per (node,
 	// user) by Core's SFTP sync from the same resolution the HTTP file API
 	// enforces. Flat keys, and ABSENT means false: an entry written by a Core
@@ -190,35 +195,35 @@ func (s *SFTPServer) release(addr string) {
 }
 
 // accountInflight is, per account, the bytes uploads in progress hold against
-// the daily quota and have not booked yet (username -> *atomic.Int64): what
+// the daily quota and have not booked yet (quota.Bucket -> *atomic.Int64): what
 // open SFTP handles wrote and what Beam uploads declared. Usage is booked when
 // an upload ends, so each transport counting only its own let an upload over
 // each at once spend the same remaining allowance twice.
 var accountInflight sync.Map
 
-func uploadAccountInflight(username string) *atomic.Int64 {
-	c, _ := accountInflight.LoadOrStore(username, new(atomic.Int64))
+func uploadAccountInflight(b quota.Bucket) *atomic.Int64 {
+	c, _ := accountInflight.LoadOrStore(b, new(atomic.Int64))
 	return c.(*atomic.Int64)
 }
 
 // accountBooked counts, per account, every byte this node booked to the daily
-// quota, and only grows (username -> *atomic.Int64). An SFTP handle reads the
+// quota, and only grows (quota.Bucket -> *atomic.Int64). An SFTP handle reads the
 // remaining quota once, at open; what was booked since is what that lacks.
 var accountBooked sync.Map
 
-func bookedFor(username string) *atomic.Int64 {
-	c, _ := accountBooked.LoadOrStore(username, new(atomic.Int64))
+func bookedFor(b quota.Bucket) *atomic.Int64 {
+	c, _ := accountBooked.LoadOrStore(b, new(atomic.Int64))
 	return c.(*atomic.Int64)
 }
 
 // bookDailyUsage books n bytes to the account's daily quota. Every booking on
 // this node goes through here, so an open SFTP handle sees it.
-func bookDailyUsage(ctx context.Context, rdb *redis.Client, username string, n int64) {
+func bookDailyUsage(ctx context.Context, rdb *redis.Client, b quota.Bucket, n int64) {
 	// No account has no daily quota (quota.DailyUsage).
-	if n > 0 && username != "" {
-		bookedFor(username).Add(n)
+	if n > 0 && b != "" {
+		bookedFor(b).Add(n)
 	}
-	quota.RecordDailyUsage(ctx, rdb, username, n)
+	quota.RecordDailyUsage(ctx, rdb, b, n)
 }
 
 // remoteAddr is the host part of a connection's peer address, as the unit the
@@ -718,9 +723,10 @@ type virtualFS struct {
 	open       *sftpOpenWriters
 	storageMgr *StorageManager
 	// rdb + username let Filewrite meter writes against the upload limits and
-	// attribute them to the user's shared daily-quota bucket. The SFTP login
-	// username is the account username (sftp_sync.go keys sftp:auth by it), the
-	// same identity the beam/HTTP upload paths use, so all three share one bucket.
+	// attribute them to the user's shared daily-quota bucket (quotaBucket). The
+	// SFTP login username is the account username (sftp_sync.go keys sftp:auth
+	// by it); with the user id from the server list it names the same bucket
+	// the beam/HTTP upload paths use, so all three share one.
 	rdb      *redis.Client
 	username string
 	// audit collects what this connection changed. May be nil.
@@ -781,6 +787,17 @@ func newServerSet(servers []sftpServerRef) *sftpServerSet {
 		out.nameToRef[s.Name] = s
 	}
 	return out
+}
+
+// quotaBucket is the session's daily-quota bucket: the account id Core
+// publishes in the server list, else the login username (a Core older than
+// the id, or a list with no servers in it).
+func (v *virtualFS) quotaBucket() quota.Bucket {
+	var id string
+	if set := v.set.Load(); set != nil && len(set.servers) > 0 {
+		id = set.servers[0].UserID
+	}
+	return quota.BucketFor(id, v.username)
 }
 
 func newVirtualFS(servers []sftpServerRef, sm *StorageManager, rdb *redis.Client, username string) *virtualFS {
@@ -1043,10 +1060,11 @@ func (v *virtualFS) Filewrite(r *sftp.Request) (io.WriterAt, error) {
 	}
 	// Taken before the gauge is read: a write noted in between is then counted
 	// twice rather than not at all.
-	noted0, booked0 := notedFor(ref.UUID).Load(), bookedFor(v.username).Load()
-	lim := sftpWriteLimits(context.Background(), v.rdb, ref.UUID, v.username)
+	bucket := v.quotaBucket()
+	noted0, booked0 := notedFor(ref.UUID).Load(), bookedFor(bucket).Load()
+	lim := sftpWriteLimits(context.Background(), v.rdb, ref.UUID, bucket)
 	w := &meteredSFTPWriter{f: f, prior: prior, noted0: noted0, booked0: booked0, ceil: lim.disk, reason: "server disk limit", fileCap: lim.file, dailyCap: lim.daily,
-		baseline: baseline, maxEnd: baseline, rdb: v.rdb, username: v.username, pending: uploadAccountInflight(v.username),
+		baseline: baseline, maxEnd: baseline, rdb: v.rdb, bucket: bucket, pending: uploadAccountInflight(bucket),
 		allowed: v.still(ref.UUID, func(r sftpServerRef) bool { return r.Write && !v.storageMgr.writesWithdrawn(r.UUID) }), release: release, open: v.open,
 		// After the open, so the space a truncating overwrite freed is free.
 		budget: nodeWriteBudget(serverDir)}
@@ -1084,7 +1102,7 @@ type sftpLimits struct {
 	daily *int64
 }
 
-func sftpWriteLimits(ctx context.Context, rdb *redis.Client, serverUUID, username string) sftpLimits {
+func sftpWriteLimits(ctx context.Context, rdb *redis.Client, serverUUID string, bucket quota.Bucket) sftpLimits {
 	lim := sftpLimits{disk: -1}
 	if rdb == nil {
 		return lim
@@ -1102,7 +1120,7 @@ func sftpWriteLimits(ctx context.Context, rdb *redis.Client, serverUUID, usernam
 	if total, limit := serverDiskGauge(ctx, rdb, serverUUID); limit > 0 {
 		lim.disk = clamp(limit - total)
 	}
-	if used, limit := quota.DailyUsage(ctx, rdb, username); limit != nil {
+	if used, limit := quota.DailyUsage(ctx, rdb, bucket); limit != nil {
 		v := clamp(*limit - used)
 		lim.daily = &v
 	}
@@ -1125,7 +1143,7 @@ type meteredSFTPWriter struct {
 	// the largest end offset since. What the handle added is maxEnd-baseline.
 	baseline, maxEnd int64
 	rdb              *redis.Client
-	username         string
+	bucket           quota.Bucket
 	// srv is what every open SFTP handle is writing into this server
 	// (uploadServerInflight), held against ceil together with what Beam and
 	// panel uploads and copies reserved (serverInflight): each handle had the
@@ -1219,8 +1237,8 @@ func (m *meteredSFTPWriter) WriteAt(p []byte, off int64) (int, error) {
 	}
 	if m.dailyCap != nil {
 		others := int64(0)
-		if m.username != "" {
-			others = bookedFor(m.username).Load() - m.booked0
+		if m.bucket != "" {
+			others = bookedFor(m.bucket).Load() - m.booked0
 		}
 		if m.pending != nil {
 			others += m.pending.Load() - after
@@ -1268,7 +1286,7 @@ func (m *meteredSFTPWriter) Close() error {
 	m.open.remove(m)
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	bookDailyUsage(context.Background(), m.rdb, m.username, m.added())
+	bookDailyUsage(context.Background(), m.rdb, m.bucket, m.added())
 	if m.pending != nil {
 		m.pending.Add(-m.added())
 	}

@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"strings"
 	"sync"
 	"testing"
@@ -118,5 +119,31 @@ func TestACustomerNodeGetsNoUploadCounter(t *testing.T) {
 	}
 	if b, _ := rec.argsFor(redisacl.NodeUsername(pruneNodeB)); !strings.Contains(b, "bob") {
 		t.Errorf("a platform node lost its user's counter: %s", b)
+	}
+}
+
+// R34-09: the node books uploads by account id, so the sync has to hand the
+// node both halves - the id in the user's server list (what the SFTP path reads
+// it from) and a grant on the id counter. The name counter stays granted for a
+// node older than the id.
+func TestSyncPublishesAndGrantsTheUserIDCounter(t *testing.T) {
+	const id = "3f1c2a9e-0b7d-4e21-9c5a-6d8e7f901234"
+	fs := pruneFixture()
+	fs.access[1][0].UserID = id
+	svc, rec := newBeamGrantTest(t, fs)
+	svc.sync()
+
+	gotA, _ := rec.argsFor(redisacl.NodeUsername(pruneNodeA))
+	for _, want := range []string{"dylaris:beam:daily-id:" + id + ":*", "dylaris:beam:daily:alice:*"} {
+		if !strings.Contains(gotA, want) {
+			t.Errorf("node-a's grant lacks %s: %s", want, gotA)
+		}
+	}
+	list, err := svc.redis.Get(context.Background(), "sftp:node:"+pruneNodeA+":user:alice").Result()
+	if err != nil {
+		t.Fatalf("alice's server list was not published: %v", err)
+	}
+	if !strings.Contains(list, `"user_id":"`+id+`"`) {
+		t.Errorf("alice's server list carries no user id: %s", list)
 	}
 }

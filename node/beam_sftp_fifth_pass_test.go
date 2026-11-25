@@ -160,7 +160,7 @@ func TestABeamSaveSeesWhatUploadsReserved(t *testing.T) {
 		}},
 		{"daily quota", "27272727-2727-2727-2727-272727272723", func(uuid string) func() {
 			mr.Set(quota.DailyUploadBytesKey, "100")
-			_, release := reserveOn(uploadAccountInflight("beam-"+uuid), 60)
+			_, release := reserveOn(uploadAccountInflight(quota.BucketFor("", "beam-"+uuid)), 60)
 			return func() { release(); mr.Del(quota.DailyUploadBytesKey) }
 		}},
 	} {
