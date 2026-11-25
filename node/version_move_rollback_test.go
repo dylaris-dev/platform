@@ -613,3 +613,36 @@ func TestReinstallTakesTheSoftwareKey(t *testing.T) {
 		t.Fatal("reinstall stashes the jars without taking the software key a version move takes")
 	}
 }
+
+// R52-07: every install path drops its jar stash before the recreate starts
+// the new server. A node that died after the start left a complete stash, and
+// boot recovery put the old jars back under the running JVM.
+func TestInstallPathsDiscardTheStashBeforeTheStart(t *testing.T) {
+	for _, c := range []struct {
+		file, from, to, recreate string
+	}{
+		{"main.go", `	case "setup":`, `	case "reconfigure":`, "recreate(cmd.Config)"},
+		{"main.go", `	case "reinstall":`, `	case "migrate_storage":`, "reinstallRecreate(cmd.Config)"},
+		{"update_server_version.go", "func runUpdateServerVersion(", "\nfunc ", "recreate(cmd.Config)"},
+	} {
+		t.Run(c.from, func(t *testing.T) {
+			src, err := os.ReadFile(c.file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			body := string(src)
+			i := strings.Index(body, c.from)
+			if i < 0 {
+				t.Fatalf("%q not found in %s", c.from, c.file)
+			}
+			body = body[i+len(c.from):]
+			if j := strings.Index(body, c.to); j > 0 {
+				body = body[:j]
+			}
+			discard, start := strings.Index(body, "stash.discard()"), strings.Index(body, c.recreate)
+			if discard < 0 || start < 0 || discard > start {
+				t.Errorf("stash.discard() at %d, %s at %d: the stash outlives the start", discard, c.recreate, start)
+			}
+		})
+	}
+}

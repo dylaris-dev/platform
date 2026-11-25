@@ -2720,12 +2720,14 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 			reinstallRecreate = dm.RecreateStopped
 			reinstallStatus = "stopped"
 		}
+		// Dropped before the start, as setup and the version move do: a node
+		// that died after it left a complete stash, and boot recovery put the
+		// old jars back under the running JVM.
+		stash.discard()
 		if err := reinstallRecreate(cmd.Config); err != nil {
 			log.Printf("Failed to restart server pod %s: %v", cmd.Config.UUID, err)
-			stash.discard()
 			reinstallStatus = "stopped"
 		} else {
-			stash.discard()
 			log.Printf("Server %s/%s reinstalled (status %s)", cmd.Config.UUID, subName, reinstallStatus)
 		}
 		// Best-effort metadata refresh regardless of RecreateWithCommand result
