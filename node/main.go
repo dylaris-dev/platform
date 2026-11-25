@@ -271,6 +271,8 @@ func main() {
 		log.Printf("Redis address %s, from %s", bootAddr, bootSrc)
 	}
 
+	// Before ensureNodeSecret: enrolment there may replace .node_id.
+	bootNodeIDs := nodeIdentities(nodeSecretDir)
 	secret := ensureNodeSecret(ctx)
 	if secret == nil {
 		log.Fatal("redisacl: shutdown before node secret could be obtained")
@@ -341,13 +343,9 @@ func main() {
 	// existing rdb re-auths transparently. Fail-closed; capped backoff.
 	go redisACLWatchdog(ctx, rdb)
 
-	// Before NewStorageManager rewrites the marker with the current id: the
-	// marker still names the id the previous boot ran as, whose beacons are
+	// The ids read before enrolment name the previous boot, whose beacons are
 	// this node's own (R35-12).
-	formerNodeIDs = ownNodeIDs(nodeSecretDir)
-	for _, id := range nodeIdentities(nodeSecretDir) {
-		formerNodeIDs[id] = true
-	}
+	formerNodeIDs = formerIDsOf(bootNodeIDs)
 
 	// Multi-storage: init StorageManager with configured paths
 	storageMgr := NewStorageManager(storagePaths, rdb)

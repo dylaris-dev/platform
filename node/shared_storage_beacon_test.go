@@ -368,3 +368,41 @@ func TestDetector_FormerOwnIDIsNotAPeer(t *testing.T) {
 		})
 	}
 }
+
+// R42-07: a peer whose STORAGE_PATHS lists this node's identity dir as a later
+// path writes its own id into that dir's marker. Only ids this node itself
+// held count as former, or the peer's live beacon is deleted as a leftover.
+func TestFormerIDsOf_IgnoresPeerIDInMarker(t *testing.T) {
+	tests := []struct {
+		name    string
+		bootIDs []string
+		marker  string
+		want    []string
+	}{
+		{name: "peer id in marker", marker: "#node node-peer\n", want: []string{"node-new"}},
+		{name: "re-keyed this boot", bootIDs: []string{"node-old"}, marker: "#node node-old\n#node node-peer\n", want: []string{"node-new", "node-old"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			prev := nodeSecretDir
+			nodeSecretDir = t.TempDir()
+			t.Cleanup(func() { nodeSecretDir = prev })
+			t.Setenv("NODE_ID", "")
+			if err := saveNodeID(nodeSecretDir, "node-new"); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(nodeSecretDir, storageMarkerName), []byte(tt.marker), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			got := formerIDsOf(tt.bootIDs)
+			if len(got) != len(tt.want) {
+				t.Errorf("formerIDsOf = %v, want %v", got, tt.want)
+			}
+			for _, id := range tt.want {
+				if !got[id] {
+					t.Errorf("formerIDsOf = %v, missing %s", got, id)
+				}
+			}
+		})
+	}
+}
