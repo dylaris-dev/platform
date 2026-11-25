@@ -2767,6 +2767,19 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		}
 		releaseMigrateBusy := holdBusyStatus(rdb, cmd.Config.UUID, "installing", busyStatusTTL)
 		defer releaseMigrateBusy("")
+		// The power lock from here through the failure restart and the finish,
+		// as RunRestore: a start or restart already in the command stream could
+		// pass the move fence and bring the JVM up on the source while it was
+		// copied, and the move then deleted it. Tree change -> power keeps the
+		// lock order (no install lock here); taken before wasRunning, so a
+		// restart in flight is done and read as running.
+		releasePower, powerOK := waitServerPower(ctx, cmd.Config.UUID)
+		if !powerOK {
+			log.Printf("Storage migration of %s refused: the node is shutting down", cmd.Config.UUID)
+			releaseMigrateBusy(statusAfterFailedStop(dm, cmd.Config.UUID))
+			return
+		}
+		defer releasePower()
 		if checkErr != nil {
 			// The key already names the target: either a repeat of a move
 			// that finished, or one killed after its key flip (a Watchtower
