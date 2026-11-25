@@ -113,7 +113,7 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 	// tree this renames and then deletes, so it failed - and the backup's
 	// save-on at the end could land on the restored world mid-swap.
 	if reason := enterRestoreOfServer(cmd.ServerUUID); reason != "" {
-		reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", reason)
+		reportRestore(ctx, rdb, cmd, "failed", reason)
 		return
 	}
 	defer restoreServersInFlight.leave(cmd.ServerUUID)
@@ -121,13 +121,13 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 	started := time.Now()
 	storage := storageInfo{}
 	if err := json.Unmarshal(cmd.Storage, &storage); err != nil {
-		reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", "invalid storage payload: "+err.Error())
+		reportRestore(ctx, rdb, cmd, "failed", "invalid storage payload: "+err.Error())
 		return
 	}
 	// Refused before the server is touched: a command this node cannot carry out
 	// must not stop the server on its way to failing.
 	if err := requireCoreTransfer(storage.Provider, cmd.Download == modeDownloadPresigned); err != nil {
-		reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", err.Error())
+		reportRestore(ctx, rdb, cmd, "failed", err.Error())
 		return
 	}
 
@@ -137,7 +137,7 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 	// directory, and the server was stopped and the whole archive unpacked
 	// there before the swap onto "" failed.
 	if rootDir == "" {
-		reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", "the server's storage path cannot be resolved on this node right now; try again shortly")
+		reportRestore(ctx, rdb, cmd, "failed", "the server's storage path cannot be resolved on this node right now; try again shortly")
 		return
 	}
 	targetDir := rootDir
@@ -147,7 +147,7 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 		// WRITE: the staging directory and the rename that follows would land
 		// outside the server root.
 		if !withinRoot(rootDir, targetDir) {
-			reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", "sub-server escapes the server directory")
+			reportRestore(ctx, rdb, cmd, "failed", "sub-server escapes the server directory")
 			return
 		}
 	}
@@ -182,9 +182,9 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 	defer func() {
 		switch {
 		case succeeded:
-			reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "success", "")
+			reportRestore(ctx, rdb, cmd, "success", "")
 		case failure != "":
-			reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", failure)
+			reportRestore(ctx, rdb, cmd, "failed", failure)
 		}
 	}()
 
@@ -982,16 +982,27 @@ func archiveSize(body io.Reader) int64 {
 // scheduler can update the backup_restores row matching this attempt, and can
 // tell which node reported it. Same reasoning as reportBackup; see
 // queue.BackupRestoresChannel.
-func reportRestore(ctx context.Context, rdb *redis.Client, restoreID, runID int, status, errMsg string) {
+func reportRestore(ctx context.Context, rdb *redis.Client, cmd BackupRestoreCommand, status, errMsg string) {
 	payload := map[string]interface{}{
-		"restoreId": restoreID,
-		"runId":     runID,
-		"status":    status,
-		"error":     errMsg,
-		"timestamp": time.Now().Unix(),
+		"restoreId":  cmd.RestoreID,
+		"runId":      cmd.RunID,
+		"serverUuid": cmd.ServerUUID,
+		"status":     status,
+		"error":      errMsg,
+		"timestamp":  time.Now().Unix(),
 	}
 	data, _ := json.Marshal(payload)
+	// Kept as well as published: a PUBLISH while no Core holds the leader lease
+	// reaches nobody, and Core's reaper reads this key before it closes the
+	// restore as lost (from six hours after the request; a day leaves room for
+	// a restore that ran for hours). Set before the PUBLISH so Core's delete of
+	// an applied result cannot land first. An old Core never reads it; the TTL clears it.
+	if err := rdb.Set(ctx, queue.RestoreResultKey(cmd.ServerUUID, cmd.RestoreID), data, restoreResultTTL).Err(); err != nil {
+		log.Printf("restore result could not be kept: %v", err)
+	}
 	if err := rdb.Publish(ctx, queue.BackupRestoresChannel(nodeID), data).Err(); err != nil {
 		log.Printf("restore result publish failed: %v", err)
 	}
 }
+
+const restoreResultTTL = 24 * time.Hour

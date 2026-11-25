@@ -198,11 +198,7 @@ func (b *BackupScheduler) consumeRestoreResults(ctx context.Context) {
 			if b.leader != nil && !b.leader.IsLeader() {
 				continue
 			}
-			var result struct {
-				RestoreID int    `json:"restoreId"`
-				Status    string `json:"status"`
-				Error     string `json:"error"`
-			}
+			var result restoreResult
 			if err := json.Unmarshal([]byte(msg.Payload), &result); err != nil {
 				logErrf("backup-scheduler", "restore result: decode failed: %v", err)
 				continue
@@ -220,25 +216,79 @@ func (b *BackupScheduler) consumeRestoreResults(ctx context.Context) {
 			if !b.reporterMatchesServer(msg.Channel, restore.ServerID, "restore result") {
 				continue
 			}
-			// Already final: a duplicate report must not re-run the installs
-			// and mods below, nor overwrite the row.
-			if restore.Status == "success" {
-				continue
-			}
-			completed := time.Time{}
-			if result.Status == "success" || result.Status == "failed" {
-				completed = time.Now()
-			}
-			if err := b.store.UpdateBackupRestoreStatus(result.RestoreID, result.Status, result.Error, completed); err != nil {
-				logErrf("backup-scheduler", "restore result: update failed for id=%d: %v", result.RestoreID, err)
-			}
-			if result.Status == "success" {
-				b.restoreInstalls(restore.RunID, restore.ServerID, restore.Overlay)
-				b.restoreMods(restore.RunID, restore.ServerID, restore.Overlay)
-				b.forgetSubServersRestoredAway(restore.RunID, restore.ServerID, restore.Overlay)
+			// serverUuid comes only from a node that also keeps the result
+			// (RestoreResultKey); attribution above already passed.
+			if b.applyRestoreResult(restore, result) && result.ServerUUID != "" {
+				b.redis.Del(ctx, queue.RestoreResultKey(result.ServerUUID, result.RestoreID))
 			}
 		}
 	}
+}
+
+// restoreResult is what a node reports for a restore, on its channel and, from
+// nodes that keep it, under queue.RestoreResultKey.
+type restoreResult struct {
+	RestoreID  int    `json:"restoreId"`
+	Status     string `json:"status"`
+	Error      string `json:"error"`
+	ServerUUID string `json:"serverUuid"`
+}
+
+// applyRestoreResult writes a node's result to restore's row and, on success,
+// brings the install, mod and sub-server rows in line with the archive. The
+// live consumer and the reaper both go through here, so a result the reaper
+// finds kept is applied exactly as a delivered one would have been. Reports
+// whether the row now holds the result.
+func (b *BackupScheduler) applyRestoreResult(restore *models.BackupRestore, result restoreResult) bool {
+	// Already final: a duplicate report must not re-run the installs
+	// and mods below, nor overwrite the row.
+	if restore.Status == "success" {
+		return true
+	}
+	completed := time.Time{}
+	if result.Status == "success" || result.Status == "failed" {
+		completed = time.Now()
+	}
+	written := true
+	if err := b.store.UpdateBackupRestoreStatus(restore.ID, result.Status, result.Error, completed); err != nil {
+		logErrf("backup-scheduler", "restore result: update failed for id=%d: %v", restore.ID, err)
+		written = false
+	}
+	if result.Status == "success" {
+		b.restoreInstalls(restore.RunID, restore.ServerID, restore.Overlay)
+		b.restoreMods(restore.RunID, restore.ServerID, restore.Overlay)
+		b.forgetSubServersRestoredAway(restore.RunID, restore.ServerID, restore.Overlay)
+	}
+	return written
+}
+
+// appliedKeptRestoreResult applies the result the node kept for r, if there is
+// one, and reports whether r is settled by it (or cannot be judged now).
+// The key lives under the server's namespace, which the node's ACL grants only
+// for the servers it hosts, so it stands in for the channel attribution.
+func (b *BackupScheduler) appliedKeptRestoreResult(ctx context.Context, r models.AbandonedBackupRestore) bool {
+	key := queue.RestoreResultKey(r.ServerUUID, r.ID)
+	raw, err := b.redis.Get(ctx, key).Result()
+	if err == redis.Nil {
+		return false
+	}
+	if err != nil {
+		return true
+	}
+	var result restoreResult
+	if err := json.Unmarshal([]byte(raw), &result); err != nil || result.RestoreID != r.ID ||
+		(result.Status != "success" && result.Status != "failed") {
+		return false
+	}
+	restore, err := b.store.GetBackupRestore(r.ID)
+	if err != nil || restore == nil {
+		return true
+	}
+	if b.applyRestoreResult(restore, result) {
+		b.redis.Del(ctx, key)
+		log.Printf("backup-scheduler: restore %d: applied the result the node kept, its report never arrived", r.ID)
+	}
+	return true
 }
 
 // consumeResults listens on every node's own results channel and updates the
@@ -524,6 +574,11 @@ func (b *BackupScheduler) reapAbandonedRestores(ctx context.Context, now time.Ti
 	b.restoreSeenPass = now
 	b.restoreNodeSeen = map[int]time.Time{}
 	for _, r := range restores {
+		// First: a kept result is the node's own answer, whether or not the
+		// node is reachable now.
+		if b.appliedKeptRestoreResult(ctx, r) {
+			continue
+		}
 		if !b.nodeReachable(r.NodeID, r.NodeStatus, false) {
 			continue
 		}

@@ -1,6 +1,9 @@
 package queue
 
-import "strings"
+import (
+	"strconv"
+	"strings"
+)
 
 // Node -> Core backup reporting channels.
 //
@@ -67,4 +70,13 @@ func NodeTokenFromBackupChannel(channel string) (token string, ok bool) {
 		}
 	}
 	return "", false
+}
+
+// RestoreResultKey is where a node also keeps a restore's final result, next to
+// the PUBLISH. A result published while no Core held the leader lease reached
+// nobody, so the reaper read the silence as a lost restore and closed it as
+// failed after the world had been replaced. Under the server's own namespace,
+// which the node's ACL grants only for the servers it hosts.
+func RestoreResultKey(serverUUID string, restoreID int) string {
+	return "dylaris:server:" + serverUUID + ":restore_result:" + strconv.Itoa(restoreID)
 }
