@@ -1,8 +1,13 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -229,7 +234,7 @@ func TestProjectLimitCommand(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			qp := &QuotaProvider{fsType: tc.fsType, mountPoint: "/mnt"}
-			got, err := qp.projectLimitCommand(42, tc.limitMB)
+			got, err := qp.projectLimitCommand(42, tc.limitMB, projectInodeLimit(tc.limitMB))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -238,7 +243,163 @@ func TestProjectLimitCommand(t *testing.T) {
 			}
 		})
 	}
-	if _, err := (&QuotaProvider{fsType: "btrfs"}).projectLimitCommand(42, 1); err == nil {
+	if _, err := (&QuotaProvider{fsType: "btrfs"}).projectLimitCommand(42, 1, 0); err == nil {
 		t.Error("btrfs: want an error")
+	}
+}
+
+// R59-03/06: a server already holding more files than its limit's formula
+// allows keeps a quarter of headroom over what it holds, so applying the limit
+// never stops it; under the formula the formula stands.
+func TestProjectInodeLimitFor(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		limitMB, inodes int64
+		want            int64
+	}{
+		{"under the formula", 10240, 400000, 1000000},
+		{"at the formula", 10240, 1000000, 1000000},
+		{"over the formula", 10240, 1500000, 1875000},
+		{"over, rounded up", 10240, 1000001, 1250002},
+		{"no disk limit", 0, 1500000, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := projectInodeLimitFor(tc.limitMB, tc.inodes); got != tc.want {
+				t.Errorf("projectInodeLimitFor(%d, %d) = %d, want %d", tc.limitMB, tc.inodes, got, tc.want)
+			}
+		})
+	}
+}
+
+// fakeQuotaTools stands in for repquota and setquota: report is what the
+// mount's report prints (reportErr makes it fail), and every limit command
+// is recorded.
+func fakeQuotaTools(t *testing.T, report string, reportErr error) (reports *int, limits *[]string) {
+	t.Helper()
+	oldReport, oldLimit := quotaReportOutput, quotaLimitOutput
+	t.Cleanup(func() { quotaReportOutput, quotaLimitOutput = oldReport, oldLimit })
+	reports, limits = new(int), new([]string)
+	quotaReportOutput = func(...string) ([]byte, error) {
+		*reports++
+		return []byte(report), reportErr
+	}
+	quotaLimitOutput = func(args ...string) ([]byte, error) {
+		*limits = append(*limits, strings.Join(args, " "))
+		return nil, nil
+	}
+	return reports, limits
+}
+
+func repquotaLine(uuid string, usedKB, hardKB, files, filesHard int64) string {
+	return fmt.Sprintf("#%d -- %d 0 %d %d 0 %d\n", projectID(uuid), usedKB, hardKB, files, filesHard)
+}
+
+// R59-03/06: every SetLimit reads the files the project holds, so a limit is
+// never put below them; a report that cannot be read sets no inode limit
+// rather than one that may stop a running server.
+func TestSetLimitNeverPutsTheInodeLimitBelowTheFiles(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		report    string
+		reportErr error
+		limitMB   int64
+		want      string
+	}{
+		{"under the formula", repquotaLine("srv", 1024, 0, 5000, 0), nil, 10240, "0 10485760 0 1000000"},
+		{"over the formula", repquotaLine("srv", 1024, 0, 1500000, 0), nil, 10240, "0 10485760 0 1875000"},
+		{"not in the report yet", "", nil, 10240, "0 10485760 0 1000000"},
+		{"report unreadable", "", errors.New("boom"), 10240, "0 10485760 0 0"},
+		{"lift", repquotaLine("srv", 1024, 0, 1500000, 0), nil, 0, "0 0 0 0"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, limits := fakeQuotaTools(t, tc.report, tc.reportErr)
+			qp := &QuotaProvider{fsType: "ext4", mountPoint: "/mnt", available: true}
+			if err := qp.SetLimit("srv", tc.limitMB); err != nil {
+				t.Fatal(err)
+			}
+			want := fmt.Sprintf("setquota -P %d %s /mnt", projectID("srv"), tc.want)
+			if len(*limits) != 1 || (*limits)[0] != want {
+				t.Fatalf("limit commands %q, want [%q]", *limits, want)
+			}
+		})
+	}
+}
+
+// R59-05/03: the boot's inode backfill reads the mount's report once for all
+// its servers and sets a limit only where one is missing, above the files a
+// server holds; a server whose limit is lifted for a recount or a restore is
+// left to that work's put-back. Run twice, it changes nothing the second time.
+func TestInodeBackfillReadsOneReportPerMount(t *testing.T) {
+	base := t.TempDir()
+	for _, uuid := range []string{"limited", "over", "done", "unlimited", "lifted"} {
+		if err := os.Mkdir(filepath.Join(base, uuid), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	report := repquotaLine("limited", 1024, 10240*1024, 5000, 0) +
+		repquotaLine("over", 1024, 10240*1024, 1500000, 0) +
+		repquotaLine("done", 1024, 10240*1024, 5000, 1000000) +
+		repquotaLine("unlimited", 1024, 0, 5000, 0) +
+		repquotaLine("lifted", 1024, 10240*1024, 5000, 0)
+	reports, limits := fakeQuotaTools(t, report, nil)
+	rdb := newDiskGuardRedis(t)
+	rdb.Set(context.Background(), diskLiftedKey("lifted"), 1, 0)
+	qp := &QuotaProvider{fsType: "ext4", mountPoint: "/mnt", basePath: base, available: true}
+
+	qp.backfillInodeLimits(rdb, nil)
+
+	if *reports != 1 {
+		t.Fatalf("%d reports, want 1 for the mount", *reports)
+	}
+	want := []string{
+		fmt.Sprintf("setquota -P %d 0 10485760 0 1000000 /mnt", projectID("limited")),
+		fmt.Sprintf("setquota -P %d 0 10485760 0 1875000 /mnt", projectID("over")),
+	}
+	sort.Strings(want)
+	got := append([]string(nil), *limits...)
+	sort.Strings(got)
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("limit commands %q, want %q", got, want)
+	}
+
+	// The second boot sees the limits the first one set.
+	report = repquotaLine("limited", 1024, 10240*1024, 5000, 1000000) +
+		repquotaLine("over", 1024, 10240*1024, 1500000, 1875000) +
+		repquotaLine("done", 1024, 10240*1024, 5000, 1000000) +
+		repquotaLine("unlimited", 1024, 0, 5000, 0)
+	_, limits = fakeQuotaTools(t, report, nil)
+	qp.backfillInodeLimits(rdb, nil)
+	if len(*limits) != 0 {
+		t.Fatalf("second backfill set %q, want nothing", *limits)
+	}
+}
+
+// The reason travels with the gauge, so the panel can say the file count, not
+// the bytes, is what is full. Unset for bytes, which is all an older node sent.
+func TestDiskUsageReasonNamesTheFullerSide(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		u    DiskUsagePayload
+		want string
+	}{
+		{"bytes", DiskUsagePayload{Total: 95, Limit: 100, Inodes: 10, InodeLimit: 1000}, ""},
+		{"files", DiskUsagePayload{Total: 10, Limit: 100, Inodes: 1000, InodeLimit: 1000}, "files"},
+		{"no inode limit", DiskUsagePayload{Total: 95, Limit: 100, Inodes: 10}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.u.reason(); got != tc.want {
+				t.Fatalf("reason = %q, want %q", got, tc.want)
+			}
+		})
+	}
+	data, _ := json.Marshal(DiskUsagePayload{Total: 10, Limit: 100, Inodes: 1000, InodeLimit: 1000, Warning: "full", Reason: "files"})
+	for _, field := range []string{`"inodes":1000`, `"inodeLimit":1000`, `"reason":"files"`} {
+		if !strings.Contains(string(data), field) {
+			t.Errorf("gauge %s lacks %s", data, field)
+		}
+	}
+	data, _ = json.Marshal(DiskUsagePayload{Total: 10, Limit: 100})
+	if strings.Contains(string(data), "inode") || strings.Contains(string(data), "reason") {
+		t.Errorf("a gauge without inodes carries %s", data)
 	}
 }

@@ -63,24 +63,44 @@ type DiskUsagePayload struct {
 	// minutes late, not to be told the number is meaningless.
 	Enforceable bool `json:"enforceable"`
 	// Inodes and InodeLimit are the project's file count and inode hard limit,
-	// from the quota report only (0 = none or not read). Not sent: they count
-	// into Warning, so a server out of inodes takes the same guard path as one
-	// out of bytes and Core reads the payload it always did.
-	Inodes     int64 `json:"-"`
-	InodeLimit int64 `json:"-"`
+	// from the quota report only (0 = none or not read). They count into
+	// Warning, so a server out of inodes takes the same guard path as one out
+	// of bytes. Sent, with Reason, only so the panel can say that the file
+	// count is what is full; Core passes the gauge through and reads neither.
+	Inodes     int64 `json:"inodes,omitempty"`
+	InodeLimit int64 `json:"inodeLimit,omitempty"`
+	// Reason is "files" when the file count, not the bytes, set Warning.
+	// Empty for bytes, which is all a node before it meant.
+	Reason string `json:"reason,omitempty"`
+}
+
+func (u *DiskUsagePayload) bytesFraction() float64 {
+	if u.Limit > 0 && u.Total > 0 {
+		return float64(u.Total) / float64(u.Limit)
+	}
+	return 0
+}
+
+func (u *DiskUsagePayload) inodesFraction() float64 {
+	if u.InodeLimit > 0 {
+		return float64(u.Inodes) / float64(u.InodeLimit)
+	}
+	return 0
 }
 
 // usedFraction is how full a server is against its limits: the larger of
 // bytes and inodes, since either at its hard limit fails every new file.
 func (u *DiskUsagePayload) usedFraction() float64 {
-	var pct float64
-	if u.Limit > 0 && u.Total > 0 {
-		pct = float64(u.Total) / float64(u.Limit)
+	return max(u.bytesFraction(), u.inodesFraction())
+}
+
+// reason is Reason for this usage: "files" when the file count is the fuller
+// side.
+func (u *DiskUsagePayload) reason() string {
+	if u.inodesFraction() > u.bytesFraction() {
+		return "files"
 	}
-	if u.InodeLimit > 0 {
-		pct = max(pct, float64(u.Inodes)/float64(u.InodeLimit))
-	}
-	return pct
+	return ""
 }
 
 // atLimit reports whether a server is at or over one of its limits.
@@ -859,6 +879,7 @@ func collectForContainer(ctx context.Context, rdb *redis.Client, dm *DockerManag
 							evt, _ := json.Marshal(map[string]interface{}{
 								"type":    "disk_warning",
 								"warning": usage.Warning,
+								"reason":  usage.Reason,
 								"total":   usage.Total,
 								"limit":   usage.Limit,
 							})
@@ -924,6 +945,7 @@ func holdForDiskFull(_ context.Context, rdb *redis.Client, uuid, liveKey string,
 	evt, _ := json.Marshal(map[string]interface{}{
 		"type":    "disk_warning",
 		"warning": "disk_full",
+		"reason":  usage.Reason,
 		"total":   usage.Total,
 		"limit":   usage.Limit,
 	})
@@ -1005,6 +1027,9 @@ func getDiskUsage(ctx context.Context, rdb *redis.Client, uuid string, quota *Qu
 			usage.Warning = "90"
 		case pct >= 0.8:
 			usage.Warning = "80"
+		}
+		if usage.Warning != "" {
+			usage.Reason = usage.reason()
 		}
 	}
 

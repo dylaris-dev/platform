@@ -14,6 +14,7 @@ import MemoryHelp from '@/components/MemoryHelp';
 import { Skeleton } from '@/components/Skeleton';
 import CoreLoadBars from '@/components/CoreLoadBars';
 import { formatBytes, formatMB } from '@/lib/format';
+import { diskWarningText } from '@/lib/diskWarning';
 import { fmtDateTime, timeAgo } from '@/lib/time';
 
 import { Cpu, MemoryStick, AlertTriangle, HardDrive, Archive, PowerOff } from 'lucide-react';
@@ -457,14 +458,10 @@ export default function OverviewView({ server }: OverviewViewProps) {
             <p className={`text-sm font-semibold ${
               diskUsage.warning === '80' ? 'text-(--warning)' : 'text-(--error-light)'
             }`}>
-              {diskUsage.warning === 'full'
-                ? 'Storage limit reached'
-                : diskUsage.warning === '90'
-                  ? 'Storage limit critical'
-                  : 'Storage running low'}
+              {diskWarningText(diskUsage).title}
             </p>
             <p className="text-xs text-(--base-07)">
-              {Math.round((diskUsage.total / diskUsage.limit) * 100)}% used — {formatBytes(diskUsage.total)} of {formatBytes(diskUsage.limit)}
+              {diskWarningText(diskUsage).detail}
             </p>
           </div>
         </div>

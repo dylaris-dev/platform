@@ -111,7 +111,7 @@ func (qp *QuotaProvider) probeProjectSupport() error {
 	// node that could tag directories but not limit them reported limits as
 	// enforced while every one was decoration. Set one on the probe id and
 	// take it off again.
-	if err := qp.setProjectLimit(pid, 1024); err != nil {
+	if err := qp.setProjectLimit(pid, 1024, projectInodeLimit(1024)); err != nil {
 		return fmt.Errorf("setting a limit failed: %w", err)
 	}
 	// xfs is read back rather than trusted from the exit code: xfs_quota
@@ -121,7 +121,7 @@ func (qp *QuotaProvider) probeProjectSupport() error {
 	if qp.fsType == "xfs" {
 		_, got, _, _ = qp.xfsGetUsageAndLimit("", pid)
 	}
-	if err := qp.setProjectLimit(pid, 0); err != nil {
+	if err := qp.setProjectLimit(pid, 0, 0); err != nil {
 		return fmt.Errorf("removing the probe limit failed: %w", err)
 	}
 	if got != 1024<<20 {
@@ -141,11 +141,23 @@ func projectInodeLimit(limitMB int64) int64 {
 	return max(1000000, 64*limitMB)
 }
 
-// projectLimitCommand is the command that sets a project's block and inode hard
-// limits for limitMB; with 0 it clears both.
-func (qp *QuotaProvider) projectLimitCommand(pid uint32, limitMB int64) ([]string, error) {
-	limitMB = max(limitMB, 0)
-	inodes := projectInodeLimit(limitMB)
+// projectInodeLimitFor is projectInodeLimit for a project already holding
+// inodes files. One holding more than the formula allows (a map render of
+// millions of tiles) keeps a quarter of headroom over them instead (owner
+// ruling 2026-11-26): put below them, the node update that brought the inode
+// limit failed its every create and the guard stopped a running server.
+func projectInodeLimitFor(limitMB, inodes int64) int64 {
+	l := projectInodeLimit(limitMB)
+	if l > 0 && inodes > l {
+		return (inodes*5 + 3) / 4
+	}
+	return l
+}
+
+// projectLimitCommand is the command that sets a project's block hard limit to
+// limitMB and its inode hard limit to inodes; 0 clears either.
+func (qp *QuotaProvider) projectLimitCommand(pid uint32, limitMB, inodes int64) ([]string, error) {
+	limitMB, inodes = max(limitMB, 0), max(inodes, 0)
 	switch qp.fsType {
 	case "xfs":
 		return []string{"xfs_quota", "-x", "-c",
@@ -157,18 +169,91 @@ func (qp *QuotaProvider) projectLimitCommand(pid uint32, limitMB int64) ([]strin
 	return nil, fmt.Errorf("no project quotas on %q", qp.fsType)
 }
 
+// quotaReportOutput runs a quota report and quotaLimitOutput a limit command;
+// vars so tests can stand in for the tools. A report's stderr stays out of
+// what is parsed.
+var (
+	quotaReportOutput = func(args ...string) ([]byte, error) { return exec.Command(args[0], args[1:]...).Output() }
+	quotaLimitOutput  = func(args ...string) ([]byte, error) { return exec.Command(args[0], args[1:]...).CombinedOutput() }
+)
+
 // setProjectLimit sets (or with 0 removes) the hard block and inode limits of
 // a project.
-func (qp *QuotaProvider) setProjectLimit(pid uint32, limitMB int64) error {
-	args, err := qp.projectLimitCommand(pid, limitMB)
+func (qp *QuotaProvider) setProjectLimit(pid uint32, limitMB, inodes int64) error {
+	args, err := qp.projectLimitCommand(pid, limitMB, inodes)
 	if err != nil {
 		return err
 	}
-	cmd := exec.Command(args[0], args[1:]...)
-	if out, err := cmd.CombinedOutput(); err != nil {
+	if out, err := quotaLimitOutput(args...); err != nil {
 		return fmt.Errorf("%s: %w", strings.TrimSpace(string(out)), err)
 	}
 	return nil
+}
+
+// report is the whole mount's quota report, one subprocess for every project
+// on it; usageIn reads one project from it.
+func (qp *QuotaProvider) report() (string, error) {
+	var args []string
+	switch qp.fsType {
+	case "xfs":
+		args = []string{"xfs_quota", "-x", "-c", "report -p -N -b -i", qp.mountPoint}
+	case "ext4":
+		// Not -s: that prints the block columns in human units ("1024M") that do
+		// not parse as numbers. Without it they are 1 KiB quota blocks. -n prints
+		// every project as "#<id>"; by default repquota prints the name from
+		// /etc/projid (the server UUID), so a bare id never matched any line.
+		args = []string{"repquota", "-P", "-n", qp.mountPoint}
+	default:
+		return "", fmt.Errorf("no project quotas on %q", qp.fsType)
+	}
+	out, err := quotaReportOutput(args...)
+	return string(out), err
+}
+
+// usageIn is (usedBytes, limitBytes, inodes, inodeLimit) of one project in a
+// report; usedBytes -1 when the project is not in it.
+func (qp *QuotaProvider) usageIn(report, uuid string, pid uint32) (int64, int64, int64, int64) {
+	if qp.fsType == "xfs" {
+		return parseXFSReport(report, uuid, pid)
+	}
+	return parseRepquota(report, pid)
+}
+
+// backfillInodeLimits gives every server on this mount that has a disk limit
+// but not its inode limit one: a server limited before inode limits existed
+// had none, and a counted server's boot reaches no SetLimit. One report for
+// the whole mount, run after the boot rather than before the heartbeat: a
+// usage read per server ran a du over every sub-server as well (R59-05). The
+// project's own block limit, not the known one: during a grace it is the
+// ceiling. Once set, the next run finds it there and does nothing.
+//
+// ponytail: an update_resources landing between the report and the SetLimit
+// here can have its new limit replaced by the one read; a per-server limit
+// lock closes it, as for the recount's.
+func (qp *QuotaProvider) backfillInodeLimits(rdb *redis.Client, storage *StorageManager) {
+	if !qp.available {
+		return
+	}
+	report, err := qp.report()
+	if err != nil {
+		log.Printf("quota: inode limits on %s not checked, the report failed: %v", qp.mountPoint, err)
+		return
+	}
+	ctx := context.Background()
+	for _, uuid := range qp.serverDirs(storage) {
+		used, limit, inodes, inodeLimit := qp.usageIn(report, uuid, projectID(uuid))
+		if used < 0 || limit <= 0 || inodeLimit >= projectInodeLimit(limit>>20) {
+			continue
+		}
+		// A recount or a restore holds the limit off; its put-back carries the
+		// inode limit, and a limit set here mid-tag refused the tag at bhard.
+		if diskLiftHeld(uuid) || (rdb != nil && rdb.Exists(ctx, diskLiftedKey(uuid)).Val() != 0) {
+			continue
+		}
+		if err := qp.setLimit(uuid, limit>>20, inodes); err != nil {
+			log.Printf("quota: add the inode limit of %s: %v", uuid, err)
+		}
+	}
 }
 
 // IsAvailable returns true if quota-based disk tracking can be used.
@@ -399,16 +484,38 @@ func (qp *QuotaProvider) SetLimit(uuid string, limitMB int64) error {
 		return nil
 	}
 
-	pid := projectID(uuid)
+	inodes := int64(-1)
+	if limitMB > 0 {
+		// The files the project holds now, so its inode limit never lands
+		// below them; see projectInodeLimitFor.
+		if report, err := qp.report(); err != nil {
+			log.Printf("quota: %s: files not read (%v) - setting its disk limit without an inode limit", uuid, err)
+		} else {
+			_, _, inodes, _ = qp.usageIn(report, uuid, projectID(uuid))
+		}
+	}
+	return qp.setLimit(uuid, limitMB, inodes)
+}
 
-	if err := qp.setProjectLimit(pid, limitMB); err != nil {
+// setLimit is SetLimit for a project holding inodes files; -1 is not known,
+// which sets no inode limit rather than one that may be below them.
+func (qp *QuotaProvider) setLimit(uuid string, limitMB, inodes int64) error {
+	pid := projectID(uuid)
+	ihard := int64(0)
+	if inodes >= 0 {
+		ihard = projectInodeLimitFor(limitMB, inodes)
+	}
+	if err := qp.setProjectLimit(pid, limitMB, ihard); err != nil {
 		return fmt.Errorf("quota: %s set limit %d MB: %w", qp.fsType, limitMB, err)
 	}
 	if limitMB <= 0 {
 		log.Printf("quota: removed disk limit for %s (project %d)", uuid, pid)
 		return nil
 	}
-	log.Printf("quota: set disk limit %d MB, %d inodes for %s (project %d)", limitMB, projectInodeLimit(limitMB), uuid, pid)
+	if ihard > projectInodeLimit(limitMB) {
+		log.Printf("quota: %s holds %d files, more than the %d its disk limit allows - its inode limit is %d so it keeps running", uuid, inodes, projectInodeLimit(limitMB), ihard)
+	}
+	log.Printf("quota: set disk limit %d MB, %d inodes for %s (project %d)", limitMB, ihard, uuid, pid)
 	return nil
 }
 
@@ -426,12 +533,11 @@ func (qp *QuotaProvider) RemoveQuota(uuid string) {
 // Returns (usedBytes, limitBytes, inodes, inodeLimit). usedBytes=-1 on error, a
 // limit of 0 means unlimited (for inodes also: not read).
 func (qp *QuotaProvider) xfsGetUsageAndLimit(uuid string, pid uint32) (int64, int64, int64, int64) {
-	out, err := exec.Command("xfs_quota", "-x", "-c",
-		"report -p -N -b -i", qp.mountPoint).Output()
+	out, err := qp.report()
 	if err != nil {
 		return -1, 0, 0, 0
 	}
-	return parseXFSReport(string(out), uuid, pid)
+	return parseXFSReport(out, uuid, pid)
 }
 
 // parseXFSReport reads one project's line from `report -p -N -b -i` output.
@@ -483,15 +589,11 @@ func parseInodeColumns(usedField, hardField string) (int64, int64) {
 // ext4GetUsageAndLimit parses repquota output for usage and hard limits in one call.
 // Returns what xfsGetUsageAndLimit returns.
 func (qp *QuotaProvider) ext4GetUsageAndLimit(pid uint32) (int64, int64, int64, int64) {
-	// Not -s: that prints the block columns in human units ("1024M") that do
-	// not parse as numbers. Without it they are 1 KiB quota blocks. -n prints
-	// every project as "#<id>"; by default repquota prints the name from
-	// /etc/projid (the server UUID), so a bare id never matched any line.
-	out, err := exec.Command("repquota", "-P", "-n", qp.mountPoint).Output()
+	out, err := qp.report()
 	if err != nil {
 		return -1, 0, 0, 0
 	}
-	return parseRepquota(string(out), pid)
+	return parseRepquota(out, pid)
 }
 
 // parseRepquota reads one project's line from `repquota -P -n` output.

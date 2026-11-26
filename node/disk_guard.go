@@ -131,8 +131,11 @@ type diskGrace struct{ limit, ceiling int64 }
 // holds reports whether the grace still applies: same limit, still over it,
 // and short of the ceiling. At the ceiling the filesystem refuses writes again,
 // so the guard's stop is the better outcome than a server failing silently.
-func (g diskGrace) holds(limit, total int64) bool {
-	return limit > 0 && g.limit == limit && total >= limit && total < g.ceiling
+// Out of inodes is the ceiling too: the ceiling's inode limit refuses every
+// create just the same.
+func (g diskGrace) holds(limit int64, u *DiskUsagePayload) bool {
+	return limit > 0 && g.limit == limit && u.Total >= limit && u.Total < g.ceiling &&
+		(u.InodeLimit <= 0 || u.Inodes < u.InodeLimit)
 }
 
 // diskGraceHeadroom is how far past usage the hard limit is lifted while a
@@ -305,7 +308,7 @@ func countDiskUsage(ctx context.Context, rdb *redis.Client, q quotaAssigner, uui
 			// A count that cannot be read is not the server back under its
 			// limit: the real limit with the grace key left in place had the
 			// guard let a server run that the filesystem no longer let write.
-			if g.limit == limit && (after == nil || g.holds(limit, after.Total)) {
+			if g.limit == limit && (after == nil || g.holds(limit, after)) {
 				enforceMB = g.ceiling >> 20
 			} else {
 				rdb.Del(ctx, diskGraceKey(uuid))
@@ -441,7 +444,7 @@ func reconcileServer(ctx context.Context, rdb *redis.Client, q quotaAssigner, uu
 				if n == 0 {
 					repairDiskStateLostWithRedis(ctx, rdb, q, uuid)
 				}
-				backfillInodeLimit(q, uuid)
+				// Its inode limit comes from backfillInodeLimits, after the boot.
 				return false, nil
 			}
 			// Counted already: the grace stays once per server.
@@ -455,24 +458,6 @@ func reconcileServer(ctx context.Context, rdb *redis.Client, q quotaAssigner, uu
 		}
 	}
 	return true, countDiskUsage(ctx, rdb, q, uuid, knownDiskLimitMB(ctx, rdb, q, uuid), allowGrace)
-}
-
-// backfillInodeLimit re-issues the block limit a counted server's project holds,
-// which now carries its inode limit. A server limited before inode limits had
-// none, and a counted, unlifted server's boot reaches no other SetLimit. The
-// project's own limit, not the known one: during a grace it is the ceiling.
-func backfillInodeLimit(q quotaAssigner, uuid string) {
-	usage := q.GetDiskUsage(uuid)
-	if usage == nil || usage.Limit <= 0 {
-		return
-	}
-	limitMB := usage.Limit >> 20
-	if usage.InodeLimit == projectInodeLimit(limitMB) {
-		return
-	}
-	if err := q.SetLimit(uuid, limitMB); err != nil {
-		log.Printf("quota: add the inode limit of %s: %v", uuid, err)
-	}
 }
 
 // repairDiskStateLostWithRedis is the boot of a server counted on disk whose
@@ -608,7 +593,7 @@ func diskGraced(ctx context.Context, rdb *redis.Client, q diskLimiter, uuid stri
 		rdb.Del(ctx, diskGraceKey(uuid))
 		return true
 	}
-	if g.holds(limitMB<<20, usage.Total) {
+	if g.holds(limitMB<<20, usage) {
 		return true
 	}
 	rdb.Del(ctx, diskGraceKey(uuid))

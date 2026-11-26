@@ -841,6 +841,11 @@ export interface DiskUsage {
     // the warning until the whole fleet is updated. Only an explicit false means
     // the node said so.
     enforceable?: boolean;
+    // The file count and its limit, and reason "files" when they, not the
+    // bytes, set `warning`. Sent only by a node with inode limits.
+    inodes?: number;
+    inodeLimit?: number;
+    reason?: 'files';
 }
 
 export const getStatsHistory = (id: number, range?: string) =>

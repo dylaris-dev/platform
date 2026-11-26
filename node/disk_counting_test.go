@@ -25,6 +25,7 @@ type fakeQuota struct {
 	limitMB       int64
 	limitAtTag    int64
 	setLimits     []int64
+	reads         int
 	// onTag runs inside the tag, where a node killed mid-walk stops.
 	onTag func()
 	// tagErr is what the tag returns: entries the walk could not tag.
@@ -40,6 +41,7 @@ func (f *fakeQuota) AssignQuota(string) error {
 	return f.tagErr
 }
 func (f *fakeQuota) GetDiskUsage(string) *DiskUsagePayload {
+	f.reads++
 	if f.assigned {
 		return f.after
 	}
@@ -1134,21 +1136,18 @@ func TestRetagIfMovedSoonThrottles(t *testing.T) {
 	}
 }
 
-// R58-04: a server limited before inode limits existed is counted already, so
-// the boot never walks it, and nothing else re-applies its limit. The boot puts
-// the project's own block limit back once, now with its inode limit; a project
-// that has it already, an unlimited one and a lifted one are left alone.
-func TestTheBootGivesACountedServerItsInodeLimit(t *testing.T) {
+// R59-05: a counted server's boot does no work of its own, not even a usage
+// read: the inode backfill reads the mount's report once, after the boot
+// (TestInodeBackfillReadsOneReportPerMount).
+func TestTheBootOfACountedServerReadsNothing(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		usage *DiskUsagePayload
 		want  []int64
 	}{
-		{"limited before inode limits", &DiskUsagePayload{Total: 10 * mib, Limit: 100 * mib}, []int64{100}},
-		{"a grace ceiling stays the ceiling", &DiskUsagePayload{Total: 150 * mib, Limit: 180 * mib}, []int64{180}},
+		{"limited before inode limits", &DiskUsagePayload{Total: 10 * mib, Limit: 100 * mib}, nil},
 		{"inode limit already set", &DiskUsagePayload{Total: 10 * mib, Limit: 100 * mib, InodeLimit: projectInodeLimit(100)}, nil},
 		{"no limit", &DiskUsagePayload{Total: 10 * mib}, nil},
-		{"quota unreadable", nil, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rdb := newDiskGuardRedis(t)
@@ -1159,8 +1158,41 @@ func TestTheBootGivesACountedServerItsInodeLimit(t *testing.T) {
 			if done, err := reconcileServer(ctx, rdb, q, "srv"); done || err != nil || q.assigned {
 				t.Fatalf("done=%v err=%v assigned=%v, want no walk", done, err, q.assigned)
 			}
-			if fmt.Sprint(q.setLimits) != fmt.Sprint(tc.want) {
-				t.Fatalf("limits set %v, want %v", q.setLimits, tc.want)
+			if fmt.Sprint(q.setLimits) != fmt.Sprint(tc.want) || q.reads != 0 {
+				t.Fatalf("limits set %v, %d usage reads, want %v and none", q.setLimits, q.reads, tc.want)
+			}
+		})
+	}
+}
+
+// R59-04/07: a graced server whose project runs out of inodes at its ceiling
+// fails every create like one at the byte ceiling, so the grace ends the same
+// way: gone, the real limit back on, and the guard stops it.
+func TestTheGraceEndsAtTheCeilingsInodeLimit(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		inodes    int64
+		graced    bool
+		restoreMB int64
+	}{
+		{"files left", 999999, true, -1},
+		{"out of files", 1000000, false, 100},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rdb := newDiskGuardRedis(t)
+			ctx := context.Background()
+			recordDiskLimit(ctx, rdb, "srv", 100)
+			saveDiskGrace(ctx, rdb, "srv", diskGrace{limit: 100 * mib, ceiling: 300 * mib})
+			q := &fakeQuota{limitMB: -1}
+			u := &DiskUsagePayload{Total: 150 * mib, Limit: 100 * mib, Inodes: tc.inodes, InodeLimit: 1000000}
+			if got := diskGraced(ctx, rdb, q, "srv", u); got != tc.graced {
+				t.Fatalf("graced = %v, want %v", got, tc.graced)
+			}
+			if _, ok := loadDiskGrace(ctx, rdb, "srv"); ok != tc.graced {
+				t.Fatalf("grace key kept = %v, want %v", ok, tc.graced)
+			}
+			if q.limitMB != tc.restoreMB {
+				t.Fatalf("hard limit = %d MB, want %d", q.limitMB, tc.restoreMB)
 			}
 		})
 	}
