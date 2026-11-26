@@ -241,6 +241,46 @@ func TestTeardownLeavesNoNodeKeysATickWroteBeforeTheRowWent(t *testing.T) {
 	}
 }
 
+// The same gap for the ACL: an ACL reconciler tick that listed the node before
+// its row went can re-create the node's Redis users after the first DELUSER.
+// Nothing removed them until the next sweep's orphan prune, so the departing
+// tenant's machine had its credentials back for up to a minute or longer.
+func TestTeardownRemovesTheNodeACLAgainAfterTheRowWent(t *testing.T) {
+	ctx := context.Background()
+	rdb := newQueueTestRedis(t)
+	hook := &aclHook{}
+	rdb.AddHook(hook)
+	tok := "node-token-7"
+
+	deletedBeforeRow := -1
+	fs := &teardownFakeStore{nodes: []models.Node{{ID: 7, Name: "kitchen-box", Token: tok}}}
+	fs.onDeleteNode = func(int) { deletedBeforeRow = len(hook.deleted) }
+	if err := TeardownTenantInfrastructure(ctx, fs, nil, rdb, redisacl.NewProvisioner(rdb), &peerRecorder{}, "owner-1"); err != nil {
+		t.Fatalf("teardown: %v", err)
+	}
+	if deletedBeforeRow < 0 {
+		t.Fatal("the node row was never deleted")
+	}
+	for _, want := range []string{redisacl.NodeUsername(tok), redisacl.LinkUsername(tok)} {
+		before, after := false, false
+		for i, u := range hook.deleted {
+			if u == want {
+				if i < deletedBeforeRow {
+					before = true
+				} else {
+					after = true
+				}
+			}
+		}
+		if !before {
+			t.Errorf("%s not removed before the row (credentials first)", want)
+		}
+		if !after {
+			t.Errorf("%s not removed again after the row went; a reconciler tick could have re-created it", want)
+		}
+	}
+}
+
 // A node that cannot be removed is a DURABLE failure: the caller's contract is
 // that a non-nil error means the account must not be deleted yet. Carrying on
 // would leave the account gone and the machine adopted, which is the whole

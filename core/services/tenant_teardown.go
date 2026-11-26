@@ -224,8 +224,12 @@ func TeardownTenantInfrastructure(ctx context.Context, st store.Store, gw Gatewa
 			if derr := st.DeleteNode(n.ID); derr != nil {
 				return fmt.Errorf("remove node %d (%s): %w", n.ID, n.Name, derr)
 			}
-			// The keys went before the row, so a tick that listed the node in
-			// between may have written them back.
+			// The keys and the ACL users went before the row, so a publisher or
+			// ACL reconciler tick that listed the node in between may have written
+			// them back. With the row gone, no later tick re-creates them.
+			if prov != nil {
+				prov.RemoveNodeACL(ctx, n.Token)
+			}
 			dropNodeKeys(ctx, rdb, n.Token)
 		}
 	}
