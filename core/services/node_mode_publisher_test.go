@@ -14,6 +14,8 @@ import (
 
 	"dylaris-core/models"
 	"dylaris-core/store"
+
+	"github.com/DATA-DOG/go-sqlmock"
 )
 
 // The settings a node reads out of Redis are owned by the database and only
@@ -305,5 +307,42 @@ func TestNodeModePublisherRepublishesTheBeamLimits(t *testing.T) {
 	}
 	if n, _ := rdb.Exists(ctx, "beam:bw_down_internal").Result(); n != 0 {
 		t.Error("a never-saved throttle was published")
+	}
+}
+
+// Another replica's tick must not republish its one-second settings snapshot
+// over a Beam save that just landed: an old "no cap" there DELeted the upload
+// cap the admin had just set, failing open until the next tick.
+func TestNodeModePublisherReadsPastTheSettingsSnapshot(t *testing.T) {
+	rdb := newQueueTestRedis(t)
+	ctx := context.Background()
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	st := store.NewPostgresStore(db)
+	q := regexp.QuoteMeta(`SELECT key, value FROM settings`)
+	// This replica's snapshot, loaded just before the other replica's save.
+	mock.ExpectQuery(q).WillReturnRows(sqlmock.NewRows([]string{"key", "value"}).
+		AddRow("beam.max_upload_bytes", LimitUnlimited).AddRow("beam.bw_limit", "100"))
+	if _, err := st.GetSetting("beam.max_upload_bytes"); err != nil {
+		t.Fatal(err)
+	}
+	// The other replica saved a cap of 0 and a new throttle, then mirrored them.
+	rdb.Set(ctx, "beam:max_upload_bytes", "0", 0)
+	rdb.Set(ctx, "beam:bw_limit", "5000", 0)
+	mock.ExpectQuery(q).WillReturnRows(sqlmock.NewRows([]string{"key", "value"}).
+		AddRow("beam.max_upload_bytes", "0").AddRow("beam.bw_limit", "5000"))
+
+	NewNodeModePublisher(st, rdb).Publish(ctx)
+
+	for key, exp := range map[string]string{"beam:max_upload_bytes": "0", "beam:bw_limit": "5000"} {
+		if got, err := rdb.Get(ctx, key).Result(); err != nil || got != exp {
+			t.Errorf("%s = %q (%v), want %q: the stale snapshot was republished", key, got, err, exp)
+		}
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }

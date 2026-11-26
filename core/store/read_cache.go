@@ -103,6 +103,11 @@ func (s *PostgresStore) settingsMap() (map[string]sql.NullString, error) {
 	gen := c.gen
 	c.mu.Unlock()
 
+	// Dated from the load's START: Postgres reads the table as of the
+	// statement start, and a load can run up to settingsLoadTimeout. Dating it
+	// from the end let a replica serve a value older than readCacheTTL, the
+	// bound the Beam off-switch stamp (ReadCacheTTL) relies on.
+	start := cacheNow()
 	m, err := s.loadSettings()
 	if err != nil {
 		return nil, err
@@ -112,7 +117,7 @@ func (s *PostgresStore) settingsMap() (map[string]sql.NullString, error) {
 	// to this caller (its read overlapped the write) but do not keep it.
 	if c.gen == gen {
 		c.vals = m
-		c.until = cacheNow().Add(readCacheTTL)
+		c.until = start.Add(readCacheTTL)
 	}
 	c.mu.Unlock()
 	return m, nil
@@ -154,6 +159,10 @@ func (s *PostgresStore) GetSetting(key string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return s.settingFrom(m, key)
+}
+
+func (s *PostgresStore) settingFrom(m map[string]sql.NullString, key string) (string, error) {
 	v, ok := m[key]
 	if !ok {
 		return "", sql.ErrNoRows
@@ -216,4 +225,23 @@ func FreshModules(st Store) ([]models.Module, error) {
 		return pg.loadModules()
 	}
 	return st.ListModules()
+}
+
+// FreshSettings reads the settings table once, past the one-second snapshot,
+// and answers like GetSetting from that read. The node mode publisher uses it:
+// its tick runs on every replica and overwrites Redis unconditionally, so a
+// replica's second-old snapshot could undo a save another replica had just
+// mirrored. A failed load answers its error for every key.
+func FreshSettings(st Store) func(key string) (string, error) {
+	pg, ok := st.(*PostgresStore)
+	if !ok {
+		return st.GetSetting
+	}
+	m, loadErr := pg.loadSettings()
+	return func(key string) (string, error) {
+		if loadErr != nil {
+			return "", loadErr
+		}
+		return pg.settingFrom(m, key)
+	}
 }

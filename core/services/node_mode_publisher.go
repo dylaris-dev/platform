@@ -85,12 +85,13 @@ func (p *NodeModePublisher) Publish(ctx context.Context) {
 	// But only for "never saved": a failed read (database or pgbouncer down)
 	// skips the key for this tick. Writing the defaults then flipped a
 	// gateway+beam fleet to ip_port + sftp for the whole outage.
+	getSetting := store.FreshSettings(p.store)
 	values := map[string]string{}
 	for setting, def := range map[string]string{
 		"routing_mode":     "ip_port",
 		"file_access_mode": "sftp",
 	} {
-		v, err := p.store.GetSetting(setting)
+		v, err := getSetting(setting)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) && !errors.Is(err, store.ErrSettingNull) {
 			log.Printf("node mode publisher: read %s: %v (keeping the published value)", setting, err)
 			continue
@@ -120,7 +121,7 @@ func (p *NodeModePublisher) Publish(ctx context.Context) {
 		"placement.pids_limit":     "dylaris:placement:pids_limit",
 		"placement.io_weight":      "dylaris:placement:io_weight",
 	} {
-		if v, err := p.store.GetSetting(setting); err == nil && v != "" {
+		if v, err := getSetting(setting); err == nil && v != "" {
 			values[key] = v
 		}
 	}
@@ -136,7 +137,7 @@ func (p *NodeModePublisher) Publish(ctx context.Context) {
 		"beam.bw_up_external":   "beam:bw_up_external",
 		"beam.bw_down_external": "beam:bw_down_external",
 	} {
-		if v, err := p.store.GetSetting(setting); err == nil && v != "" {
+		if v, err := getSetting(setting); err == nil && v != "" {
 			values[key] = v
 		}
 	}
@@ -154,7 +155,7 @@ func (p *NodeModePublisher) Publish(ctx context.Context) {
 	} {
 		// A failed read must not delete a cap; a missing row (never saved) is
 		// "no cap" either way and the key stays as it is.
-		raw, err := p.store.GetSetting(setting)
+		raw, err := getSetting(setting)
 		if err != nil {
 			continue
 		}

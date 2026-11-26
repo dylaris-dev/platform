@@ -296,3 +296,70 @@ func TestListModulesCache(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// A snapshot is dated from when its load STARTED. Postgres reads the table as
+// of the statement start, so dating it from the load's end let a slow load
+// (up to settingsLoadTimeout) serve a value older than readCacheTTL - longer
+// than the Beam off-switch stamp, which trusts ReadCacheTTL, covers.
+func TestSettingsSnapshotAgeCountsFromLoadStart(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	s := NewPostgresStore(db)
+	mock.ExpectQuery(regexp.QuoteMeta(loadSettingsQ)).WillDelayFor(400 * time.Millisecond).WillReturnRows(settingsRows("a", "old"))
+	mock.ExpectQuery(regexp.QuoteMeta(loadSettingsQ)).WillReturnRows(settingsRows("a", "new"))
+	start := time.Now()
+	if got, _ := s.GetSetting("a"); got != "old" {
+		t.Fatalf("first read %q", got)
+	}
+	// 1.1s after the load started, 0.7s after it ended.
+	time.Sleep(time.Until(start.Add(readCacheTTL + 100*time.Millisecond)))
+	if got, _ := s.GetSetting("a"); got != "new" {
+		t.Fatalf("got %q: a snapshot older than readCacheTTL was served", got)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// FreshSettings asks the database even while a snapshot is warm, and keeps
+// GetSetting's answers for a missing row, a NULL and a failed load.
+func TestFreshSettingsSkipsTheSnapshot(t *testing.T) {
+	fakeClock(t)
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	s := NewPostgresStore(db)
+	mock.ExpectQuery(regexp.QuoteMeta(loadSettingsQ)).WillReturnRows(settingsRows("a", "old"))
+	if got, _ := s.GetSetting("a"); got != "old" {
+		t.Fatalf("warm-up read %q", got)
+	}
+	mock.ExpectQuery(regexp.QuoteMeta(loadSettingsQ)).WillReturnRows(settingsRows("a", "new").AddRow("n", nil))
+	get := FreshSettings(s)
+	for _, tc := range []struct {
+		key     string
+		want    string
+		wantErr error
+	}{
+		{"a", "new", nil},
+		{"missing", "", sql.ErrNoRows},
+		{"n", "", ErrSettingNull},
+	} {
+		got, err := get(tc.key)
+		if got != tc.want || !errors.Is(err, tc.wantErr) {
+			t.Fatalf("fresh(%q) = %q, %v; want %q, %v", tc.key, got, err, tc.want, tc.wantErr)
+		}
+	}
+	boom := errors.New("db down")
+	mock.ExpectQuery(regexp.QuoteMeta(loadSettingsQ)).WillReturnError(boom)
+	if _, err := FreshSettings(s)("a"); !errors.Is(err, boom) {
+		t.Fatalf("failed load answered %v, want the load error", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
