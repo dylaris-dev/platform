@@ -1646,9 +1646,10 @@ func commandRefusal(cmd NodeCommand) string {
 // as long as they run. A storage move that started meanwhile copied the tree
 // without what they wrote after and deleted the source under them, and a
 // restore or install reported done on a path that no longer existed.
-// backup_run takes its hold inside RunBackup, which releases it once spooled.
+// backup_run takes its hold inside RunBackup, which releases it once spooled,
+// and setup once its slot is there (awaitServerSlot).
 var storageWriterActions = map[string]bool{
-	"create": true, "setup": true, "reconfigure": true, "switch_server": true,
+	"create": true, "reconfigure": true, "switch_server": true,
 	"update_resources": true, "delete": true, "delete_sub_server": true, "reinstall": true,
 	"backup_restore": true, "install_mod": true, "remove_mod": true,
 	"update_server_version": true, "copy_sub_server": true,
@@ -1769,6 +1770,11 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 	case "create":
 		// Step 1: create a stopped container slot with no software installed.
 		log.Printf("Creating server slot for %s (pending setup)...", cmd.Config.UUID)
+		// What a waiting setup follows (awaitServerSlot); a duplicate beside
+		// this one leaves the mark to it.
+		if commandsInFlight.enter(createKey(cmd.Config.UUID)) {
+			defer commandsInFlight.leave(createKey(cmd.Config.UUID))
+		}
 		defer lockServerInstall(cmd.Config.UUID)()
 		// A create and a delete queued together (node offline, restarting) run
 		// in parallel, and the delete usually finishes first.
@@ -1910,6 +1916,11 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 			reportSetupRefused(errors.New("the server has not been created on this node yet; try again in a moment"))
 			return
 		}
+		// Not with the other writers before the switch: one held through the
+		// wait above made the create's move of a slot a write made see a
+		// second writer, and the move was refused (R56-01). Still before the
+		// path below is resolved, so a move that fenced meanwhile is waited for.
+		defer storage.holdWriter(cmd.Config.UUID)()
 		defer lockServerInstall(cmd.Config.UUID)()
 		// A restart in its graceful stop recreated and started the old
 		// container beside the install; see waitServerPower for the order.

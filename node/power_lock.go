@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"sync"
 	"time"
@@ -281,6 +282,9 @@ func waitInstallOfServer(ctx context.Context, uuid string) (unlock func(), reaso
 	return lockServerInstall(uuid), ""
 }
 
+// createKey marks a create of uuid running (commandsInFlight).
+func createKey(uuid string) string { return "create:" + uuid }
+
 // serverSlotWait is how long a setup waits for the create of its server to
 // have made the server's directory; a variable so a test need not sit it out.
 var serverSlotWait = 2 * time.Minute
@@ -292,6 +296,11 @@ var serverSlotWait = 2 * time.Minute
 // skipped placement and the quota. Not the bare directory: a template push or
 // an upload ahead of the create makes that too (R55-01). What it waits for is
 // slotSetUp, which the create writes under its lock.
+// While a create of uuid runs the wait has no end: it saves its config only
+// after the image pull, which has no deadline (R56-04). Once the wait is up
+// with no create running, a directory with none of those files is still let
+// through: an older node's create that could not make the container saved
+// none, and Core sends no second create (R56-02).
 // An unresolved path and a deleted server are left to the setup's own guards.
 // An unread storage key is neither: the create gives up its lock on one, and
 // a setup let through then beat it again (R54-01), so it keeps waiting.
@@ -308,7 +317,14 @@ func awaitServerSlot(storage *StorageManager, uuid string) bool {
 		if base != "" && slotSetUp(filepath.Join(base, uuid)) {
 			return true
 		}
-		if time.Now().After(deadline) {
+		if commandsInFlight.has(createKey(uuid)) {
+			deadline = time.Now().Add(serverSlotWait)
+		} else if time.Now().After(deadline) {
+			if base != "" && keyErr == nil {
+				if st, err := os.Stat(filepath.Join(base, uuid)); err == nil && st.IsDir() {
+					return true
+				}
+			}
 			return false
 		}
 		time.Sleep(200 * time.Millisecond)

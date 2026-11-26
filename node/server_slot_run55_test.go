@@ -15,7 +15,8 @@ import (
 
 // R55-01: a template push or an upload ahead of the create made the server's
 // directory, so setup passed awaitServerSlot at once and could beat the create
-// to the install lock. Only a file the node itself writes there counts now.
+// to the install lock. Only a file the node itself writes there counts now;
+// a bare directory only once the wait is up (R56-02).
 func TestAwaitServerSlotWaitsForTheCreateNotTheDirectory(t *testing.T) {
 	const uuid = "a55a55a5-1111-2222-3333-444444444444"
 	prevWait := serverSlotWait
@@ -24,7 +25,7 @@ func TestAwaitServerSlotWaitsForTheCreateNotTheDirectory(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		files []string
-		want  bool
+		want  bool // let through at once, not after the wait
 	}{
 		{"only an uploaded zip", []string{".upload.zip"}, false},
 		{"empty directory", nil, false},
@@ -45,8 +46,12 @@ func TestAwaitServerSlotWaitsForTheCreateNotTheDirectory(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if got := awaitServerSlot(storage, uuid); got != tc.want {
-				t.Errorf("awaitServerSlot = %v, want %v", got, tc.want)
+			start := time.Now()
+			if got := awaitServerSlot(storage, uuid); !got {
+				t.Errorf("awaitServerSlot = false, want true")
+			}
+			if waited := time.Since(start) >= serverSlotWait; waited != !tc.want {
+				t.Errorf("waited out serverSlotWait = %v, want %v", waited, !tc.want)
 			}
 		})
 	}

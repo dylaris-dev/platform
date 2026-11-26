@@ -100,7 +100,8 @@ func TestQueuedWritersHoldOffAStorageMove(t *testing.T) {
 		{"remove_mod", true},
 		{"update_server_version", true},
 		{"copy_sub_server", true},
-		{"setup", true},
+		// Setup holds it once its slot is there (TestAWaitingSetupDoesNotBlockTheCreatesSlotMove).
+		{"setup", false},
 		{"reinstall", true},
 		{"start", false},
 		{"migrate_storage", false},
