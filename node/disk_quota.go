@@ -130,19 +130,41 @@ func (qp *QuotaProvider) probeProjectSupport() error {
 	return nil
 }
 
-// setProjectLimit sets (or with 0 removes) the hard block limit of a project.
-func (qp *QuotaProvider) setProjectLimit(pid uint32, limitMB int64) error {
-	var cmd *exec.Cmd
+// projectInodeLimit is the inode hard limit that goes with a disk limit (owner
+// decision 2026-11-26): 64 per MB, at least 1M so a real modpack fits. Empty
+// files cost no blocks, so without it one tenant could use up the inodes of
+// the filesystem every server on the path shares. No disk limit, no inode limit.
+func projectInodeLimit(limitMB int64) int64 {
+	if limitMB <= 0 {
+		return 0
+	}
+	return max(1000000, 64*limitMB)
+}
+
+// projectLimitCommand is the command that sets a project's block and inode hard
+// limits for limitMB; with 0 it clears both.
+func (qp *QuotaProvider) projectLimitCommand(pid uint32, limitMB int64) ([]string, error) {
+	limitMB = max(limitMB, 0)
+	inodes := projectInodeLimit(limitMB)
 	switch qp.fsType {
 	case "xfs":
-		cmd = exec.Command("xfs_quota", "-x", "-c",
-			fmt.Sprintf("limit -p bhard=%dk %d", limitMB*1024, pid), qp.mountPoint)
+		return []string{"xfs_quota", "-x", "-c",
+			fmt.Sprintf("limit -p bhard=%dk ihard=%d %d", limitMB*1024, inodes, pid), qp.mountPoint}, nil
 	case "ext4":
-		cmd = exec.Command("setquota", "-P",
-			fmt.Sprintf("%d", pid), "0", fmt.Sprintf("%d", limitMB*1024), "0", "0", qp.mountPoint)
-	default:
-		return fmt.Errorf("no project quotas on %q", qp.fsType)
+		return []string{"setquota", "-P",
+			fmt.Sprintf("%d", pid), "0", fmt.Sprintf("%d", limitMB*1024), "0", fmt.Sprintf("%d", inodes), qp.mountPoint}, nil
 	}
+	return nil, fmt.Errorf("no project quotas on %q", qp.fsType)
+}
+
+// setProjectLimit sets (or with 0 removes) the hard block and inode limits of
+// a project.
+func (qp *QuotaProvider) setProjectLimit(pid uint32, limitMB int64) error {
+	args, err := qp.projectLimitCommand(pid, limitMB)
+	if err != nil {
+		return err
+	}
+	cmd := exec.Command(args[0], args[1:]...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("%s: %w", strings.TrimSpace(string(out)), err)
 	}
@@ -377,44 +399,14 @@ func (qp *QuotaProvider) SetLimit(uuid string, limitMB int64) error {
 
 	pid := projectID(uuid)
 
+	if err := qp.setProjectLimit(pid, limitMB); err != nil {
+		return fmt.Errorf("quota: %s set limit %d MB: %w", qp.fsType, limitMB, err)
+	}
 	if limitMB <= 0 {
-		// Remove limit (set to 0 = unlimited)
-		switch qp.fsType {
-		case "xfs":
-			cmd := exec.Command("xfs_quota", "-x", "-c",
-				fmt.Sprintf("limit -p bhard=0 %d", pid), qp.mountPoint)
-			if out, err := cmd.CombinedOutput(); err != nil {
-				return fmt.Errorf("quota: xfs remove limit: %s: %w", string(out), err)
-			}
-		case "ext4":
-			cmd := exec.Command("setquota", "-P",
-				fmt.Sprintf("%d", pid), "0", "0", "0", "0", qp.mountPoint)
-			if out, err := cmd.CombinedOutput(); err != nil {
-				return fmt.Errorf("quota: ext4 remove limit: %s: %w", string(out), err)
-			}
-		}
 		log.Printf("quota: removed disk limit for %s (project %d)", uuid, pid)
 		return nil
 	}
-
-	limitKB := limitMB * 1024
-
-	switch qp.fsType {
-	case "xfs":
-		cmd := exec.Command("xfs_quota", "-x", "-c",
-			fmt.Sprintf("limit -p bhard=%dk %d", limitKB, pid), qp.mountPoint)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("quota: xfs set limit: %s: %w", string(out), err)
-		}
-	case "ext4":
-		cmd := exec.Command("setquota", "-P",
-			fmt.Sprintf("%d", pid), "0", fmt.Sprintf("%d", limitKB), "0", "0", qp.mountPoint)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("quota: ext4 set limit: %s: %w", string(out), err)
-		}
-	}
-
-	log.Printf("quota: set disk limit %d MB for %s (project %d)", limitMB, uuid, pid)
+	log.Printf("quota: set disk limit %d MB, %d inodes for %s (project %d)", limitMB, projectInodeLimit(limitMB), uuid, pid)
 	return nil
 }
 

@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -131,5 +132,53 @@ func TestServerDiskBytesSubtractsOnlyArchives(t *testing.T) {
 	}
 	if got := serverDiskBytes(dir, true); got != total {
 		t.Errorf("share: %d, want %d", got, total)
+	}
+}
+
+func TestProjectInodeLimit(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		limitMB int64
+		want    int64
+	}{
+		{"no disk limit, no inode limit", 0, 0},
+		{"negative is no limit", -5, 0},
+		{"small limit gets the floor", 1, 1000000},
+		{"at the floor", 15625, 1000000},
+		{"20 GB", 20480, 1310720},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := projectInodeLimit(tc.limitMB); got != tc.want {
+				t.Errorf("projectInodeLimit(%d) = %d, want %d", tc.limitMB, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestProjectLimitCommand(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		fsType  string
+		limitMB int64
+		want    []string
+	}{
+		{"xfs set", "xfs", 20480, []string{"xfs_quota", "-x", "-c", "limit -p bhard=20971520k ihard=1310720 42", "/mnt"}},
+		{"xfs lift clears both", "xfs", 0, []string{"xfs_quota", "-x", "-c", "limit -p bhard=0k ihard=0 42", "/mnt"}},
+		{"ext4 set", "ext4", 20480, []string{"setquota", "-P", "42", "0", "20971520", "0", "1310720", "/mnt"}},
+		{"ext4 lift clears both", "ext4", 0, []string{"setquota", "-P", "42", "0", "0", "0", "0", "/mnt"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			qp := &QuotaProvider{fsType: tc.fsType, mountPoint: "/mnt"}
+			got, err := qp.projectLimitCommand(42, tc.limitMB)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Join(got, "|") != strings.Join(tc.want, "|") {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+	if _, err := (&QuotaProvider{fsType: "btrfs"}).projectLimitCommand(42, 1); err == nil {
+		t.Error("btrfs: want an error")
 	}
 }
