@@ -16,6 +16,7 @@ import (
 	"dylaris-core/store"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/redis/go-redis/v9"
 )
 
 // The settings a node reads out of Redis are owned by the database and only
@@ -344,5 +345,66 @@ func TestNodeModePublisherReadsPastTheSettingsSnapshot(t *testing.T) {
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// savingStub plays an admin save that commits and mirrors while a Publish tick
+// is between reading the database and writing Redis: the tick read `key` from
+// before the commit, then the save landed in full.
+type savingStub struct {
+	*settingsStub
+	rdb      *redis.Client
+	key      string // the setting whose read the save overlaps
+	saved    string // the value the save commits
+	redisKey string
+	mirror   string // what the save mirrors to redisKey
+	done     bool
+}
+
+func (s *savingStub) GetSetting(key string) (string, error) {
+	v, err := s.settingsStub.GetSetting(key)
+	if key == s.key && !s.done {
+		s.done = true
+		ctx := context.Background()
+		s.settingsStub.values[key] = s.saved
+		MarkNodeModeSave(ctx, s.rdb)
+		s.rdb.Set(ctx, s.redisKey, s.mirror, 0)
+	}
+	return v, err
+}
+
+// R57-05: an unconditional Publish that read before a save committed undid the
+// save's mirror (a just-saved Beam cap DELeted, a mode flipped back) for up to
+// a tick. The save must win; the next tick republishes the database anyway.
+func TestNodeModePublisherDoesNotUndoAnOverlappingSave(t *testing.T) {
+	cases := []struct {
+		name, key, old, saved, redisKey, mirror string
+	}{
+		{"beam cap set from unlimited", "beam.max_upload_bytes", LimitUnlimited, "0", "beam:max_upload_bytes", "0"},
+		{"daily quota set", "beam.daily_upload_bytes", LimitUnlimited, "1000", "beam:daily_upload_bytes", "1000"},
+		{"routing mode switched", "routing_mode", "ip_port", "gateway", "dylaris:routing_mode", "gateway"},
+		{"bandwidth throttle changed", "beam.bw_limit", "100", "50", "beam:bw_limit", "50"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rdb := newQueueTestRedis(t)
+			ctx := context.Background()
+			st := &savingStub{
+				settingsStub: &settingsStub{values: map[string]string{tc.key: tc.old}},
+				rdb:          rdb, key: tc.key, saved: tc.saved, redisKey: tc.redisKey, mirror: tc.mirror,
+			}
+			NewNodeModePublisher(st, rdb).Publish(ctx)
+
+			got, err := rdb.Get(ctx, tc.redisKey).Result()
+			if err != nil || got != tc.mirror {
+				t.Fatalf("%s after an overlapping save: got %q (%v), want the saved %q", tc.redisKey, got, err, tc.mirror)
+			}
+
+			// The skipped tick is not lost: the next one publishes the database.
+			NewNodeModePublisher(st, rdb).Publish(ctx)
+			if got, _ := rdb.Get(ctx, tc.redisKey).Result(); got != tc.mirror {
+				t.Fatalf("%s after the next tick: got %q, want %q", tc.redisKey, got, tc.mirror)
+			}
+		})
 	}
 }

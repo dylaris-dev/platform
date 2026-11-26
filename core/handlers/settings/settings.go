@@ -654,6 +654,7 @@ func (h *SettingsHandler) SavePlacementSettings(w http.ResponseWriter, r *http.R
 	// database on its own ticker.
 	if h.d.Redis != nil {
 		ctx := r.Context()
+		services.MarkNodeModeSave(ctx, h.d.Redis)
 		h.d.Redis.Set(ctx, "dylaris:placement:port_mode", req.PortMode, 0)
 		h.d.Redis.Set(ctx, "dylaris:placement:container_port", fmt.Sprintf("%d", req.ContainerPort), 0)
 		h.d.Redis.Set(ctx, "dylaris:placement:pids_limit", fmt.Sprintf("%d", req.PidsLimit), 0)
@@ -1016,6 +1017,7 @@ func (h *SettingsHandler) SaveBeamSettings(w http.ResponseWriter, r *http.Reques
 	// older nodes that don't read the split keys yet.
 	if h.d.Redis != nil {
 		ctx := r.Context()
+		services.MarkNodeModeSave(ctx, h.d.Redis)
 		h.d.Redis.Set(ctx, "beam:bw_limit", fmt.Sprintf("%d", effectiveBw), 0)
 		h.d.Redis.Set(ctx, "beam:bw_up_internal", fmt.Sprintf("%d", req.BwUpInternal), 0)
 		h.d.Redis.Set(ctx, "beam:bw_down_internal", fmt.Sprintf("%d", req.BwDownInternal), 0)
@@ -1322,6 +1324,7 @@ func (h *SettingsHandler) SaveRoutingMode(w http.ResponseWriter, r *http.Request
 	// so publishing first is what makes the redeploy use the NEW mode. Queueing
 	// before the write would redeploy every server on the old mode.
 	ctx := r.Context()
+	services.MarkNodeModeSave(ctx, h.d.Redis)
 	h.d.Redis.Set(ctx, "dylaris:routing_mode", req.Mode, 0)
 	h.d.Redis.Set(ctx, "dylaris:file_access_mode", req.FileMode, 0)
 

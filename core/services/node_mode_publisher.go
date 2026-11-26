@@ -18,6 +18,21 @@ import (
 // cadence, so a node picks the values back up on its next read either way.
 const nodeModePublishInterval = 30 * time.Second
 
+// nodeModeSaveGenKey is bumped by every admin save that mirrors a key Publish
+// also writes. Publish WATCHes it across its database read and Redis write.
+const nodeModeSaveGenKey = "dylaris:node_mode:save_gen"
+
+// MarkNodeModeSave must run after a save's database commit and before its
+// Redis mirror. A Publish tick whose read overlapped the commit then fails its
+// EXEC instead of overwriting the mirror with the pre-save value; the next
+// tick republishes from the database. Best-effort: with Redis down the mirror
+// fails too, and the old (unordered) behaviour is all that is lost.
+func MarkNodeModeSave(ctx context.Context, rdb *redis.Client) {
+	if rdb != nil {
+		rdb.Incr(ctx, nodeModeSaveGenKey)
+	}
+}
+
 // NodeModePublisher keeps the settings nodes consume present in Redis.
 //
 // The database owns these values; Redis only distributes them. They used to be
@@ -77,7 +92,24 @@ func (p *NodeModePublisher) Start(ctx context.Context) {
 }
 
 // Publish writes the current database values to Redis.
+//
+// The read and the write run under WATCH on nodeModeSaveGenKey: an admin save
+// that committed after this read started would otherwise have its mirror
+// overwritten with the pre-save value (a just-saved Beam cap DELeted) until
+// the next tick. Losing the race just skips this tick; nothing waits on a lock.
 func (p *NodeModePublisher) Publish(ctx context.Context) {
+	err := p.redis.Watch(ctx, func(tx *redis.Tx) error {
+		return p.publish(ctx, tx)
+	}, nodeModeSaveGenKey)
+	switch {
+	case errors.Is(err, redis.TxFailedErr):
+		log.Printf("node mode publisher: a settings save landed during this tick; skipped, the next tick republishes")
+	case err != nil:
+		log.Printf("node mode publisher: %v", err)
+	}
+}
+
+func (p *NodeModePublisher) publish(ctx context.Context, tx *redis.Tx) error {
 	// Written every time, defaults included: a stale value left in Redis by a
 	// previous install must not survive. That is why the original startup write
 	// wrote the defaults too, and it still holds.
@@ -142,13 +174,8 @@ func (p *NodeModePublisher) Publish(ctx context.Context) {
 		}
 	}
 
-	for k, v := range values {
-		if err := p.redis.Set(ctx, k, v, 0).Err(); err != nil {
-			log.Printf("node mode publisher: set %s: %v", k, err)
-		}
-	}
-
 	// No cap deletes the key, as on save: a missing key is the node's "no cap".
+	caps := map[string]*int64{}
 	for setting, key := range map[string]string{
 		"beam.max_upload_bytes":   "beam:max_upload_bytes",
 		"beam.daily_upload_bytes": "beam:daily_upload_bytes",
@@ -159,14 +186,21 @@ func (p *NodeModePublisher) Publish(ctx context.Context) {
 		if err != nil {
 			continue
 		}
-		var rerr error
-		if v := ParseLimitSetting(raw, nil); v == nil {
-			rerr = p.redis.Del(ctx, key).Err()
-		} else {
-			rerr = p.redis.Set(ctx, key, strconv.FormatInt(*v, 10), 0).Err()
-		}
-		if rerr != nil {
-			log.Printf("node mode publisher: %s: %v", key, rerr)
-		}
+		caps[key] = ParseLimitSetting(raw, nil)
 	}
+
+	_, err := tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+		for k, v := range values {
+			pipe.Set(ctx, k, v, 0)
+		}
+		for key, v := range caps {
+			if v == nil {
+				pipe.Del(ctx, key)
+			} else {
+				pipe.Set(ctx, key, strconv.FormatInt(*v, 10), 0)
+			}
+		}
+		return nil
+	})
+	return err
 }
