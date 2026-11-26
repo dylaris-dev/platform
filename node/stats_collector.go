@@ -62,7 +62,29 @@ type DiskUsagePayload struct {
 	// know why usage can read above the limit and why the stop arrives a few
 	// minutes late, not to be told the number is meaningless.
 	Enforceable bool `json:"enforceable"`
+	// Inodes and InodeLimit are the project's file count and inode hard limit,
+	// from the quota report only (0 = none or not read). Not sent: they count
+	// into Warning, so a server out of inodes takes the same guard path as one
+	// out of bytes and Core reads the payload it always did.
+	Inodes     int64 `json:"-"`
+	InodeLimit int64 `json:"-"`
 }
+
+// usedFraction is how full a server is against its limits: the larger of
+// bytes and inodes, since either at its hard limit fails every new file.
+func (u *DiskUsagePayload) usedFraction() float64 {
+	var pct float64
+	if u.Limit > 0 && u.Total > 0 {
+		pct = float64(u.Total) / float64(u.Limit)
+	}
+	if u.InodeLimit > 0 {
+		pct = max(pct, float64(u.Inodes)/float64(u.InodeLimit))
+	}
+	return pct
+}
+
+// atLimit reports whether a server is at or over one of its limits.
+func (u *DiskUsagePayload) atLimit() bool { return u.usedFraction() >= 1.0 }
 
 const (
 	containerScanInterval = 10 * time.Second
@@ -975,8 +997,7 @@ func getDiskUsage(ctx context.Context, rdb *redis.Client, uuid string, quota *Qu
 	usage.Total = less(usage.Total)
 
 	// Set warning level based on limit utilization
-	if usage.Limit > 0 && usage.Total > 0 {
-		pct := float64(usage.Total) / float64(usage.Limit)
+	if pct := usage.usedFraction(); pct > 0 {
 		switch {
 		case pct >= 1.0:
 			usage.Warning = "full"
@@ -1344,7 +1365,7 @@ func releaseResolvedDiskHolds(ctx context.Context, rdb *redis.Client, quota *Quo
 		// marker alive, it is the only hold and would lapse after its TTL.
 		// disk_full is posted again because the trip's own write can be lost
 		// (Core down past the mailbox TTL), which left Core at "stopping".
-		if usage.Limit > 0 && usage.Total >= usage.Limit {
+		if usage.atLimit() {
 			rdb.Expire(ctx, diskFullKey(uuid), diskFullMarkerTTL)
 			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", uuid), "disk_full", 30*time.Second)
 			continue

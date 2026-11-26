@@ -441,6 +441,7 @@ func reconcileServer(ctx context.Context, rdb *redis.Client, q quotaAssigner, uu
 				if n == 0 {
 					repairDiskStateLostWithRedis(ctx, rdb, q, uuid)
 				}
+				backfillInodeLimit(q, uuid)
 				return false, nil
 			}
 			// Counted already: the grace stays once per server.
@@ -454,6 +455,24 @@ func reconcileServer(ctx context.Context, rdb *redis.Client, q quotaAssigner, uu
 		}
 	}
 	return true, countDiskUsage(ctx, rdb, q, uuid, knownDiskLimitMB(ctx, rdb, q, uuid), allowGrace)
+}
+
+// backfillInodeLimit re-issues the block limit a counted server's project holds,
+// which now carries its inode limit. A server limited before inode limits had
+// none, and a counted, unlifted server's boot reaches no other SetLimit. The
+// project's own limit, not the known one: during a grace it is the ceiling.
+func backfillInodeLimit(q quotaAssigner, uuid string) {
+	usage := q.GetDiskUsage(uuid)
+	if usage == nil || usage.Limit <= 0 {
+		return
+	}
+	limitMB := usage.Limit >> 20
+	if usage.InodeLimit == projectInodeLimit(limitMB) {
+		return
+	}
+	if err := q.SetLimit(uuid, limitMB); err != nil {
+		log.Printf("quota: add the inode limit of %s: %v", uuid, err)
+	}
 }
 
 // repairDiskStateLostWithRedis is the boot of a server counted on disk whose

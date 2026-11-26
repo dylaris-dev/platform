@@ -119,7 +119,7 @@ func (qp *QuotaProvider) probeProjectSupport() error {
 	// (ext4) exits non-zero on a refusal.
 	got := int64(1024 << 20)
 	if qp.fsType == "xfs" {
-		_, got = qp.xfsGetUsageAndLimit("", pid)
+		_, got, _, _ = qp.xfsGetUsageAndLimit("", pid)
 	}
 	if err := qp.setProjectLimit(pid, 0); err != nil {
 		return fmt.Errorf("removing the probe limit failed: %w", err)
@@ -365,14 +365,14 @@ func (qp *QuotaProvider) GetDiskUsage(uuid string) *DiskUsagePayload {
 	}
 
 	pid := projectID(uuid)
-	var totalBytes, limitBytes int64
+	var totalBytes, limitBytes, inodes, inodeLimit int64
 
 	// Parse usage and limit from a single subprocess call
 	switch qp.fsType {
 	case "xfs":
-		totalBytes, limitBytes = qp.xfsGetUsageAndLimit(uuid, pid)
+		totalBytes, limitBytes, inodes, inodeLimit = qp.xfsGetUsageAndLimit(uuid, pid)
 	case "ext4":
-		totalBytes, limitBytes = qp.ext4GetUsageAndLimit(pid)
+		totalBytes, limitBytes, inodes, inodeLimit = qp.ext4GetUsageAndLimit(pid)
 	}
 
 	if totalBytes < 0 {
@@ -384,6 +384,8 @@ func (qp *QuotaProvider) GetDiskUsage(uuid string) *DiskUsagePayload {
 	return &DiskUsagePayload{
 		Total:      totalBytes,
 		Limit:      limitBytes,
+		Inodes:     inodes,
+		InodeLimit: inodeLimit,
 		SubServers: subServerSizesFresh(filepath.Join(qp.basePath, uuid)),
 	}
 }
@@ -420,76 +422,110 @@ func (qp *QuotaProvider) RemoveQuota(uuid string) {
 	removeProjIDEntry(pid)
 }
 
-// xfsGetUsageAndLimit parses xfs_quota report for usage and hard limit in one call.
-// Returns (usedBytes, limitBytes). usedBytes=-1 on error, limitBytes=0 means unlimited.
-// XFS report shows project name (uuid) or #projid depending on /etc/projid presence.
-func (qp *QuotaProvider) xfsGetUsageAndLimit(uuid string, pid uint32) (int64, int64) {
+// xfsGetUsageAndLimit parses xfs_quota report for usage and hard limits in one call.
+// Returns (usedBytes, limitBytes, inodes, inodeLimit). usedBytes=-1 on error, a
+// limit of 0 means unlimited (for inodes also: not read).
+func (qp *QuotaProvider) xfsGetUsageAndLimit(uuid string, pid uint32) (int64, int64, int64, int64) {
 	out, err := exec.Command("xfs_quota", "-x", "-c",
-		"report -p -N -b", qp.mountPoint).Output()
+		"report -p -N -b -i", qp.mountPoint).Output()
 	if err != nil {
-		return -1, 0
+		return -1, 0, 0, 0
 	}
+	return parseXFSReport(string(out), uuid, pid)
+}
 
+// parseXFSReport reads one project's line from `report -p -N -b -i` output.
+// XFS report shows project name (uuid) or #projid depending on /etc/projid presence.
+func parseXFSReport(out, uuid string, pid uint32) (int64, int64, int64, int64) {
 	pidStr := fmt.Sprintf("#%d", pid)
-	scanner := bufio.NewScanner(strings.NewReader(string(out)))
+	scanner := bufio.NewScanner(strings.NewReader(out))
 	for scanner.Scan() {
 		fields := strings.Fields(scanner.Text())
-		// Fields: name/projid used soft hard ...
+		// Fields: name/projid used soft hard warns [grace] used soft hard warns [grace]
 		// XFS shows project name (uuid) if /etc/projid has entry, otherwise #projid
 		if len(fields) >= 4 && (fields[0] == uuid || fields[0] == pidStr) {
 			var used, limit int64
 			if kb, err := strconv.ParseInt(fields[1], 10, 64); err == nil {
 				used = kb * 1024
 			} else {
-				return -1, 0
+				return -1, 0, 0, 0
 			}
 			if kb, err := strconv.ParseInt(fields[3], 10, 64); err == nil && kb > 0 {
 				limit = kb * 1024
 			}
-			return used, limit
+			// The block grace is one bracketed column of one or more words
+			// ("[--------]", "[7 days]"), so the inode columns start after
+			// the first word that closes it.
+			var inodes, inodeLimit int64
+			for i := 5; i+3 < len(fields); i++ {
+				if strings.HasSuffix(fields[i], "]") {
+					inodes, inodeLimit = parseInodeColumns(fields[i+1], fields[i+3])
+					break
+				}
+			}
+			return used, limit, inodes, inodeLimit
 		}
 	}
-	return -1, 0
+	return -1, 0, 0, 0
 }
 
-// ext4GetUsageAndLimit parses repquota output for usage and hard limit in one call.
-// Returns (usedBytes, limitBytes). usedBytes=-1 on error, limitBytes=0 means unlimited.
-func (qp *QuotaProvider) ext4GetUsageAndLimit(pid uint32) (int64, int64) {
+// parseInodeColumns reads a report's inode used and hard columns. Unparsable
+// reads as 0, 0: no inode limit, so never full.
+func parseInodeColumns(usedField, hardField string) (int64, int64) {
+	used, err1 := strconv.ParseInt(usedField, 10, 64)
+	hard, err2 := strconv.ParseInt(hardField, 10, 64)
+	if err1 != nil || err2 != nil || used < 0 || hard < 0 {
+		return 0, 0
+	}
+	return used, hard
+}
+
+// ext4GetUsageAndLimit parses repquota output for usage and hard limits in one call.
+// Returns what xfsGetUsageAndLimit returns.
+func (qp *QuotaProvider) ext4GetUsageAndLimit(pid uint32) (int64, int64, int64, int64) {
 	// Not -s: that prints the block columns in human units ("1024M") that do
 	// not parse as numbers. Without it they are 1 KiB quota blocks. -n prints
 	// every project as "#<id>"; by default repquota prints the name from
 	// /etc/projid (the server UUID), so a bare id never matched any line.
 	out, err := exec.Command("repquota", "-P", "-n", qp.mountPoint).Output()
 	if err != nil {
-		return -1, 0
+		return -1, 0, 0, 0
 	}
 	return parseRepquota(string(out), pid)
 }
 
 // parseRepquota reads one project's line from `repquota -P -n` output.
-// Returns (usedBytes, limitBytes) like ext4GetUsageAndLimit.
-func parseRepquota(out string, pid uint32) (int64, int64) {
+// Returns (usedBytes, limitBytes, inodes, inodeLimit) like ext4GetUsageAndLimit.
+func parseRepquota(out string, pid uint32) (int64, int64, int64, int64) {
 	pidStr := fmt.Sprintf("#%d", pid)
 	scanner := bufio.NewScanner(strings.NewReader(out))
 	for scanner.Scan() {
 		fields := strings.Fields(scanner.Text())
-		// Fields: #projid flags used soft hard [grace] files ... The grace
-		// column is empty under the soft limit, so it comes after the
-		// columns read here and shifts none of them.
+		// Fields: #projid flags used soft hard [grace] files soft hard [grace].
+		// The block grace column is empty under the block soft limit, which
+		// the first flag ("+-") marks, so only then does it shift the files.
 		if len(fields) >= 5 && fields[0] == pidStr {
 			var used, limit int64
 			if kb, err := strconv.ParseInt(fields[2], 10, 64); err == nil {
 				used = kb * 1024
 			} else {
-				return -1, 0
+				return -1, 0, 0, 0
 			}
 			if kb, err := strconv.ParseInt(fields[4], 10, 64); err == nil && kb > 0 {
 				limit = kb * 1024
 			}
-			return used, limit
+			files := 5
+			if strings.HasPrefix(fields[1], "+") {
+				files = 6
+			}
+			var inodes, inodeLimit int64
+			if files+2 < len(fields) {
+				inodes, inodeLimit = parseInodeColumns(fields[files], fields[files+2])
+			}
+			return used, limit, inodes, inodeLimit
 		}
 	}
-	return -1, 0
+	return -1, 0, 0, 0
 }
 
 // detectFSType finds the filesystem type and mount point for a given path.

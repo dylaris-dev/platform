@@ -19,27 +19,87 @@ Project         used    soft    hard  grace    used  soft  hard  grace
 #12345    --  512000       0       0             40     0     0
 #77       +-  2048000 1024000 4096000  6days    300     0     0
 #78       +-  2048000 1024000 4096000   none    300     0     0
-#79       ++  2048000 1024000 4096000  23:59    300   100     0  6days
+#79       ++  2048000 1024000 4096000  23:59    300   100   900  6days
+#80       -+     1024       0   10240         1000000     0 1000000
 
 `
 	for _, tc := range []struct {
-		name        string
-		pid         uint32
-		used, limit int64
+		name               string
+		pid                uint32
+		used, limit        int64
+		inodes, inodeLimit int64
 	}{
-		{"hard limit set", 3826675829, 1048576 * 1024, 2097152 * 1024},
-		{"no limit", 12345, 512000 * 1024, 0},
-		{"over soft, grace running", 77, 2048000 * 1024, 4096000 * 1024},
-		{"over soft, grace expired", 78, 2048000 * 1024, 4096000 * 1024},
-		{"over soft, grace in hours, inode grace too", 79, 2048000 * 1024, 4096000 * 1024},
-		{"not in the report", 4242, -1, 0},
+		{"hard limit set", 3826675829, 1048576 * 1024, 2097152 * 1024, 1200, 0},
+		{"no limit", 12345, 512000 * 1024, 0, 40, 0},
+		{"over soft, grace running", 77, 2048000 * 1024, 4096000 * 1024, 300, 0},
+		{"over soft, grace expired", 78, 2048000 * 1024, 4096000 * 1024, 300, 0},
+		{"over soft, grace in hours, inode grace too", 79, 2048000 * 1024, 4096000 * 1024, 300, 900},
+		{"at the inode hard limit", 80, 1024 * 1024, 10240 * 1024, 1000000, 1000000},
+		{"not in the report", 4242, -1, 0, 0, 0},
 		// "#1234" must not match a prefix of another id.
-		{"id prefix of another", 1234, -1, 0},
+		{"id prefix of another", 1234, -1, 0, 0, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			used, limit := parseRepquota(report, tc.pid)
-			if used != tc.used || limit != tc.limit {
-				t.Fatalf("got (%d, %d), want (%d, %d)", used, limit, tc.used, tc.limit)
+			used, limit, inodes, inodeLimit := parseRepquota(report, tc.pid)
+			if used != tc.used || limit != tc.limit || inodes != tc.inodes || inodeLimit != tc.inodeLimit {
+				t.Fatalf("got (%d, %d, %d, %d), want (%d, %d, %d, %d)", used, limit, inodes, inodeLimit,
+					tc.used, tc.limit, tc.inodes, tc.inodeLimit)
+			}
+		})
+	}
+}
+
+// `xfs_quota -x -c "report -p -N -b -i"`: blocks then inodes on one line, each
+// with a warn count and a bracketed grace that can be one word or several.
+func TestParseXFSReport(t *testing.T) {
+	const report = `#0                  0          0          0     00 [--------]          3          0          0     00 [--------]
+3a2b-uuid        2048          0    1048576     00 [--------]     999999          0    1000000     00 [--------]
+#77           2048000    1024000    4096000     00  [7 days]        300        100        900     00 [6 days]
+#78              1024          0      10240     00 [--------]
+`
+	for _, tc := range []struct {
+		name               string
+		uuid               string
+		pid                uint32
+		used, limit        int64
+		inodes, inodeLimit int64
+	}{
+		{"by name", "3a2b-uuid", 5, 2048 * 1024, 1048576 * 1024, 999999, 1000000},
+		{"grace of two words", "", 77, 2048000 * 1024, 4096000 * 1024, 300, 900},
+		{"no inode columns", "", 78, 1024 * 1024, 10240 * 1024, 0, 0},
+		{"not in the report", "", 4242, -1, 0, 0, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			used, limit, inodes, inodeLimit := parseXFSReport(report, tc.uuid, tc.pid)
+			if used != tc.used || limit != tc.limit || inodes != tc.inodes || inodeLimit != tc.inodeLimit {
+				t.Fatalf("got (%d, %d, %d, %d), want (%d, %d, %d, %d)", used, limit, inodes, inodeLimit,
+					tc.used, tc.limit, tc.inodes, tc.inodeLimit)
+			}
+		})
+	}
+}
+
+// R58-05: a server at its inode hard limit fails every file create, so it is
+// full for the guard however many bytes are left.
+func TestDiskUsageFullOnInodes(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		u    DiskUsagePayload
+		pct  float64
+		full bool
+	}{
+		{"bytes full", DiskUsagePayload{Total: 10, Limit: 10}, 1, true},
+		{"inodes full, bytes free", DiskUsagePayload{Total: 1, Limit: 10, Inodes: 1000000, InodeLimit: 1000000}, 1, true},
+		{"inodes at 90%", DiskUsagePayload{Total: 1, Limit: 10, Inodes: 900, InodeLimit: 1000}, 0.9, false},
+		{"no inode limit", DiskUsagePayload{Total: 1, Limit: 10, Inodes: 5000}, 0.1, false},
+		{"no limits", DiskUsagePayload{Total: 1, Inodes: 5}, 0, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.u.usedFraction(); got != tc.pct {
+				t.Fatalf("usedFraction = %v, want %v", got, tc.pct)
+			}
+			if got := tc.u.atLimit(); got != tc.full {
+				t.Fatalf("atLimit = %v, want %v", got, tc.full)
 			}
 		})
 	}
@@ -55,7 +115,7 @@ Project         used    soft    hard  grace    used  soft  hard  grace
 ----------------------------------------------------------------------
 #12345    --   1024M      0K   2048M           1200     0     0
 `
-	if used, limit := parseRepquota(report, 12345); used != -1 || limit != 0 {
+	if used, limit, _, _ := parseRepquota(report, 12345); used != -1 || limit != 0 {
 		t.Fatalf("got (%d, %d), want (-1, 0)", used, limit)
 	}
 }

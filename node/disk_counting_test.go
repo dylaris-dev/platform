@@ -1022,6 +1022,8 @@ func TestABootAfterRedisLostItRepairsTheGraceWithoutAWalk(t *testing.T) {
 				t.Fatal(err)
 			}
 			recordDiskLimit(ctx, rdb, "srv", 100)
+			// Already carrying its inode limit, so only the repair sets one.
+			tc.before.InodeLimit = projectInodeLimit(tc.before.Limit >> 20)
 			q := &fakeQuota{before: tc.before, after: tc.before, limitMB: tc.before.Limit >> 20}
 			if done, err := reconcileServer(ctx, rdb, q, "srv"); done || err != nil || q.assigned {
 				t.Fatalf("done=%v err=%v assigned=%v, want no walk", done, err, q.assigned)
@@ -1129,5 +1131,37 @@ func TestRetagIfMovedSoonThrottles(t *testing.T) {
 	releaseRetagCheck("srv-throttle")
 	if !claimRetagCheck("srv-throttle") {
 		t.Fatal("check refused after the interval")
+	}
+}
+
+// R58-04: a server limited before inode limits existed is counted already, so
+// the boot never walks it, and nothing else re-applies its limit. The boot puts
+// the project's own block limit back once, now with its inode limit; a project
+// that has it already, an unlimited one and a lifted one are left alone.
+func TestTheBootGivesACountedServerItsInodeLimit(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		usage *DiskUsagePayload
+		want  []int64
+	}{
+		{"limited before inode limits", &DiskUsagePayload{Total: 10 * mib, Limit: 100 * mib}, []int64{100}},
+		{"a grace ceiling stays the ceiling", &DiskUsagePayload{Total: 150 * mib, Limit: 180 * mib}, []int64{180}},
+		{"inode limit already set", &DiskUsagePayload{Total: 10 * mib, Limit: 100 * mib, InodeLimit: projectInodeLimit(100)}, nil},
+		{"no limit", &DiskUsagePayload{Total: 10 * mib}, nil},
+		{"quota unreadable", nil, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rdb := newDiskGuardRedis(t)
+			ctx := context.Background()
+			recordDiskLimit(ctx, rdb, "srv", 100)
+			rdb.Set(ctx, diskCountedKey("srv"), 1, 0)
+			q := &fakeQuota{before: tc.usage}
+			if done, err := reconcileServer(ctx, rdb, q, "srv"); done || err != nil || q.assigned {
+				t.Fatalf("done=%v err=%v assigned=%v, want no walk", done, err, q.assigned)
+			}
+			if fmt.Sprint(q.setLimits) != fmt.Sprint(tc.want) {
+				t.Fatalf("limits set %v, want %v", q.setLimits, tc.want)
+			}
+		})
 	}
 }
