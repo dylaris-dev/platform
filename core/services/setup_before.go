@@ -35,6 +35,10 @@ type setupBefore struct {
 	// The run intent before the dispatch flipped it to online (IntendOnline).
 	// Empty in a record from before the field: the intent is then left alone.
 	DesiredState string `json:",omitempty"`
+	// The status before the dispatch wrote "installing". Only pending_setup is
+	// put back: the node cannot tell a first setup it refused from a set-up
+	// server and reports "stopped" for it. Empty in a record from before.
+	Status string `json:",omitempty"`
 	// The target's mod rows before the setup dropped them (RememberSetupMods).
 	// Absent unless the setup changes them.
 	ModsKnown bool               `json:",omitempty"`
@@ -57,7 +61,7 @@ func RememberSetupBefore(ctx context.Context, rdb *redis.Client, st store.Store,
 	before := setupBefore{
 		Target: target, Image: srv.GameImage, Command: srv.StartCommand, Active: srv.ActiveSubServer,
 		Flags: srv.ExtraJvmFlags, Installer: srv.InstallerType, MCVersion: srv.MinecraftVersion, Build: srv.BuildNumber,
-		DesiredState: srv.DesiredState, At: time.Now().UnixNano(),
+		DesiredState: srv.DesiredState, Status: srv.Status, At: time.Now().UnixNano(),
 	}
 	if st != nil {
 		if in, err := st.GetSubServerInstall(srv.ID, target); err == nil {
@@ -173,6 +177,23 @@ func RestoreSetupBefore(ctx context.Context, rdb *redis.Client, st store.Store, 
 			log.Printf("setup of %s failed, and its run intent could not be put back: %v", srv.UUID, err)
 		} else {
 			PublishDesiredState(ctx, rdb, srv.UUID, b.DesiredState)
+		}
+	}
+	// A failed first setup installed nothing; "stopped" would offer Start on a
+	// server with no software. Not over a running one or a move.
+	if b.Status == "pending_setup" && (srv.Status == "installing" || srv.Status == "stopped" || srv.Status == "offline") {
+		if err := st.UpdateServerStatus(srv.ID, "pending_setup"); err != nil {
+			log.Printf("setup of %s failed, and its pending setup could not be put back: %v", srv.UUID, err)
+		} else {
+			// The node writes its idle status before the failure report, so one
+			// the status watcher has not taken yet is already there and would
+			// land over this on its next tick.
+			// ponytail: a scan that took the key just before this and writes
+			// after it still wins; a compare-and-set status write closes it.
+			statusKey := "dylaris:server:" + srv.UUID + ":status"
+			if v, _ := rdb.Get(ctx, statusKey).Result(); v == "stopped" || v == "offline" {
+				rdb.Del(ctx, statusKey)
+			}
 		}
 	}
 	rdb.Del(ctx, setupBeforeKey(srv.UUID))

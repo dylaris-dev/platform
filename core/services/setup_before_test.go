@@ -17,6 +17,7 @@ type setupBeforeStore struct {
 	store.Store
 	written  []string
 	desired  []string
+	status   []string
 	install  *models.SubServerInstall // the sub-server's install record
 	mods     []models.ServerMod
 	replaced int
@@ -140,6 +141,54 @@ func TestAFailedSetupPutsAStoppedIntentBack(t *testing.T) {
 			got, _ := rdb.Get(ctx, DesiredStateKey("srv-3")).Result()
 			if got != c.wantRedis {
 				t.Fatalf("published desired_state = %q, want %q", got, c.wantRedis)
+			}
+		})
+	}
+}
+
+func (s *setupBeforeStore) UpdateServerStatus(id int, status string) error {
+	s.status = append(s.status, status)
+	return nil
+}
+
+// R58-01: a first setup the node refused (its storage path did not resolve)
+// came back "stopped", because the node cannot tell a server that was never
+// set up. Core recorded pending_setup at dispatch and puts it back, unless the
+// server is running or something else owns its status now.
+func TestAFailedFirstSetupPutsPendingSetupBack(t *testing.T) {
+	for _, c := range []struct {
+		name, before, now string
+		want              []string // status writes
+		// The node's status key: its idle report, written before the failure
+		// report, must not land over pending_setup on the next scan.
+		report, wantReport string
+	}{
+		{"first setup, still installing", "pending_setup", "installing", []string{"pending_setup"}, "stopped", ""},
+		{"first setup, node reported stopped", "pending_setup", "stopped", []string{"pending_setup"}, "", ""},
+		{"first setup, but running", "pending_setup", "online", nil, "online", "online"},
+		{"first setup, being moved", "pending_setup", "migrating", nil, "stopped", "stopped"},
+		{"set up before", "stopped", "installing", nil, "stopped", "stopped"},
+		{"recorded by an older core", "", "installing", nil, "stopped", "stopped"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			rdb := newQueueTestRedis(t)
+			ctx := context.Background()
+			st := &setupBeforeStore{}
+			srv := &models.Server{ID: 3, UUID: "srv-3", Status: c.before}
+			RememberSetupBefore(ctx, rdb, st, srv, "survival")
+			if c.report != "" {
+				rdb.Set(ctx, "dylaris:server:srv-3:status", c.report, 30*time.Second)
+			}
+			now := *srv
+			now.Status = c.now
+			if !RestoreSetupBefore(ctx, rdb, st, &now, "survival") {
+				t.Fatal("did not restore the setup it recorded")
+			}
+			if fmt.Sprint(st.status) != fmt.Sprint(c.want) {
+				t.Fatalf("status writes = %v, want %v", st.status, c.want)
+			}
+			if got, _ := rdb.Get(ctx, "dylaris:server:srv-3:status").Result(); got != c.wantReport {
+				t.Fatalf("node status key = %q, want %q", got, c.wantReport)
 			}
 		})
 	}
