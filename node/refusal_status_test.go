@@ -136,3 +136,41 @@ func TestAFailedSetupReportsPendingSetupUntilTheServerHasSoftware(t *testing.T) 
 		})
 	}
 }
+
+// R57-01: a setup refused because the server's storage path does not resolve
+// wrote "stopped" before anything was stopped, so a server still running from
+// its bind read as stopped. It now reports what Docker shows.
+func TestASetupRefusedForAnUnresolvedPathReportsTheContainerState(t *testing.T) {
+	const uuid = "a8a8a8a8-5757-0101-4444-555555555555"
+	statusKey := "dylaris:server:" + uuid + ":status"
+	for _, tc := range []struct {
+		name string
+		wd   string // dockerWithWorkingDir: "" no container, else running
+		want string
+	}{
+		{"container running", "/data", "online"},
+		{"no container", "", "stopped"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Chdir(t.TempDir())
+			rdb := newMiniRedis(t)
+			ctx := context.Background()
+			// The key names a path this node skipped as unmounted.
+			gone := filepath.Join(t.TempDir(), "gone")
+			rdb.Set(ctx, "node:"+nodeID+":server:"+uuid+":storage", gone, 0)
+			storage := &StorageManager{paths: []string{t.TempDir()}, rdb: rdb}
+			storage.skipPath(gone)
+			if storage.GetServerDir(uuid) != "" {
+				t.Fatal("the server's path resolved; the test needs it unresolved")
+			}
+
+			cmd := NodeCommand{Action: "setup"}
+			cmd.Config.UUID = uuid
+			cmd.Installer.Type = "paper"
+			processCommand(ctx, cmd, "", rdb, dockerWithWorkingDir(t, tc.wd), "node-a", nil, storage)
+			if got := rdb.Get(ctx, statusKey).Val(); got != tc.want {
+				t.Errorf("status after the refused setup = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

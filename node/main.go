@@ -1952,7 +1952,13 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		serverPath := storage.GetServerDir(cmd.Config.UUID)
 		if serverPath == "" {
 			log.Printf("Setup of %s/%s refused: no storage path resolved, it is not mounted on this node", cmd.Config.UUID, subName)
-			releaseSetupBusy("stopped")
+			// Nothing was stopped yet: a container running from its bind is
+			// still online.
+			idle := setupIdleStatus("")
+			if dm != nil {
+				idle = statusAfterFailedStop(dm, cmd.Config.UUID)
+			}
+			releaseSetupBusy(idle)
 			reportSetupUndone(ctx, rdb, cmd.Config.UUID, subName, errors.New("the server's storage path is not mounted on this node"))
 			return
 		}
