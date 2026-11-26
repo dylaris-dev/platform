@@ -617,11 +617,14 @@ func forgetDiskLimit(ctx context.Context, rdb *redis.Client, uuid string) {
 		if err := os.Remove(diskCountedPath(uuid)); err != nil && !os.IsNotExist(err) {
 			log.Printf("quota: counted marker of %s not removed: %v", uuid, err)
 		}
+		if err := os.Remove(inodeAnchorPath(uuid)); err != nil && !os.IsNotExist(err) {
+			log.Printf("quota: inode anchor of %s not removed: %v", uuid, err)
+		}
 	}
 	if rdb == nil {
 		return
 	}
-	rdb.Del(ctx, diskLimitKey(uuid), diskGraceKey(uuid), diskCountedKey(uuid), diskLiftedKey(uuid), inodeAnchorKey(uuid))
+	rdb.Del(ctx, diskLimitKey(uuid), diskGraceKey(uuid), diskCountedKey(uuid), diskLiftedKey(uuid))
 }
 
 // loadDiskLimit returns the cached limit in MB, or 0 for "no limit known".

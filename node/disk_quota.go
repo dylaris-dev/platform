@@ -22,7 +22,7 @@ type QuotaProvider struct {
 	basePath   string // absolute path to dylaris_data/servers/
 	mountPoint string
 	available  bool
-	rdb        *redis.Client // keeps inode anchors; nil keeps none
+	rdb        *redis.Client // the cached disk limit, and an older node's inode anchors
 }
 
 // NewQuotaProvider detects the filesystem type and quota support for basePath.
@@ -156,49 +156,133 @@ func projectInodeLimitFor(limitMB, inodes int64) int64 {
 	return l
 }
 
-// inodeAnchorKeyFmt holds the file cap a server was granted over its formula,
-// 0 for none (R60-04/05). Node-scoped next to the disk limit, so it survives a
-// restart and a storage move, and not in .node_config.json: the server's
-// directory is the tenant's /data.
+// inodeAnchorKeyFmt is where an earlier node kept the anchor. Valkey runs
+// without persistence, so a restart of it lost every anchor and the next lift's
+// put-back granted again from the files held then (R61-04). Read once to move
+// it into inodeAnchorPath, then deleted.
 const inodeAnchorKeyFmt = "node:%s:server:%s:inode_anchor"
 
 func inodeAnchorKey(uuid string) string { return fmt.Sprintf(inodeAnchorKeyFmt, nodeID, uuid) }
+
+// inodeAnchorPath holds the file cap a server was granted over its formula, 0
+// for none (R60-04/05), beside the counted marker: it survives a restart of the
+// node and of Valkey, and the tenant cannot write it (the server's directory is
+// its /data).
+func inodeAnchorPath(uuid string) string { return filepath.Join(nodeSecretDir, uuid+".inode_anchor") }
+
+// readInodeAnchor is the stored anchor; ok false when there is none, err when
+// there is one that cannot be read.
+func readInodeAnchor(uuid string) (anchor int64, ok bool, err error) {
+	b, err := os.ReadFile(inodeAnchorPath(uuid))
+	if os.IsNotExist(err) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	v, err := strconv.ParseInt(strings.TrimSpace(string(b)), 10, 64)
+	if err != nil || v < 0 {
+		return 0, false, fmt.Errorf("inode anchor %q unreadable", strings.TrimSpace(string(b)))
+	}
+	return v, true, nil
+}
+
+// saveInodeAnchor stores anchor unless one is stored already, and returns the
+// one that stands. Linked into place rather than renamed: two SetLimits of one
+// server granting at once keep the first, as SetNX did.
+func saveInodeAnchor(uuid string, anchor int64) (int64, error) {
+	if err := ensureSecretDir(nodeSecretDir); err != nil {
+		return anchor, err
+	}
+	tmp, err := os.CreateTemp(nodeSecretDir, uuid+".inode_anchor.tmp-*")
+	if err != nil {
+		return anchor, err
+	}
+	defer os.Remove(tmp.Name())
+	_, err = tmp.WriteString(strconv.FormatInt(anchor, 10))
+	if err == nil {
+		err = tmp.Sync()
+	}
+	if cerr := tmp.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return anchor, err
+	}
+	if err := os.Link(tmp.Name(), inodeAnchorPath(uuid)); err != nil {
+		if v, ok, rerr := readInodeAnchor(uuid); rerr == nil && ok {
+			return v, nil
+		}
+		return anchor, err
+	}
+	return anchor, nil
+}
 
 // inodeAnchor is the file cap a project keeps over its formula; files and
 // ihard are what it holds and its inode limit before this SetLimit. Granted
 // from the files only once, when there is no anchor yet and the project has
 // no inode limit (one limited before inode limits existed). A lift's put-back
 // or a resize reuses it: files made while the limit was off never raise it.
-// Without Redis's answer it is the limit the project has, never a new count.
+// A stored anchor that cannot be read is the limit the project has, never a
+// new count.
+//
+// The grant is judged against the server's own limit, not limitMB: during a
+// grace that is the ceiling, and a grant judged against it was gone once the
+// grace ended and the real limit came back (R61-03). A count of 0 is no
+// count (a tagged tree holds at least its directory), so nothing is stored
+// from it.
 func (qp *QuotaProvider) inodeAnchor(uuid string, limitMB, files, ihard int64) int64 {
-	if qp.rdb == nil {
-		return ihard
+	if nodeSecretDir == "" {
+		// Nowhere to keep it: granted on each SetLimit rather than the limit
+		// put below the files a running server holds.
+		return max(ihard, projectInodeLimitFor(limitMB, files))
 	}
-	ctx := context.Background()
-	v, err := qp.rdb.Get(ctx, inodeAnchorKey(uuid)).Int64()
-	if err == nil {
-		return v
-	}
-	if err != redis.Nil {
+	if v, ok, err := readInodeAnchor(uuid); err != nil {
 		log.Printf("quota: %s: inode anchor not read (%v) - keeping its inode limit", uuid, err)
 		return ihard
+	} else if ok {
+		return v
 	}
-	anchor := ihard
-	if ihard == 0 {
-		anchor = projectInodeLimitFor(limitMB, files)
-	}
-	if anchor <= projectInodeLimit(limitMB) {
-		anchor = 0
-	}
-	if ok, err := qp.rdb.SetNX(ctx, inodeAnchorKey(uuid), anchor, 0).Result(); err != nil {
-		log.Printf("quota: %s: inode anchor not saved: %v", uuid, err)
-	} else if !ok {
-		// A concurrent SetLimit granted it first; that one stands.
-		if v, err := qp.rdb.Get(ctx, inodeAnchorKey(uuid)).Int64(); err == nil {
+	ctx := context.Background()
+	if qp.rdb != nil {
+		v, err := qp.rdb.Get(ctx, inodeAnchorKey(uuid)).Int64()
+		if err == nil {
+			if v, err = saveInodeAnchor(uuid, v); err != nil {
+				log.Printf("quota: %s: inode anchor not moved out of Redis: %v", uuid, err)
+				return v
+			}
+			qp.rdb.Del(ctx, inodeAnchorKey(uuid))
 			return v
 		}
+		if err != redis.Nil {
+			log.Printf("quota: %s: inode anchor not read (%v) - keeping its inode limit", uuid, err)
+			return ihard
+		}
 	}
-	return anchor
+	realMB := limitMB
+	if known := loadDiskLimit(ctx, qp.rdb, uuid); known > 0 && known < limitMB {
+		realMB = known
+	}
+	formula := projectInodeLimit(realMB)
+	anchor := ihard
+	if ihard == 0 {
+		anchor = projectInodeLimitFor(realMB, files)
+	} else if files <= formula {
+		// An inode limit its files do not need is a formula, maybe a grace
+		// ceiling's or an old larger limit's, not a grant to keep.
+		anchor = 0
+	}
+	if anchor <= formula {
+		anchor = 0
+	}
+	if files <= 0 {
+		return anchor
+	}
+	v, err := saveInodeAnchor(uuid, anchor)
+	if err != nil {
+		log.Printf("quota: %s: inode anchor not saved: %v", uuid, err)
+	}
+	return v
 }
 
 // projectLimitCommand is the command that sets a project's block hard limit to
@@ -249,7 +333,10 @@ func (qp *QuotaProvider) report() (string, error) {
 		// not parse as numbers. Without it they are 1 KiB quota blocks. -n prints
 		// every project as "#<id>"; by default repquota prints the name from
 		// /etc/projid (the server UUID), so a bare id never matched any line.
-		args = []string{"repquota", "-P", "-n", qp.mountPoint}
+		// -p prints each grace as a number, 0 for none: without it a grace not
+		// running is blank, and whether the files column moved was a guess
+		// (R61-02).
+		args = []string{"repquota", "-P", "-n", "-p", qp.mountPoint}
 	default:
 		return "", fmt.Errorf("no project quotas on %q", qp.fsType)
 	}
@@ -289,7 +376,7 @@ func (qp *QuotaProvider) backfillInodeLimits(rdb *redis.Client, storage *Storage
 	ctx := context.Background()
 	for _, uuid := range qp.serverDirs(storage) {
 		used, limit, inodes, inodeLimit := qp.usageIn(report, uuid, projectID(uuid))
-		if used < 0 || limit <= 0 || inodeLimit >= projectInodeLimit(limit>>20) {
+		if used < 0 || limit <= 0 || inodes < 0 || inodeLimit >= projectInodeLimit(limit>>20) {
 			continue
 		}
 		// A recount or a restore holds the limit off; its put-back carries the
@@ -510,6 +597,10 @@ func (qp *QuotaProvider) GetDiskUsage(uuid string) *DiskUsagePayload {
 	if totalBytes < 0 {
 		return nil
 	}
+	if inodes < 0 {
+		// Unread: no inode limit, so never full on files.
+		inodes, inodeLimit = 0, 0
+	}
 
 	// Quotas give total only; the sub-server breakdown is a readdir, shared with
 	// the du path so both report the same shape (see scanSubServerSizes).
@@ -579,7 +670,7 @@ func (qp *QuotaProvider) RemoveQuota(uuid string) {
 
 // xfsGetUsageAndLimit parses xfs_quota report for usage and hard limits in one call.
 // Returns (usedBytes, limitBytes, inodes, inodeLimit). usedBytes=-1 on error, a
-// limit of 0 means unlimited (for inodes also: not read).
+// limit of 0 means unlimited; inodes -1 is not read.
 func (qp *QuotaProvider) xfsGetUsageAndLimit(uuid string, pid uint32) (int64, int64, int64, int64) {
 	out, err := qp.report()
 	if err != nil {
@@ -610,7 +701,7 @@ func parseXFSReport(out, uuid string, pid uint32) (int64, int64, int64, int64) {
 			// The block grace is one bracketed column of one or more words
 			// ("[--------]", "[7 days]"), so the inode columns start after
 			// the first word that closes it.
-			var inodes, inodeLimit int64
+			inodes, inodeLimit := int64(-1), int64(0)
 			for i := 5; i+3 < len(fields); i++ {
 				if strings.HasSuffix(fields[i], "]") {
 					inodes, inodeLimit = parseInodeColumns(fields[i+1], fields[i+3])
@@ -624,12 +715,12 @@ func parseXFSReport(out, uuid string, pid uint32) (int64, int64, int64, int64) {
 }
 
 // parseInodeColumns reads a report's inode used and hard columns. Unparsable
-// reads as 0, 0: no inode limit, so never full.
+// reads as -1, 0: not known, which neither grants an anchor nor sets a limit.
 func parseInodeColumns(usedField, hardField string) (int64, int64) {
 	used, err1 := strconv.ParseInt(usedField, 10, 64)
 	hard, err2 := strconv.ParseInt(hardField, 10, 64)
 	if err1 != nil || err2 != nil || used < 0 || hard < 0 {
-		return 0, 0
+		return -1, 0
 	}
 	return used, hard
 }
@@ -644,16 +735,18 @@ func (qp *QuotaProvider) ext4GetUsageAndLimit(pid uint32) (int64, int64, int64, 
 	return parseRepquota(out, pid)
 }
 
-// parseRepquota reads one project's line from `repquota -P -n` output.
+// parseRepquota reads one project's line from `repquota -P -n -p` output.
 // Returns (usedBytes, limitBytes, inodes, inodeLimit) like ext4GetUsageAndLimit.
 func parseRepquota(out string, pid uint32) (int64, int64, int64, int64) {
 	pidStr := fmt.Sprintf("#%d", pid)
 	scanner := bufio.NewScanner(strings.NewReader(out))
 	for scanner.Scan() {
 		fields := strings.Fields(scanner.Text())
-		// Fields: #projid flags used soft hard [grace] files soft hard [grace].
-		// The block grace column is empty under the block soft limit, which
-		// the first flag ("+-") marks, so only then does it shift the files.
+		// Fields: #projid flags used soft hard grace files soft hard grace.
+		// A '+' does not mean a grace column: repquota sets it over the hard
+		// limit too, and this node sets no soft limit (R61-02/05). With -p
+		// both graces are always there, so any other count is not this
+		// format, and the files are not known.
 		if len(fields) >= 5 && fields[0] == pidStr {
 			var used, limit int64
 			if kb, err := strconv.ParseInt(fields[2], 10, 64); err == nil {
@@ -664,13 +757,9 @@ func parseRepquota(out string, pid uint32) (int64, int64, int64, int64) {
 			if kb, err := strconv.ParseInt(fields[4], 10, 64); err == nil && kb > 0 {
 				limit = kb * 1024
 			}
-			files := 5
-			if strings.HasPrefix(fields[1], "+") {
-				files = 6
-			}
-			var inodes, inodeLimit int64
-			if files+2 < len(fields) {
-				inodes, inodeLimit = parseInodeColumns(fields[files], fields[files+2])
+			inodes, inodeLimit := int64(-1), int64(0)
+			if len(fields) == 10 {
+				inodes, inodeLimit = parseInodeColumns(fields[6], fields[8])
 			}
 			return used, limit, inodes, inodeLimit
 		}
