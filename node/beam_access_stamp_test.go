@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc/peer"
 
@@ -39,9 +40,16 @@ func TestAuthenticateRefusesATicketOlderThanTheAccessStamp(t *testing.T) {
 		return peer.NewContext(context.Background(), &peer.Peer{Addr: &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: port}})
 	}
 
-	sign := func(t *testing.T) string {
+	// Fixed instants instead of sleeps: the claim and the stamp are whole
+	// seconds of wall clock, and a sleep across a second boundary was flaky
+	// under load (a WSL clock step is enough to land both in one second).
+	now := time.Now()
+	sign := func(t *testing.T, iat time.Time) string {
 		t.Helper()
-		tok, err := beamauth.SignBeamTicket(secret, beamauth.BeamClaims{ServerUUID: srv, Username: "carol"})
+		tok, err := beamauth.SignBeamTicket(secret, beamauth.BeamClaims{
+			ServerUUID: srv, Username: "carol",
+			RegisteredClaims: jwt.RegisteredClaims{IssuedAt: jwt.NewNumericDate(iat)},
+		})
 		if err != nil {
 			t.Fatalf("SignBeamTicket: %v", err)
 		}
@@ -51,7 +59,7 @@ func TestAuthenticateRefusesATicketOlderThanTheAccessStamp(t *testing.T) {
 	bs := &beamServer{jwtSecret: secret, rdb: rdb}
 
 	t.Run("no stamp, the ticket works", func(t *testing.T) {
-		resp, err := bs.Authenticate(conn(), &pb.BeamAuthReq{Ticket: sign(t)})
+		resp, err := bs.Authenticate(conn(), &pb.BeamAuthReq{Ticket: sign(t, now)})
 		if err != nil {
 			t.Fatalf("Authenticate: %v", err)
 		}
@@ -60,11 +68,9 @@ func TestAuthenticateRefusesATicketOlderThanTheAccessStamp(t *testing.T) {
 		}
 	})
 
-	stale := sign(t)
-	// The stamp lands after the ticket was minted. A second of daylight, because
-	// the claim carries whole seconds.
-	time.Sleep(1100 * time.Millisecond)
-	if err := beamauth.BumpAccessEpoch(context.Background(), rdb, srv); err != nil {
+	stale := sign(t, now.Add(-10*time.Second))
+	// The stamp lands after the ticket was minted.
+	if err := beamauth.BumpAccessEpochsAt(context.Background(), rdb, []string{srv}, now.Add(-5*time.Second)); err != nil {
 		t.Fatalf("bump: %v", err)
 	}
 
@@ -83,8 +89,7 @@ func TestAuthenticateRefusesATicketOlderThanTheAccessStamp(t *testing.T) {
 	})
 
 	t.Run("a ticket minted after it works again", func(t *testing.T) {
-		time.Sleep(1100 * time.Millisecond)
-		resp, err := bs.Authenticate(conn(), &pb.BeamAuthReq{Ticket: sign(t)})
+		resp, err := bs.Authenticate(conn(), &pb.BeamAuthReq{Ticket: sign(t, now)})
 		if err != nil {
 			t.Fatalf("Authenticate: %v", err)
 		}
@@ -98,7 +103,7 @@ func TestAuthenticateRefusesATicketOlderThanTheAccessStamp(t *testing.T) {
 	// of the two failures.
 	t.Run("an unreachable Redis lets the ticket through", func(t *testing.T) {
 		mr.Close()
-		resp, err := bs.Authenticate(conn(), &pb.BeamAuthReq{Ticket: sign(t)})
+		resp, err := bs.Authenticate(conn(), &pb.BeamAuthReq{Ticket: sign(t, now)})
 		if err != nil {
 			t.Fatalf("Authenticate: %v", err)
 		}

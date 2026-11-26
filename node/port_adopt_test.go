@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"sync/atomic"
 	"testing"
 
 	"github.com/alicebob/miniredis/v2"
@@ -10,6 +12,24 @@ import (
 )
 
 func seqMode() string { return "sequential" }
+
+// refuseTx fails every pipeline without sending it while on.
+type refuseTx struct{ on atomic.Bool }
+
+func (*refuseTx) DialHook(next redis.DialHook) redis.DialHook          { return next }
+func (*refuseTx) ProcessHook(next redis.ProcessHook) redis.ProcessHook { return next }
+func (h *refuseTx) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return func(ctx context.Context, cmds []redis.Cmder) error {
+		if !h.on.Load() {
+			return next(ctx, cmds)
+		}
+		err := errors.New("LOADING Redis is loading the dataset in memory")
+		for _, c := range cmds {
+			c.SetErr(err)
+		}
+		return err
+	}
+}
 
 // The failure this pins, reproduced end to end on the testbed before the fix:
 // Valkey runs in-memory only, so a host reboot erases the port ledger while the
@@ -173,12 +193,16 @@ func TestSetPort_AFailedPersistKeepsTheOldPort(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	mr.SetError("LOADING Redis is loading the dataset in memory")
+	// Refused in the client, not with mr.SetError: go-redis returns on the
+	// MULTI error while miniredis may not have dispatched the queued SET and
+	// HSET yet, and clearing the error then let them apply (flaky under load).
+	fail := &refuseTx{}
+	rdb.AddHook(fail)
+	fail.on.Store(true)
 	if err := pm.SetPort("alpha", 25650); err == nil {
 		t.Fatal("SetPort succeeded against a failing Redis")
 	}
-	mr.SetError("")
-	rdb.Ping(context.Background()) // drops the connection the failed MULTI left unread data on
+	fail.on.Store(false)
 
 	if got := pm.GetPort("alpha"); got != 25600 {
 		t.Fatalf("alpha holds %d after the refused move, want its old 25600", got)
