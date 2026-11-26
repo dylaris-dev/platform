@@ -1,8 +1,6 @@
 package services
 
 import (
-	"database/sql"
-	"errors"
 	"time"
 
 	nodegrpc "dylaris-core/grpc"
@@ -86,8 +84,12 @@ func ShareBackupQuotaWithServer(st store.Store) bool {
 // the node takes an explicit false as a mode change and re-tags every backup
 // folder, so a DB blip must send nothing and let the node keep its mode.
 func BackupShareQuotaMode(st store.Store) *bool {
-	v, err := st.GetSetting("backup.share_quota_with_server")
-	if err != nil && !errors.Is(err, sql.ErrNoRows) && !errors.Is(err, store.ErrSettingNull) {
+	return backupShareQuotaModeFrom(st.GetSetting)
+}
+
+func backupShareQuotaModeFrom(get func(string) (string, error)) *bool {
+	v, err := get("backup.share_quota_with_server")
+	if settingReadFailed(err) {
 		return nil
 	}
 	on := v == "true"

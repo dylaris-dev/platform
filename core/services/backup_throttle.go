@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -88,12 +89,27 @@ func (t NodeBackupThrottle) Validate() error {
 
 // LoadNodeBackupThrottle reads a node's values; unset or unreadable is all nil.
 func LoadNodeBackupThrottle(st store.Store, nodeID int) NodeBackupThrottle {
-	var t NodeBackupThrottle
-	raw, _ := st.GetSetting(NodeBackupThrottleSetting(nodeID))
-	if raw != "" && json.Unmarshal([]byte(raw), &t) != nil {
-		return NodeBackupThrottle{}
-	}
+	t, _ := loadNodeBackupThrottle(st.GetSetting, nodeID)
 	return t
+}
+
+// settingReadFailed is a read error that is not "never saved".
+func settingReadFailed(err error) bool {
+	return err != nil && !errors.Is(err, sql.ErrNoRows) && !errors.Is(err, store.ErrSettingNull)
+}
+
+// loadNodeBackupThrottle errs only on a failed read: the publisher must not
+// send that as "nothing set", the node would switch pacing and spool off.
+func loadNodeBackupThrottle(get func(string) (string, error), nodeID int) (NodeBackupThrottle, error) {
+	var t NodeBackupThrottle
+	raw, err := get(NodeBackupThrottleSetting(nodeID))
+	if settingReadFailed(err) {
+		return NodeBackupThrottle{}, err
+	}
+	if raw != "" && json.Unmarshal([]byte(raw), &t) != nil {
+		return NodeBackupThrottle{}, nil
+	}
+	return t, nil
 }
 
 func SaveNodeBackupThrottle(st store.Store, nodeID int, t NodeBackupThrottle) error {
@@ -106,14 +122,27 @@ func SaveNodeBackupThrottle(st store.Store, nodeID int, t NodeBackupThrottle) er
 
 // BackupThrottleGlobals reads the platform-wide pair.
 func BackupThrottleGlobals(st store.Store) (headroomPct int64, saveOffMaxMin *int64) {
+	headroomPct, saveOffMaxMin, _ = backupThrottleGlobals(st.GetSetting)
+	return headroomPct, saveOffMaxMin
+}
+
+// backupThrottleGlobals answers the defaults alongside a failed read's error.
+func backupThrottleGlobals(get func(string) (string, error)) (headroomPct int64, saveOffMaxMin *int64, err error) {
 	headroomPct = DefaultBackupThrottleHeadroomPct
-	if v, _ := st.GetSetting(SettingBackupThrottleHeadroomPct); v != "" {
+	v, herr := get(SettingBackupThrottleHeadroomPct)
+	if v != "" {
 		if n, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64); err == nil && n >= 0 && n <= 90 {
 			headroomPct = n
 		}
 	}
-	raw, _ := st.GetSetting(SettingBackupThrottleSaveOffMax)
-	return headroomPct, ParseLimitSetting(raw, LimitPtr(DefaultBackupThrottleSaveOffMax))
+	raw, cerr := get(SettingBackupThrottleSaveOffMax)
+	saveOffMaxMin = ParseLimitSetting(raw, LimitPtr(DefaultBackupThrottleSaveOffMax))
+	for _, e := range []error{herr, cerr} {
+		if settingReadFailed(e) {
+			return headroomPct, saveOffMaxMin, e
+		}
+	}
+	return headroomPct, saveOffMaxMin, nil
 }
 
 // backupPolicy is the wire shape the node parses (node/backup_throttle.go).
@@ -149,29 +178,49 @@ func PublishBackupPolicy(ctx context.Context, st store.Store, rdb *redis.Client,
 	if rdb == nil || node.Token == "" {
 		return nil
 	}
-	headroom, ceiling := BackupThrottleGlobals(st)
-	return publishBackupPolicy(ctx, st, rdb, node, headroom, ceiling, BackupShareQuotaMode(st))
+	get := store.FreshSettings(st)
+	headroom, ceiling, err := backupThrottleGlobals(get)
+	if err != nil {
+		return fmt.Errorf("read backup throttle globals: %w", err)
+	}
+	return publishBackupPolicy(ctx, get, rdb, node, headroom, ceiling, backupShareQuotaModeFrom(get))
 }
 
-func publishBackupPolicy(ctx context.Context, st store.Store, rdb *redis.Client, node models.Node, headroom int64, ceiling *int64, share *bool) error {
-	return rdb.Set(ctx, NodeBackupPolicyKey(node.Token), BackupPolicyJSON(LoadNodeBackupThrottle(st, node.ID), headroom, ceiling, share), 0).Err()
+// A failed read publishes nothing: the node keeps the last policy until the
+// next good tick. Sending the zero values instead switched pacing and spooling
+// off for the length of a DB blip.
+func publishBackupPolicy(ctx context.Context, get func(string) (string, error), rdb *redis.Client, node models.Node, headroom int64, ceiling *int64, share *bool) error {
+	t, err := loadNodeBackupThrottle(get, node.ID)
+	if err != nil {
+		return fmt.Errorf("read backup throttle (keeping the published policy): %w", err)
+	}
+	return rdb.Set(ctx, NodeBackupPolicyKey(node.Token), BackupPolicyJSON(t, headroom, ceiling, share), 0).Err()
 }
 
 // PublishBackupPolicies writes every node's policy. Every node gets one, set
 // or not, so the global headroom and ceiling reach nodes paced by env alone.
+//
+// The settings come from one fresh read past the one-second snapshot: this
+// runs on every replica's tick and overwrites Redis, so a snapshot from just
+// before another replica's save would push the old values back to every node.
 func PublishBackupPolicies(ctx context.Context, st store.Store, rdb *redis.Client) {
 	nodes, err := st.ListNodes()
 	if err != nil {
 		log.Printf("backup policy publisher: list nodes: %v", err)
 		return
 	}
-	headroom, ceiling := BackupThrottleGlobals(st)
-	share := BackupShareQuotaMode(st)
+	get := store.FreshSettings(st)
+	headroom, ceiling, err := backupThrottleGlobals(get)
+	if err != nil {
+		log.Printf("backup policy publisher: read globals: %v (keeping the published policies)", err)
+		return
+	}
+	share := backupShareQuotaModeFrom(get)
 	for _, n := range nodes {
 		if n.Token == "" {
 			continue
 		}
-		if err := publishBackupPolicy(ctx, st, rdb, n, headroom, ceiling, share); err != nil {
+		if err := publishBackupPolicy(ctx, get, rdb, n, headroom, ceiling, share); err != nil {
 			log.Printf("backup policy publisher: node %d: %v", n.ID, err)
 		}
 	}

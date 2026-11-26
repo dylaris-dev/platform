@@ -3,10 +3,15 @@ package services
 import (
 	"context"
 	"errors"
+	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"dylaris-core/models"
+	"dylaris-core/store"
+
+	"github.com/DATA-DOG/go-sqlmock"
 )
 
 func p64(v int64) *int64 { return &v }
@@ -110,5 +115,77 @@ func TestPublishBackupPoliciesCarriesTheShareMode(t *testing.T) {
 		} else if !strings.Contains(got, tt.want) || strings.Contains(got, "shareQuotaUnreadable") {
 			t.Errorf("%s: got %s, want %s", tt.name, got, tt.want)
 		}
+	}
+}
+
+// R57-03: a failed settings read must not go out as "nothing set". The
+// node stores whatever parses, so an empty throttle switched pacing and the
+// spool off. The last published policy stays instead.
+func TestPublishBackupPoliciesKeepsTheLastPolicyOnAFailedRead(t *testing.T) {
+	const old = `{"uplinkMbit":1000,"spoolEnabled":true,"spoolMaxGB":50}`
+	boom := errors.New("timeout")
+	tests := []struct {
+		name  string
+		errs  map[string]error
+		keepA bool // node 1's policy is left alone
+		keepB bool // node 2's policy is left alone
+	}{
+		{"node throttle unreadable", map[string]error{NodeBackupThrottleSetting(1): boom}, true, false},
+		{"headroom unreadable", map[string]error{SettingBackupThrottleHeadroomPct: boom}, true, true},
+		{"ceiling unreadable", map[string]error{SettingBackupThrottleSaveOffMax: boom}, true, true},
+		{"all readable", nil, false, false},
+	}
+	for _, tt := range tests {
+		rdb := newQueueTestRedis(t)
+		ctx := context.Background()
+		st := &settingsStub{errs: tt.errs, nodes: []models.Node{{ID: 1, Token: "tok-a"}, {ID: 2, Token: "tok-b"}}}
+		rdb.Set(ctx, NodeBackupPolicyKey("tok-a"), old, 0)
+		rdb.Set(ctx, NodeBackupPolicyKey("tok-b"), old, 0)
+		PublishBackupPolicies(ctx, st, rdb)
+		for tok, keep := range map[string]bool{"tok-a": tt.keepA, "tok-b": tt.keepB} {
+			got, _ := rdb.Get(ctx, NodeBackupPolicyKey(tok)).Result()
+			if (got == old) != keep {
+				t.Errorf("%s: %s = %s, want kept=%v", tt.name, tok, got, keep)
+			}
+		}
+		if err := PublishBackupPolicy(ctx, st, rdb, models.Node{ID: 1, Token: "tok-a"}); (err != nil) != tt.keepA {
+			t.Errorf("%s: PublishBackupPolicy err = %v, want an error=%v", tt.name, err, tt.keepA)
+		}
+	}
+}
+
+// R57-02: the tick runs on every replica and overwrites Redis, so it must
+// not republish a one-second-old snapshot over a save another replica just
+// published (the share mode re-tags every backup folder on the node).
+func TestPublishBackupPoliciesReadsPastTheSettingsSnapshot(t *testing.T) {
+	rdb := newQueueTestRedis(t)
+	ctx := context.Background()
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	st := store.NewPostgresStore(db)
+	q := regexp.QuoteMeta(`SELECT key, value FROM settings`)
+	mock.ExpectQuery(q).WillReturnRows(sqlmock.NewRows([]string{"key", "value"}).
+		AddRow("backup.share_quota_with_server", "false").AddRow(SettingBackupThrottleHeadroomPct, "30"))
+	if _, err := st.GetSetting("backup.share_quota_with_server"); err != nil {
+		t.Fatal(err)
+	}
+	mock.ExpectQuery(regexp.QuoteMeta(`FROM nodes`)).WillReturnRows(sqlmock.NewRows(make([]string, 26)).
+		AddRow(1, "n1", "addr", "tok-a", "online", false, "", false, 0, "", "", time.Now(), "", "[]", nil,
+			1.0, 1.0, 0, 0, "", false, nil, "", "", nil, nil))
+	// Another replica saved these and published them.
+	mock.ExpectQuery(q).WillReturnRows(sqlmock.NewRows([]string{"key", "value"}).
+		AddRow("backup.share_quota_with_server", "true").AddRow(SettingBackupThrottleHeadroomPct, "60"))
+
+	PublishBackupPolicies(ctx, st, rdb)
+
+	got, err := rdb.Get(ctx, NodeBackupPolicyKey("tok-a")).Result()
+	if err != nil || !strings.Contains(got, `"shareQuotaWithServer":true`) || !strings.Contains(got, `"headroomPct":60`) {
+		t.Errorf("policy = %s (%v): the stale snapshot was republished", got, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }
