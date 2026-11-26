@@ -691,6 +691,12 @@ func retagIfMovedSoon(rdb *redis.Client, q *QuotaSet, uuid string) {
 		defer releaseRetagCheck(uuid)
 		retagWalks <- struct{}{}
 		defer func() { <-retagWalks }()
+		// A move fenced while this waited for the slot would hold the node's
+		// only slot for the whole copy (the path lookup waits on the fence);
+		// the next claim checks again after the move.
+		if globalStorageMgr.isMoving(uuid) {
+			return
+		}
 		retagIfMoved(context.Background(), rdb, q, uuid)
 	}()
 }
