@@ -34,8 +34,11 @@ func NewQuotaSet(storage *StorageManager) *QuotaSet {
 		qp.rdb = storage.rdb
 		qp.reconcileExisting(storage.rdb, storage)
 		// Off the boot: the heartbeat and the command listener start after
-		// this returns (R59-05).
-		go qp.backfillInodeLimits(storage.rdb, storage)
+		// this returns (R59-05). Only for a quota path: available is read here,
+		// not in the goroutine, since nothing sets it after NewQuotaProvider.
+		if qp.available {
+			go qp.backfillInodeLimits(storage.rdb, storage)
+		}
 		qs.providers[p] = qp
 	}
 	return qs
