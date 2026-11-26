@@ -6,6 +6,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
 )
 
 // newQuotaSetOverPaths builds a QuotaSet over n temp dirs. The providers there
@@ -129,5 +132,38 @@ func TestDiskPollIntervalIsPerServer(t *testing.T) {
 	}
 	if got := diskPollInterval(nil, quotaSrv); got != diskFallbackInterval {
 		t.Errorf("nil quota set: interval %v, want %v", got, diskFallbackInterval)
+	}
+}
+
+// A storage key that cannot be read is not an unknown server: with a path
+// skipped at boot the resolver gives up, and a nil from SetLimit had a
+// recount's put-back read as done and drop the lifted marker, leaving the
+// hard limit off with nothing to put it back (R56-07).
+func TestQuotaSetSetLimitUnresolvedKey(t *testing.T) {
+	const uuid = "11111111-2222-3333-4444-555555555555"
+	tests := []struct {
+		name    string
+		limitMB int64
+		wantErr bool
+	}{
+		{"limit", 100, true},
+		{"lift", 0, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			mr := miniredis.RunT(t)
+			rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+			t.Cleanup(func() { rdb.Close() })
+			sm := NewStorageManager(t.TempDir()+","+filepath.Join(t.TempDir(), "unmounted"), rdb)
+			if sm.skipped == 0 {
+				t.Fatal("no path skipped")
+			}
+			qs := NewQuotaSet(sm)
+			mr.SetError("LOADING")
+			err := qs.SetLimit(uuid, tc.limitMB)
+			if (err != nil) != tc.wantErr {
+				t.Errorf("SetLimit(%d) = %v, want error %v", tc.limitMB, err, tc.wantErr)
+			}
+		})
 	}
 }

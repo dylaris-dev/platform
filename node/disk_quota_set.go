@@ -1,6 +1,9 @@
 package main
 
-import "log"
+import (
+	"fmt"
+	"log"
+)
 
 // QuotaSet holds one QuotaProvider per storage path.
 //
@@ -78,8 +81,17 @@ func (qs *QuotaSet) TagBackupDirs() {
 
 // SetLimit enforces the server's disk limit on its own filesystem.
 func (qs *QuotaSet) SetLimit(uuid string, limitMB int64) error {
-	qp := qs.forServer(uuid)
+	if qs == nil || qs.storage == nil {
+		return nil
+	}
+	path, keyErr := qs.storage.resolveServerPath(uuid)
+	qp := qs.providers[path]
 	if qp == nil {
+		if limitMB > 0 && keyErr != nil {
+			// Unanswered is not unknown: a nil had a recount's put-back read
+			// as done and drop the lifted marker, the hard limit left off.
+			return fmt.Errorf("quota: limit %s: storage path unresolved: %w", uuid, keyErr)
+		}
 		if limitMB > 0 {
 			log.Printf("quota: cannot enforce disk limit for %s - no quota provider for its storage path", uuid)
 		}
