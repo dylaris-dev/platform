@@ -49,6 +49,7 @@ const MIRRORED: Record<string, RegExp> = {
 const NOT_MIRRORED: Record<string, string> = {
     ServerUUID: 'server ids are minted by the backend, never typed into a form',
     MinecraftUsername: 'no form takes a Mojang name; player management reads them from the server',
+    UserID: 'account ids are minted by the backend (Beam ticket claims), never typed into a form',
     serverNameStrip: 'the complement of ServerName, inlined in sanitizeServerName (whose behaviour is tested separately)',
 };
 
