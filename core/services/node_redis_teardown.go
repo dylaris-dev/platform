@@ -52,6 +52,9 @@ func RemoveNodeRedisState(ctx context.Context, rdb *redis.Client, prov *redisacl
 	if prov != nil {
 		prov.RemoveNodeACL(ctx, token)
 	}
+	// A tick that listed the node before its row went would otherwise SET its
+	// backup policy and placement again after this DEL, with no TTL.
+	MarkNodeModeSave(ctx, rdb)
 	if err := rdb.Del(ctx, NodeRedisKeys(token)...).Err(); err != nil {
 		log.Printf("node teardown: leftover Redis keys for node token %.8s... could not be removed: %v", token, err)
 	}

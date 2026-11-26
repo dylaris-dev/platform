@@ -18,8 +18,9 @@ import (
 // cadence, so a node picks the values back up on its next read either way.
 const nodeModePublishInterval = 30 * time.Second
 
-// nodeModeSaveGenKey is bumped by every admin save that mirrors a key Publish
-// also writes. Publish WATCHes it across its database read and Redis write.
+// nodeModeSaveGenKey is bumped by every admin save that mirrors a key a tick
+// also writes. Every tick publisher WATCHes it across its database read and
+// Redis write (publishUnderSaveGen).
 const nodeModeSaveGenKey = "dylaris:node_mode:save_gen"
 
 // MarkNodeModeSave must run after a save's database commit and before its
@@ -31,6 +32,22 @@ func MarkNodeModeSave(ctx context.Context, rdb *redis.Client) {
 	if rdb != nil {
 		rdb.Incr(ctx, nodeModeSaveGenKey)
 	}
+}
+
+// publishUnderSaveGen runs one tick publisher's read and write under WATCH on
+// nodeModeSaveGenKey. fn must do its database read inside and write only
+// through tx.TxPipelined. Losing the race skips this tick (the next one
+// republishes from the database); nothing waits on a lock. Reports whether
+// the write went through.
+func publishUnderSaveGen(ctx context.Context, rdb *redis.Client, name string, fn func(tx *redis.Tx) error) bool {
+	err := rdb.Watch(ctx, fn, nodeModeSaveGenKey)
+	switch {
+	case errors.Is(err, redis.TxFailedErr):
+		log.Printf("%s: a settings save landed during this tick; skipped, the next tick republishes", name)
+	case err != nil:
+		log.Printf("%s: %v", name, err)
+	}
+	return err == nil
 }
 
 // NodeModePublisher keeps the settings nodes consume present in Redis.
@@ -69,12 +86,7 @@ func (p *NodeModePublisher) Start(ctx context.Context) {
 	if p.redis == nil || p.store == nil {
 		return
 	}
-	p.Publish(ctx)
-	// Per-node backup policies and storage placement ride the same ticker; they
-	// live in the database for the same reason and would vanish with Redis the
-	// same way.
-	PublishBackupPolicies(ctx, p.store, p.redis)
-	PublishStoragePlacements(ctx, p.store, p.redis)
+	p.tick(ctx)
 	go func() {
 		t := time.NewTicker(nodeModePublishInterval)
 		defer t.Stop()
@@ -83,12 +95,19 @@ func (p *NodeModePublisher) Start(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case <-t.C:
-				p.Publish(context.Background())
-				PublishBackupPolicies(context.Background(), p.store, p.redis)
-				PublishStoragePlacements(context.Background(), p.store, p.redis)
+				p.tick(context.Background())
 			}
 		}
 	}()
+}
+
+// tick is one republish of everything the publisher owns. Per-node backup
+// policies and storage placement ride the same ticker; they live in the
+// database for the same reason and would vanish with Redis the same way.
+func (p *NodeModePublisher) tick(ctx context.Context) {
+	p.Publish(ctx)
+	republishBackupPolicies(ctx, p.store, p.redis)
+	PublishStoragePlacements(ctx, p.store, p.redis)
 }
 
 // Publish writes the current database values to Redis.
@@ -98,15 +117,9 @@ func (p *NodeModePublisher) Start(ctx context.Context) {
 // overwritten with the pre-save value (a just-saved Beam cap DELeted) until
 // the next tick. Losing the race just skips this tick; nothing waits on a lock.
 func (p *NodeModePublisher) Publish(ctx context.Context) {
-	err := p.redis.Watch(ctx, func(tx *redis.Tx) error {
+	publishUnderSaveGen(ctx, p.redis, "node mode publisher", func(tx *redis.Tx) error {
 		return p.publish(ctx, tx)
-	}, nodeModeSaveGenKey)
-	switch {
-	case errors.Is(err, redis.TxFailedErr):
-		log.Printf("node mode publisher: a settings save landed during this tick; skipped, the next tick republishes")
-	case err != nil:
-		log.Printf("node mode publisher: %v", err)
-	}
+	})
 }
 
 func (p *NodeModePublisher) publish(ctx context.Context, tx *redis.Tx) error {

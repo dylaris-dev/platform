@@ -173,57 +173,95 @@ func BackupPolicyJSON(t NodeBackupThrottle, headroomPct int64, saveOffMaxMin *in
 	return string(b)
 }
 
-// PublishBackupPolicy writes one node's policy now (after a save).
+// PublishBackupPolicy writes one node's policy now. Only a save calls it, after
+// its commit: it bumps the save generation so an overlapping tick cannot
+// write the pre-save policy over this one.
+//
+// A failed read publishes nothing: the node keeps the last policy until the
+// next good tick. Sending the zero values instead switched pacing and spooling
+// off for the length of a DB blip.
 func PublishBackupPolicy(ctx context.Context, st store.Store, rdb *redis.Client, node models.Node) error {
 	if rdb == nil || node.Token == "" {
 		return nil
 	}
+	MarkNodeModeSave(ctx, rdb)
 	get := store.FreshSettings(st)
 	headroom, ceiling, err := backupThrottleGlobals(get)
 	if err != nil {
 		return fmt.Errorf("read backup throttle globals: %w", err)
 	}
-	return publishBackupPolicy(ctx, get, rdb, node, headroom, ceiling, backupShareQuotaModeFrom(get))
-}
-
-// A failed read publishes nothing: the node keeps the last policy until the
-// next good tick. Sending the zero values instead switched pacing and spooling
-// off for the length of a DB blip.
-func publishBackupPolicy(ctx context.Context, get func(string) (string, error), rdb *redis.Client, node models.Node, headroom int64, ceiling *int64, share *bool) error {
 	t, err := loadNodeBackupThrottle(get, node.ID)
 	if err != nil {
 		return fmt.Errorf("read backup throttle (keeping the published policy): %w", err)
 	}
-	return rdb.Set(ctx, NodeBackupPolicyKey(node.Token), BackupPolicyJSON(t, headroom, ceiling, share), 0).Err()
+	return rdb.Set(ctx, NodeBackupPolicyKey(node.Token), BackupPolicyJSON(t, headroom, ceiling, backupShareQuotaModeFrom(get)), 0).Err()
 }
 
-// PublishBackupPolicies writes every node's policy. Every node gets one, set
-// or not, so the global headroom and ceiling reach nodes paced by env alone.
-//
-// The settings come from one fresh read past the one-second snapshot: this
-// runs on every replica's tick and overwrites Redis, so a snapshot from just
-// before another replica's save would push the old values back to every node.
+// PublishBackupPolicies writes every node's policy now, after a save of the
+// global backup settings; the generation bump keeps an overlapping tick from
+// undoing it.
 func PublishBackupPolicies(ctx context.Context, st store.Store, rdb *redis.Client) {
+	MarkNodeModeSave(ctx, rdb)
+	for key, v := range backupPolicyWrites(st) {
+		if err := rdb.Set(ctx, key, v, 0).Err(); err != nil {
+			log.Printf("backup policy publisher: set %s: %v", key, err)
+		}
+	}
+}
+
+// republishBackupPolicies is the tick's PublishBackupPolicies, under WATCH on
+// the save generation: its read can predate a save another replica has
+// already mirrored, and its writes would put the old share mode back (which
+// re-tags every backup folder on the node, then again on the next tick).
+func republishBackupPolicies(ctx context.Context, st store.Store, rdb *redis.Client) {
+	publishUnderSaveGen(ctx, rdb, "backup policy publisher", func(tx *redis.Tx) error {
+		writes := backupPolicyWrites(st)
+		if len(writes) == 0 {
+			return nil
+		}
+		_, err := tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+			for key, v := range writes {
+				pipe.Set(ctx, key, v, 0)
+			}
+			return nil
+		})
+		return err
+	})
+}
+
+// backupPolicyWrites is every node's policy keyed by its Redis key. Every node
+// gets one, set or not, so the global headroom and ceiling reach nodes paced
+// by env alone.
+//
+// The settings come from one fresh read past the one-second snapshot: a
+// snapshot from just before another replica's save would push the old values
+// back to every node. A failed read leaves out what it covers.
+func backupPolicyWrites(st store.Store) map[string]string {
 	nodes, err := st.ListNodes()
 	if err != nil {
 		log.Printf("backup policy publisher: list nodes: %v", err)
-		return
+		return nil
 	}
 	get := store.FreshSettings(st)
 	headroom, ceiling, err := backupThrottleGlobals(get)
 	if err != nil {
 		log.Printf("backup policy publisher: read globals: %v (keeping the published policies)", err)
-		return
+		return nil
 	}
 	share := backupShareQuotaModeFrom(get)
+	out := map[string]string{}
 	for _, n := range nodes {
 		if n.Token == "" {
 			continue
 		}
-		if err := publishBackupPolicy(ctx, get, rdb, n, headroom, ceiling, share); err != nil {
-			log.Printf("backup policy publisher: node %d: %v", n.ID, err)
+		t, err := loadNodeBackupThrottle(get, n.ID)
+		if err != nil {
+			log.Printf("backup policy publisher: node %d: read backup throttle (keeping the published policy): %v", n.ID, err)
+			continue
 		}
+		out[NodeBackupPolicyKey(n.Token)] = BackupPolicyJSON(t, headroom, ceiling, share)
 	}
+	return out
 }
 
 // NodeBackupEnv is the node's report, nil fields when it never reported (an

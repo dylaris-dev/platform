@@ -408,3 +408,65 @@ func TestNodeModePublisherDoesNotUndoAnOverlappingSave(t *testing.T) {
 		})
 	}
 }
+
+// R58-02/03/06/07: the backup policy and storage placement publishers ride the
+// same tick and overwrite Redis the same way, so a save that lands between
+// their read and their write must win there too.
+func TestPublisherTickDoesNotUndoAnOverlappingSave(t *testing.T) {
+	node := models.Node{ID: 1, Token: "tok-a"}
+	cases := []struct {
+		name, key, old, saved, redisKey string
+		next                            string // what the next tick's value contains
+	}{
+		{"backup share mode switched", "backup.share_quota_with_server", "true", "false", NodeBackupPolicyKey(node.Token), `"shareQuotaWithServer":false`},
+		{"backup headroom changed", SettingBackupThrottleHeadroomPct, "30", "60", NodeBackupPolicyKey(node.Token), `"headroomPct":60`},
+		{"node backup pacing changed", NodeBackupThrottleSetting(node.ID), `{"uplinkMbit":100}`, `{"uplinkMbit":900}`, NodeBackupPolicyKey(node.Token), `"uplinkMbit":900`},
+		{"fleet placement saved", FleetPlacementSetting, `{"mode":"manual","order":["/mnt/a"]}`, `{"mode":"manual","order":["/mnt/b"]}`, FleetPlacementKey, `["/mnt/b"]`},
+		{"node placement saved", NodePlacementSetting(node.ID), `{"mode":"manual","order":["/mnt/a"]}`, `{"mode":"manual","order":["/mnt/b"]}`, NodePlacementKey(node.Token), `["/mnt/b"]`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rdb := newQueueTestRedis(t)
+			ctx := context.Background()
+			st := &savingStub{
+				settingsStub: &settingsStub{values: map[string]string{tc.key: tc.old}, nodes: []models.Node{node}},
+				rdb:          rdb, key: tc.key, saved: tc.saved, redisKey: tc.redisKey, mirror: "the save's mirror",
+			}
+			NewNodeModePublisher(st, rdb).tick(ctx)
+
+			if got, err := rdb.Get(ctx, tc.redisKey).Result(); err != nil || got != "the save's mirror" {
+				t.Fatalf("%s after an overlapping save: got %q (%v), want the save's mirror", tc.redisKey, got, err)
+			}
+			// The skipped tick is not lost: the next one publishes the database.
+			NewNodeModePublisher(st, rdb).tick(ctx)
+			got, _ := rdb.Get(ctx, tc.redisKey).Result()
+			if !strings.Contains(got, tc.next) {
+				t.Fatalf("%s after the next tick: got %q, want it to contain %s", tc.redisKey, got, tc.next)
+			}
+		})
+	}
+}
+
+// Every save that mirrors a key a tick writes must bump the generation the
+// tick WATCHes, or the WATCH never sees it.
+func TestSavesBumpTheSaveGeneration(t *testing.T) {
+	ctx := context.Background()
+	node := models.Node{ID: 1, Token: "tok-a"}
+	cases := []struct {
+		name string
+		save func(st *settingsStub, rdb *redis.Client)
+	}{
+		{"backup config save", func(st *settingsStub, rdb *redis.Client) { PublishBackupPolicies(ctx, st, rdb) }},
+		{"node backup throttle save", func(st *settingsStub, rdb *redis.Client) { _ = PublishBackupPolicy(ctx, st, rdb, node) }},
+		{"fleet placement save", func(st *settingsStub, rdb *redis.Client) { _ = SaveFleetPlacement(ctx, st, rdb, NodePlacement{}) }},
+		{"node placement save", func(st *settingsStub, rdb *redis.Client) { _ = SaveNodePlacement(ctx, st, rdb, node, NodePlacement{}) }},
+		{"node delete", func(st *settingsStub, rdb *redis.Client) { RemoveNodeRedisState(ctx, rdb, nil, node.Token) }},
+	}
+	for _, tc := range cases {
+		rdb := newQueueTestRedis(t)
+		tc.save(&settingsStub{values: map[string]string{}, nodes: []models.Node{node}}, rdb)
+		if gen, _ := rdb.Get(ctx, nodeModeSaveGenKey).Int(); gen != 1 {
+			t.Errorf("%s: save generation = %d, want 1", tc.name, gen)
+		}
+	}
+}

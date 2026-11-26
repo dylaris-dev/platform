@@ -105,49 +105,76 @@ func savePlacement(ctx context.Context, st store.Store, rdb *redis.Client, setti
 	if rdb == nil {
 		return nil
 	}
+	MarkNodeModeSave(ctx, rdb)
 	return rdb.Set(ctx, key, payload, 0).Err()
 }
 
 // PublishStoragePlacements re-asserts the fleet default and every node's policy
 // from the database. A row that was never saved adopts what Redis holds, which
 // is how a policy saved by a Core from before the rows existed gets one.
+//
+// It runs on every replica's tick, so it reads past the one-second settings
+// snapshot and writes under WATCH on the save generation: without both, a tick
+// put back the placement an admin had just saved on another replica, and a
+// server created in that window landed on the disk they had excluded.
 func PublishStoragePlacements(ctx context.Context, st store.Store, rdb *redis.Client) {
 	if st == nil || rdb == nil {
 		return
 	}
-	publishPlacement(ctx, st, rdb, FleetPlacementSetting, FleetPlacementKey)
-	nodes, err := st.ListNodes()
-	if err != nil {
-		log.Printf("placement publisher: list nodes: %v", err)
-		return
-	}
-	for _, n := range nodes {
-		if n.Token == "" {
-			continue
+	var adopt map[string]string
+	ok := publishUnderSaveGen(ctx, rdb, "placement publisher", func(tx *redis.Tx) error {
+		pairs := [][2]string{{FleetPlacementSetting, FleetPlacementKey}}
+		nodes, err := st.ListNodes()
+		if err != nil {
+			log.Printf("placement publisher: list nodes: %v", err)
 		}
-		publishPlacement(ctx, st, rdb, NodePlacementSetting(n.ID), NodePlacementKey(n.Token))
-	}
-}
-
-func publishPlacement(ctx context.Context, st store.Store, rdb *redis.Client, setting, key string) {
-	v, err := st.GetSetting(setting)
-	if err == nil && v != "" {
-		if err := rdb.Set(ctx, key, v, 0).Err(); err != nil {
-			log.Printf("placement publisher: set %s: %v", key, err)
+		for _, n := range nodes {
+			if n.Token != "" {
+				pairs = append(pairs, [2]string{NodePlacementSetting(n.ID), NodePlacementKey(n.Token)})
+			}
 		}
+		get := store.FreshSettings(st)
+		sets := map[string]string{}
+		adopt = map[string]string{}
+		for _, p := range pairs {
+			setting, key := p[0], p[1]
+			v, err := get(setting)
+			if err == nil && v != "" {
+				sets[key] = v
+				continue
+			}
+			// Only a row that does not exist is adopted: an unreadable one must
+			// not be overwritten with whatever Redis holds.
+			if !errors.Is(err, sql.ErrNoRows) {
+				continue
+			}
+			if cur, rerr := tx.Get(ctx, key).Result(); rerr == nil && cur != "" {
+				adopt[setting] = cur
+			}
+		}
+		if len(sets) == 0 {
+			return nil
+		}
+		_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+			for key, v := range sets {
+				pipe.Set(ctx, key, v, 0)
+			}
+			return nil
+		})
+		return err
+	})
+	// Adopting writes the database, which the WATCH cannot cover, so it only
+	// follows a tick that no save overlapped.
+	// ponytail: a save committing between this tick's EXEC and the adopt can
+	// still be overwritten; only a legacy Redis-only policy takes this branch,
+	// once. An insert-if-absent in the store closes it if it ever matters.
+	if !ok {
 		return
 	}
-	// Only a row that does not exist is adopted: an unreadable one must not be
-	// overwritten with whatever Redis holds.
-	if !errors.Is(err, sql.ErrNoRows) {
-		return
-	}
-	cur, rerr := rdb.Get(ctx, key).Result()
-	if rerr != nil || cur == "" {
-		return
-	}
-	if err := st.SetSetting(setting, cur); err != nil {
-		log.Printf("placement publisher: adopt %s: %v", setting, err)
+	for setting, cur := range adopt {
+		if err := st.SetSetting(setting, cur); err != nil {
+			log.Printf("placement publisher: adopt %s: %v", setting, err)
+		}
 	}
 }
 
