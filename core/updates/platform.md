@@ -8,6 +8,34 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.26
+
+### Features
+- Disk Analysis and the node card say when a storage path is not mounted or a server has two copies the node
+  cannot tell apart, instead of listing those servers as missing from disk with a Remove from DB button. `panel` `node`
+
+### Breaking
+- A server with a disk limit now also has a file limit: 1,000,000 files or 64 per MB of the disk limit, whichever
+  is higher. A server that already holds more keeps 25% room above its current count instead of being stopped.
+  A full file limit stops the server like a full disk, and the panel says "File limit reached". `node` `core` `panel`
+
+### Security
+- Turning Beam off ends open Beam sessions within about 10 seconds and refuses tickets already issued; when Core
+  cannot read the Beam settings it answers 503 instead of issuing a ticket. `core` `node`
+- SFTP logins keep working while a few addresses flood the node's SFTP port with stalled handshakes. `node`
+- Renaming an account no longer resets its daily Beam and SFTP upload quota, and the audit trail credits Beam and
+  SFTP changes to the real account after a rename. `core` `node`
+
+### Fixes
+- Restoring a selective backup overwrites only the files it holds and keeps everything else; before, it deleted
+  what the backup left out. On a node too old for this, Core refuses with an "update the node" message. `core` `node`
+- Setup, reinstall, version moves, sub-server switches, backups, restores and storage moves no longer race each
+  other: a conflicting action is refused with a clear message, and a failed one leaves the old software and state. `node` `core`
+- With "Share quota with server" off, node-local backups no longer count against the server's disk limit, and a
+  backup of a world that was written while it was read shows as failed instead of success. `node` `core`
+- On a BYON host the node agent no longer stops and deletes the owner's own containers whose names start with
+  mc_, and a console command sent during a restart reaches the restarted server. `node` `log-shipper`
+
 ## 2026.11.25.2
 
 ### Features

@@ -11,6 +11,28 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.26
+
+### Features
+- Nothing.
+
+### Breaking
+- A server with a disk limit now also has a file limit: 1,000,000 files or 64 per MB of the disk limit, whichever
+  is higher. A server that already holds more keeps 25% room above its current count instead of being stopped.
+  When the file limit is full the server stops like a full disk and the panel says "File limit reached". `node`
+
+### Security
+- When Beam is turned off or your access to a server changes, open Beam sessions end within seconds and tickets
+  issued before are refused. Renaming your account no longer resets your daily upload quota. `node`
+
+### Fixes
+- BYON: the node agent no longer stops and deletes your own Docker containers whose names start with mc_. Your
+  node updates itself. `node`
+- Restoring a selective backup overwrites only the files it holds and keeps everything else; before, it deleted
+  what the backup left out. `node`
+- Setup, reinstall, version changes, sub-server switches, backups, restores and storage moves no longer get in
+  each other's way: a conflicting action is refused with a clear message, and a failed one keeps your old setup. `node`
+
 ## 2026.11.25.2
 
 ### Features
