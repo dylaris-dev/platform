@@ -137,11 +137,11 @@ export default function LinkRouteVoiceSwitch({ domain, voice, allowed, onSaved }
                 <div className="mt-2 space-y-1.5 text-xs text-(--base-06)">
                     <p>Set this in your voice mod&apos;s config, then restart the server. Your link forwards to port {voice?.target_port || DEFAULT_VOICE_PORT} on the route&apos;s target host.</p>
                     <div className="flex flex-wrap items-start gap-2">
-                        <span className="mono-label shrink-0">Simple Voice Chat</span>
+                        <span className="srv-label shrink-0">Simple Voice Chat</span>
                         <CopyText value={cfg.svc} className="font-mono text-(--base-08) whitespace-pre" />
                     </div>
                     <div className="flex flex-wrap items-start gap-2">
-                        <span className="mono-label shrink-0">Plasmo Voice</span>
+                        <span className="srv-label shrink-0">Plasmo Voice</span>
                         <CopyText value={cfg.plasmo} className="font-mono text-(--base-08) whitespace-pre" />
                     </div>
                 </div>

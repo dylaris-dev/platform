@@ -127,7 +127,7 @@ export default function ServerCustomTabPage() {
     if (loadError) {
         return (
             <main className="h-full flex items-center justify-center p-6">
-                <div className="card p-6 max-w-md text-center">
+                <div className="srv-surface p-6 max-w-md text-center">
                     <AlertTriangle size={20} className="text-(--warning-light) mx-auto mb-2" />
                     <p className="text-sm text-(--base-07)">{loadError}</p>
                     <button type="button" onClick={refresh} className="btn btn-secondary btn-sm mt-3">
@@ -139,8 +139,8 @@ export default function ServerCustomTabPage() {
     }
     if (tab === null) {
         return (
-            <main className="flex-1 flex items-center justify-center p-6">
-                <div className="card p-6 max-w-md text-center">
+            <main className="flex h-full items-center justify-center">
+                <div className="srv-surface p-6 max-w-md text-center">
                     <AlertTriangle size={20} className="text-(--warning-light) mx-auto mb-2" />
                     <p className="text-sm text-(--base-07)">Tab not found. It may have been deleted.</p>
                 </div>
@@ -149,8 +149,8 @@ export default function ServerCustomTabPage() {
     }
     if (!tab.enabled) {
         return (
-            <main className="flex-1 flex items-center justify-center p-6">
-                <div className="card p-6 max-w-md text-center">
+            <main className="flex h-full items-center justify-center">
+                <div className="srv-surface p-6 max-w-md text-center">
                     <p className="text-sm text-(--base-07)">This tab is disabled.</p>
                 </div>
             </main>
@@ -161,8 +161,8 @@ export default function ServerCustomTabPage() {
         if (tab.surface === 'page') {
             // Published as a standalone page only - not embeddable here.
             return (
-                <main className="flex-1 flex items-center justify-center p-6">
-                    <div className="card p-6 max-w-md text-center space-y-2">
+                <main className="flex h-full items-center justify-center">
+                    <div className="srv-surface p-6 max-w-md text-center space-y-2">
                         <Link2 size={20} className="text-(--accent-light) mx-auto" />
                         <p className="text-sm text-(--base-07)">
                             {tab.name} is published as a standalone page. Open it via its share link.
@@ -181,8 +181,8 @@ export default function ServerCustomTabPage() {
         }
         if (proxyAuth === 'error') {
             return (
-                <main className="flex-1 flex items-center justify-center p-6">
-                    <div className="card p-6 max-w-md text-center">
+                <main className="flex h-full items-center justify-center">
+                    <div className="srv-surface p-6 max-w-md text-center">
                         <AlertTriangle size={20} className="text-(--warning-light) mx-auto mb-2" />
                         <p className="text-sm text-(--base-07)">{proxyAuthError}</p>
                     </div>
@@ -196,7 +196,7 @@ export default function ServerCustomTabPage() {
         const srv = servers.find(s => s.id === tab.serverId);
         const isMapPort = tab.targetPort === 8080 || tab.targetPort === 8100;
         return (
-            <main className="h-full overflow-hidden bg-(--base-01) flex flex-col">
+            <main className="h-full overflow-hidden rounded-xl bg-(--base-02) flex flex-col">
                 {srv && isMapPort && (
                     <div className="flex items-center justify-end gap-2 px-3 py-1.5 border-b border-(--base-03) text-xs text-(--base-06)">
                         <span className="mr-auto">Parts of the world still blank? A map renders what was played; render the rest once.</span>
@@ -219,8 +219,8 @@ export default function ServerCustomTabPage() {
         // sites refuse to load in iframes via X-Frame-Options; this gives
         // the operator a clean way to declare that without ugly error pages.
         return (
-            <main className="flex-1 flex items-center justify-center p-6">
-                <div className="card p-6 max-w-md text-center space-y-3">
+            <main className="flex h-full items-center justify-center">
+                <div className="srv-surface p-6 max-w-md text-center space-y-3">
                     <p className="text-sm text-(--base-07)">{tab.name} opens in a new window.</p>
                     <ExternalOriginLine url={tab.url} />
                     <a
@@ -241,7 +241,7 @@ export default function ServerCustomTabPage() {
         // flex column rather than a bare h-full box: the notice takes its own
         // height and the frame takes the rest. See the h-full note above, a
         // frame sized with flex-1 alone inside this shell collapses to 150px.
-        <main className="h-full overflow-hidden bg-(--base-01) flex flex-col">
+        <main className="h-full overflow-hidden rounded-xl bg-(--base-02) flex flex-col">
             <ExternalOriginBar url={tab.url} />
             {/* sandbox kept permissive so JS-heavy minimap viewers function;
                 referrer-policy keeps URLs from leaking the panel surface */}

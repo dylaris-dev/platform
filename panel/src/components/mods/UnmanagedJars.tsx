@@ -130,11 +130,11 @@ export function UnmanagedJars({
 
     if (scanError) {
         return (
-            <div className="flex items-start gap-2 rounded-md border border-(--warning)/30 bg-(--warning-ghost) p-3 text-xs text-(--warning-light)">
-                <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+            <div className="srv-callout" data-tone="warning" role="alert">
+                <AlertTriangle size={16} className="mt-0.5 shrink-0 text-(--warning-light)" aria-hidden="true" />
                 <div className="flex-1">
-                    <p className="text-(--base-09)">Could not check for unknown jars.</p>
-                    <p className="mt-0.5">{scanError}</p>
+                    <p className="font-medium text-(--base-09)">Could not check for unknown jars.</p>
+                    <p className="mt-0.5 text-(--base-07)">{scanError}</p>
                 </div>
                 <button type="button" onClick={scan} disabled={scanning} className="btn btn-secondary btn-sm shrink-0">
                     Try again
@@ -145,15 +145,15 @@ export function UnmanagedJars({
     if (!files || files.length === 0) return null;
 
     return (
-        <div className="rounded-md border border-(--warning)/30 bg-(--warning-ghost) p-3 space-y-2">
-            <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div className="srv-callout flex-col gap-3" data-tone="warning">
+            <div className="flex w-full items-start justify-between gap-3 flex-wrap">
                 <div className="flex items-start gap-2 min-w-0">
-                    <AlertTriangle size={14} className="mt-0.5 shrink-0 text-(--warning-light)" />
+                    <AlertTriangle size={16} className="mt-0.5 shrink-0 text-(--warning-light)" aria-hidden="true" />
                     <div className="min-w-0">
-                        <p className="text-xs text-(--base-09)">
+                        <p className="font-medium text-(--base-09)">
                             {files.length} {files.length === 1 ? 'file' : 'files'} in this server that nothing here knows about
                         </p>
-                        <p className="text-[11px] text-(--base-06) mt-0.5">
+                        <p className="text-xs text-(--base-07) mt-0.5">
                             They get no update check and are not carried by a Minecraft-version move. Identifying
                             them by their hash turns them into ordinary entries.
                         </p>
@@ -176,14 +176,14 @@ export function UnmanagedJars({
                 </div>
             </div>
 
-            <ul className="space-y-1">
+            <ul className="w-full space-y-1">
                 {files.map(f => {
                     const key = `${f.directory}/${f.name}`;
                     const r = results[key];
                     return (
-                        <li key={key} className="flex items-start gap-2 rounded-md bg-(--base-01)/60 px-2.5 py-1.5">
+                        <li key={key} className="flex items-start gap-2 rounded-md bg-(--base-01)/60 px-3 py-2">
                             <div className="min-w-0 flex-1">
-                                <div className="font-mono text-[11px] text-(--base-08) truncate">{key}</div>
+                                <div className="srv-num text-xs text-(--base-08) truncate">{key}</div>
                                 {r?.reason && (
                                     <div className="text-[11px] text-(--base-06) mt-0.5">{r.reason}</div>
                                 )}

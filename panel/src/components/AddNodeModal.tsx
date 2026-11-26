@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { X, Server, Network, Copy, Check, ExternalLink, Info } from 'lucide-react';
+import Tabs from '@/components/ui/Tabs';
 import { useAppData } from '@/lib/AppDataContext';
 import { coreOrigin } from '@/lib/api/core';
 import { isWails } from '@/lib/adapters';
@@ -74,7 +75,7 @@ function CodeBlock({ code, label }: { code: string; label: string }) {
     return (
         <div>
             <div className="flex items-center justify-between mb-1.5">
-                <span className="mono-label">{label}</span>
+                <span className="srv-label">{label}</span>
                 <button
                     type="button"
                     onClick={async () => {
@@ -89,7 +90,7 @@ function CodeBlock({ code, label }: { code: string; label: string }) {
                     {copied ? <><Check size={12} /> Copied</> : <><Copy size={12} /> Copy</>}
                 </button>
             </div>
-            <pre className="input-mono text-[11px] leading-relaxed bg-(--base-02) border border-(--base-03) rounded-md p-3 overflow-x-auto text-(--base-08) whitespace-pre">
+            <pre className="input-mono text-[11px] leading-relaxed bg-(--base-01) rounded-lg p-3 overflow-x-auto text-(--base-08) whitespace-pre">
                 {code}
             </pre>
         </div>
@@ -115,15 +116,15 @@ export default function AddNodeModal({ onClose }: { onClose: () => void }) {
                 <div className="modal-header flex items-start justify-between gap-4">
                     <div>
                         <h3 className="modal-title flex items-center gap-2">
-                            <Server size={16} className="text-(--accent-light)" />
+                            <Server size={16} className="text-(--base-06)" />
                             Add a node
                         </h3>
                         <p className="text-xs text-(--base-07) mt-1">
                             A node is added on the machine itself; the panel shows the result.
                         </p>
                     </div>
-                    <button onClick={onClose} className="p-1 text-(--base-06) hover:text-(--base-09) transition-colors">
-                        <X size={18} />
+                    <button type="button" onClick={onClose} aria-label="Close" className="app-icon-btn">
+                        <X size={16} />
                     </button>
                 </div>
 
@@ -149,26 +150,15 @@ export default function AddNodeModal({ onClose }: { onClose: () => void }) {
 
                 {showExternal && (
                     <div className="px-6 pt-4 shrink-0">
-                        <div className="flex gap-1 border-b border-(--base-03)">
-                            {([
-                                { id: 'fleet' as const, label: 'Fleet node', Icon: Server },
-                                { id: 'external' as const, label: 'External node', Icon: Network },
-                            ]).map(({ id, label, Icon }) => (
-                                <button
-                                    key={id}
-                                    type="button"
-                                    onClick={() => setTab(id)}
-                                    className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium border-b-2 transition-colors ${
-                                        active === id
-                                            ? 'border-(--accent) text-(--accent-light)'
-                                            : 'border-transparent text-(--base-07) hover:text-(--base-09) hover:border-(--base-04)'
-                                    }`}
-                                >
-                                    <Icon size={12} />
-                                    {label}
-                                </button>
-                            ))}
-                        </div>
+                        <Tabs
+                            ariaLabel="Node type"
+                            active={active}
+                            onChange={setTab}
+                            items={[
+                                { id: 'fleet' as const, label: 'Fleet node', icon: Server },
+                                { id: 'external' as const, label: 'External node', icon: Network },
+                            ]}
+                        />
                     </div>
                 )}
 
@@ -179,8 +169,8 @@ export default function AddNodeModal({ onClose }: { onClose: () => void }) {
                                 A machine you own, on the same Docker network as Core and Redis. It needs no public
                                 port and no overlay: it dials Core over the internal network.
                             </p>
-                            <div className="alert alert-info text-xs">
-                                <Info size={13} className="shrink-0 mt-0.5" />
+                            <div className="srv-callout" data-tone="info">
+                                <Info size={14} className="shrink-0 mt-0.5 text-(--accent-light)" />
                                 <span>
                                     A fleet host joins with <code>CLUSTER_SECRET</code>, the same value Core runs
                                     with: it proves the secret (a cluster proof) and Core pairs it, with no enroll
@@ -206,8 +196,8 @@ export default function AddNodeModal({ onClose }: { onClose: () => void }) {
                                 Core through the tunnel, so it needs no public IP and no port forwarding, and it never
                                 holds <code>CLUSTER_SECRET</code>. The node belongs to nobody, not to the admin who adds it.
                             </p>
-                            <div className="alert alert-info text-xs">
-                                <Info size={13} className="shrink-0 mt-0.5" />
+                            <div className="srv-callout" data-tone="info">
+                                <Info size={14} className="shrink-0 mt-0.5 text-(--accent-light)" />
                                 <span>
                                     The compose file - warp, the node and its Link, with the key and the enroll token
                                     filled in - is generated under{' '}

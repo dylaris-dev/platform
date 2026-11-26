@@ -1,6 +1,8 @@
 "use client";
 
 import { toast as notifyToast } from '@/components/ui/Toast';
+import Tooltip from '@/components/ui/Tooltip';
+import Select from '@/components/ui/Select';
 
 import React, { useCallback, useEffect, useState } from 'react';
 import { Plus, Trash2, Loader2, Server, Link2, Copy, Check, Pencil, X, RefreshCw } from 'lucide-react';
@@ -283,7 +285,7 @@ export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, e
             <div className="space-y-6">
                 <NotIncluded what="route only" storeUrl={storeUrl} suspended={suspended} storeLinked={storeLinked} />
                 {holds && (
-                    <div className="card p-5 space-y-3">
+                    <div className="srv-surface p-5 space-y-3">
                         <p className="text-xs text-(--base-07)">
                             What you still hold. Remove it here, or it counts against your account.
                         </p>
@@ -292,28 +294,30 @@ export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, e
                                 <Link2 size={14} className="text-(--base-06) shrink-0" />
                                 <span className="text-sm text-(--base-09) truncate">{k.name}</span>
                                 <span className="text-xs text-(--base-06) font-mono truncate ml-auto">{k.link_id}</span>
-                                <button
-                                    onClick={() => revoke(k.link_id)}
-                                    title="Revoke link"
-                                    aria-label={`Revoke ${k.name}`}
-                                    className="p-1.5 text-(--base-06) hover:text-(--error-light) transition-colors shrink-0"
-                                >
-                                    <Trash2 size={14} />
-                                </button>
+                                <Tooltip content="Revoke link">
+                                    <button
+                                        onClick={() => revoke(k.link_id)}
+                                        aria-label={`Revoke ${k.name}`}
+                                        className="p-1.5 text-(--base-06) hover:text-(--error-light) transition-colors shrink-0"
+                                    >
+                                        <Trash2 size={14} />
+                                    </button>
+                                </Tooltip>
                             </div>
                         ))}
                         {routes.map(rt => (
                             <div key={rt.domain} className="flex items-center gap-3 px-3 py-2 rounded-md bg-(--base-01)">
                                 <span className="font-mono text-sm text-(--base-09) truncate">{rt.domain}</span>
                                 <span className="text-xs text-(--base-06) font-mono truncate ml-auto">→ {rt.target_ip}:{rt.target_port}</span>
-                                <button
-                                    onClick={() => removeRoute(rt.domain)}
-                                    title="Delete"
-                                    aria-label={`Delete ${rt.domain}`}
-                                    className="p-1.5 text-(--base-06) hover:text-(--error-light) transition-colors shrink-0"
-                                >
-                                    <Trash2 size={14} />
-                                </button>
+                                <Tooltip content="Delete">
+                                    <button
+                                        onClick={() => removeRoute(rt.domain)}
+                                        aria-label={`Delete ${rt.domain}`}
+                                        className="p-1.5 text-(--base-06) hover:text-(--error-light) transition-colors shrink-0"
+                                    >
+                                        <Trash2 size={14} />
+                                    </button>
+                                </Tooltip>
                             </div>
                         ))}
                     </div>
@@ -340,10 +344,10 @@ export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, e
             <div className="space-y-6 min-w-0">
 
             {/* Links */}
-            <div className="card p-5 space-y-4">
+            <div className="srv-surface p-5 space-y-4">
                 <div className="flex items-center gap-2">
-                    <Link2 size={16} className="text-(--accent-light)" />
-                    <h2 className="font-medium text-(--base-09)">Your links</h2>
+                    <Link2 size={16} className="text-(--base-06)" />
+                    <h2 className="text-[15px] font-semibold text-(--base-09)">Your links</h2>
                 </div>
 
                 {kits.length > 0 && (
@@ -366,21 +370,21 @@ export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, e
                                 )}
                                 <span className="text-xs text-(--base-06) font-mono truncate ml-auto">{k.link_id}</span>
                                 {/* A link being replaced cannot be rolled; the provider refuses it. */}
-                                {!k.retire_at && <button
+                                {!k.retire_at && <Tooltip content="Replace this key with a new one, keeping the address and its routes"><button aria-label="Replace this key with a new one, keeping the address and its routes"
                                     onClick={() => roll(k.link_id, k.name)}
                                     disabled={rollingLink === k.link_id}
-                                    title="Replace this key with a new one, keeping the address and its routes"
                                     className="p-1.5 text-(--base-06) hover:text-(--base-09) transition-colors shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
                                 >
                                     <RefreshCw size={14} className={rollingLink === k.link_id ? 'animate-spin' : undefined} />
-                                </button>}
-                                <button
-                                    onClick={() => revoke(k.link_id)}
-                                    title="Revoke link"
-                                    className="p-1.5 text-(--base-06) hover:text-(--error-light) transition-colors shrink-0"
-                                >
-                                    <Trash2 size={14} />
-                                </button>
+                                </button></Tooltip>}
+                                <Tooltip content="Revoke link">
+                                    <button aria-label="Revoke link"
+                                        onClick={() => revoke(k.link_id)}
+                                        className="p-1.5 text-(--base-06) hover:text-(--error-light) transition-colors shrink-0"
+                                    >
+                                        <Trash2 size={14} />
+                                    </button>
+                                </Tooltip>
                             </div>
                         ))}
                     </div>
@@ -399,7 +403,7 @@ export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, e
                         />
                     </div>
                     <div className="flex flex-col gap-1.5 justify-end">
-                        <button onClick={mint} disabled={minting || suspended} className="btn btn-secondary inline-flex items-center gap-2 disabled:opacity-60">
+                        <button onClick={mint} disabled={minting || suspended} className="btn btn-secondary inline-flex items-center gap-2 ">
                             {minting ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />}
                             {minting ? 'Creating…' : 'Create link'}
                         </button>
@@ -409,9 +413,9 @@ export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, e
             </div>
 
             {/* Create or edit route */}
-            <div id="route-form" className="card p-5 space-y-4">
+            <div id="route-form" className="srv-surface p-5 space-y-4">
                 <div className="flex items-center justify-between gap-3">
-                    <h2 className="font-medium text-(--base-09)">{editing ? 'Edit route' : 'New route'}</h2>
+                    <h2 className="text-[15px] font-semibold text-(--base-09)">{editing ? 'Edit route' : 'New route'}</h2>
                     {editing && (
                         <button onClick={cancelEdit} className="btn btn-secondary btn-sm inline-flex items-center gap-1.5">
                             <X size={13} /> Cancel
@@ -420,22 +424,21 @@ export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, e
                 </div>
 
                 <div className="flex flex-col gap-1.5">
-                    <label className="input-label">Link</label>
-                    <select
+                    <label className="input-label" htmlFor="route-link-select">Link</label>
+                    <Select
+                        id="route-link-select"
                         value={linkId}
-                        onChange={e => setLinkId(e.target.value)}
+                        onChange={setLinkId}
                         disabled={kits.length === 0}
-                        className="input-field text-sm w-full max-w-md disabled:opacity-60"
-                    >
-                        {routableKits.length === 0 && !retiringSelected && <option value="">Create a link first</option>}
-                        {/* A link being replaced takes no route; an address already on
-                            it shows it, so moving the address away stays possible. */}
-                        {kits.filter(k => !k.retire_at || k.link_id === linkId).map(k => (
-                            <option key={k.id} value={k.link_id} disabled={!!k.retire_at}>
-                                {k.retire_at ? `${k.name} (being replaced)` : k.name}
-                            </option>
-                        ))}
-                    </select>
+                        className="w-full max-w-md"
+                        placeholder="Create a link first"
+                        // A link being replaced takes no route; an address already on
+                        // it shows it, so moving the address away stays possible.
+                        options={kits.filter(k => !k.retire_at || k.link_id === linkId).map(k => ({
+                            value: k.link_id,
+                            label: k.retire_at ? `${k.name} (being replaced)` : k.name,
+                        }))}
+                    />
                     {editing && linkUnknown && (
                         <p className="text-xs text-(--warning-light)">
                             This route&apos;s link could not be identified. Saving will move the route to the
@@ -485,29 +488,29 @@ export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, e
                 {error && <p className="text-sm text-(--error-light)">{error}</p>}
 
                 <div className="flex items-center gap-2">
-                    <button onClick={submitRoute} disabled={creating || kits.length === 0 || suspended} className="btn btn-primary inline-flex items-center gap-2 w-fit disabled:opacity-60">
+                    <button onClick={submitRoute} disabled={creating || kits.length === 0 || suspended} className="btn btn-primary inline-flex items-center gap-2 w-fit ">
                         {creating ? <Loader2 size={16} className="animate-spin" /> : editing ? <Check size={16} /> : <Plus size={16} />}
                         {creating ? (editing ? 'Saving…' : 'Creating…') : editing ? 'Save changes' : 'Create route'}
                     </button>
                     {editing && (
-                        <button onClick={cancelEdit} disabled={creating} className="btn btn-secondary w-fit disabled:opacity-60">Cancel</button>
+                        <button onClick={cancelEdit} disabled={creating} className="btn btn-secondary w-fit ">Cancel</button>
                     )}
                 </div>
             </div>
 
             {/* List routes */}
             <div className="space-y-2">
-                <h2 className="font-medium text-(--base-09)">Your routes</h2>
+                <h2 className="text-[15px] font-semibold text-(--base-09)">Your routes</h2>
                 {featureFlags.proxyProtocol && routes.length > 0 && <RealIpGuide routeOnly />}
                 {loading ? (
-                    <div className="card p-5 text-sm text-(--base-06)">Loading…</div>
+                    <div className="srv-surface p-5 text-sm text-(--base-06)">Loading…</div>
                 ) : routes.length === 0 ? (
-                    <div className="card p-5 text-sm text-(--base-06)">No routes yet.</div>
+                    <div className="srv-surface p-5 text-sm text-(--base-06)">No routes yet.</div>
                 ) : (
                     routes.map(rt => (
                         <div
                             key={rt.domain}
-                            className={`card px-4 py-3 flex items-center justify-between gap-3 ${editing === rt.domain ? 'border-(--accent)' : ''}`}
+                            className={`srv-surface px-4 py-3 flex items-center justify-between gap-3 ${editing === rt.domain ? 'ring-1 ring-(--accent)' : ''}`}
                         >
                             <div className="min-w-0">
                                 <div className="font-mono text-sm text-(--base-09) truncate">{rt.domain}</div>
@@ -540,23 +543,25 @@ export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, e
                                 {editing === rt.domain ? (
                                     <span className="badge badge-accent">Editing</span>
                                 ) : (
-                                    <button
-                                        onClick={() => startEdit(rt)}
-                                        title="Edit"
-                                        aria-label={`Edit ${rt.domain}`}
-                                        className="p-2 text-(--base-06) hover:text-(--base-09) transition-colors"
-                                    >
-                                        <Pencil size={16} />
-                                    </button>
+                                    <Tooltip content="Edit">
+                                        <button
+                                            onClick={() => startEdit(rt)}
+                                            aria-label={`Edit ${rt.domain}`}
+                                            className="p-2 text-(--base-06) hover:text-(--base-09) transition-colors"
+                                        >
+                                            <Pencil size={16} />
+                                        </button>
+                                    </Tooltip>
                                 )}
-                                <button
-                                    onClick={() => removeRoute(rt.domain)}
-                                    title="Delete"
-                                    aria-label={`Delete ${rt.domain}`}
-                                    className="p-2 text-(--base-06) hover:text-(--error-light) transition-colors"
-                                >
-                                    <Trash2 size={16} />
-                                </button>
+                                <Tooltip content="Delete">
+                                    <button
+                                        onClick={() => removeRoute(rt.domain)}
+                                        aria-label={`Delete ${rt.domain}`}
+                                        className="p-2 text-(--base-06) hover:text-(--error-light) transition-colors"
+                                    >
+                                        <Trash2 size={16} />
+                                    </button>
+                                </Tooltip>
                             </div>
                         </div>
                     ))
@@ -607,7 +612,7 @@ function MintReveal({ kit, rolled, onCopy, onClose }: { kit: MintedLinkKit; roll
     // The link fetches its tunnel token from Core at boot and talks to Core with
     // this key from then on, so the only secret to paste is LINK_KEY.
     return (
-        <div className="rounded-md border border-(--accent)/30 bg-(--accent)/5 p-4 space-y-3">
+        <div className="rounded-lg bg-(--accent-ghost) p-4 space-y-3">
             <div className="flex items-center justify-between">
                 <span className="text-sm font-medium text-(--base-09)">
                     {rolled ? 'New key - copy this now' : 'Link created - copy this now'}
@@ -636,9 +641,11 @@ function CopyRow({ label, value, onCopy }: { label: string; value: string; onCop
         <div className="flex items-center gap-2">
             <span className="input-label w-32 shrink-0">{label}</span>
             <code className="text-xs font-mono text-(--base-08) bg-(--base-01) px-2 py-1 rounded truncate flex-1">{value}</code>
-            <button onClick={copy} title={`Copy ${label}`} className="p-1.5 text-(--base-06) hover:text-(--accent-light) transition-colors shrink-0">
-                {copied ? <Check size={14} className="text-(--success-light)" /> : <Copy size={14} />}
-            </button>
+            <Tooltip content={`Copy ${label}`}>
+                <button aria-label={`Copy ${label}`} onClick={copy} className="p-1.5 text-(--base-06) hover:text-(--accent-light) transition-colors shrink-0">
+                    {copied ? <Check size={14} className="text-(--success-light)" /> : <Copy size={14} />}
+                </button>
+            </Tooltip>
         </div>
     );
 }

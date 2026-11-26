@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import { Tabs as SdkTabs, TabsList, TabsTab } from '@ui-sdk/react/tabs';
 
 /**
  * The panel's sub-navigation.
@@ -15,6 +16,8 @@ export interface TabItem<Id extends string = string> {
     label: string;
     icon?: React.ElementType;
     disabled?: boolean;
+    /** Native tooltip; the reason a tab is disabled. */
+    title?: string;
 }
 
 export default function Tabs<Id extends string = string>({
@@ -30,30 +33,31 @@ export default function Tabs<Id extends string = string>({
     className?: string;
     ariaLabel?: string;
 }) {
+    // List only: callers render the panels themselves, so no TabsPanel.
     return (
-        <div className={`tab-bar ${className}`} role="tablist" aria-label={ariaLabel}>
-            {items.map(({ id, label, icon: Icon, disabled }) => {
-                const isActive = id === active;
-                return (
-                    <button
-                        key={id}
-                        type="button"
-                        role="tab"
-                        aria-selected={isActive}
-                        disabled={disabled}
-                        onClick={() => onChange(id)}
-                        className={`tab ${isActive ? 'tab-active' : ''}`}
-                    >
-                        {Icon && (
-                            <Icon
-                                size={14}
-                                className={isActive ? 'text-(--accent-light)' : 'text-(--base-06)'}
-                            />
-                        )}
-                        {label}
-                    </button>
-                );
-            })}
-        </div>
+        <SdkTabs value={active} onValueChange={v => { if (v != null) onChange(v as Id); }}>
+            <TabsList className={`tab-bar ${className}`} aria-label={ariaLabel}>
+                {items.map(({ id, label, icon: Icon, disabled, title }) => {
+                    const isActive = id === active;
+                    return (
+                        <TabsTab
+                            key={id}
+                            value={id}
+                            disabled={disabled}
+                            title={title}
+                            className={`tab ${isActive ? 'tab-active' : ''}`}
+                        >
+                            {Icon && (
+                                <Icon
+                                    size={14}
+                                    className={isActive ? 'text-(--accent-light)' : 'text-(--base-06)'}
+                                />
+                            )}
+                            {label}
+                        </TabsTab>
+                    );
+                })}
+            </TabsList>
+        </SdkTabs>
     );
 }

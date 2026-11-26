@@ -4,6 +4,9 @@ import { useEffect, useState } from 'react';
 import { AlertTriangle, Mic } from 'lucide-react';
 import { SkeletonCard, SkeletonTable } from '@/components/Skeleton';
 import { formatBytes } from '@/components/infra/TrafficPools';
+import { Meter, MeterIndicator, MeterTrack } from '@ui-sdk/react/meter';
+import Section from '@/components/ui/Section';
+import EmptyState from '@/components/ui/EmptyState';
 import { getVoiceOverview, type VoiceOverview, type VoiceRegionStat, type BedrockServerStat } from '@/lib/api';
 
 /**
@@ -26,6 +29,11 @@ export function voiceRegionRows(o: VoiceOverview): VoiceRegionRow[] {
 export function bedrockRows(o: VoiceOverview): BedrockServerStat[] {
     return [...(o.bedrock ?? [])].sort((a, b) => (b.rxBytes + b.txBytes) - (a.rxBytes + a.txBytes));
 }
+
+// Quiet rows with fixed columns, so the header and every row line up.
+const REGION_GRID = 'grid grid-cols-[minmax(6rem,1fr)_6rem_minmax(10rem,1.5fr)_6rem_6rem] items-center gap-4';
+const SERVER_GRID = 'grid grid-cols-[minmax(8rem,1.5fr)_minmax(5rem,1fr)_4rem_minmax(8rem,1fr)_6rem_6rem] items-center gap-4';
+const BEDROCK_GRID = 'grid grid-cols-[minmax(8rem,1.5fr)_minmax(5rem,1fr)_6rem_6rem] items-center gap-4';
 
 const MOD_LABEL: Record<string, string> = { svc: 'Simple Voice Chat', plasmo: 'Plasmo Voice' };
 
@@ -63,141 +71,111 @@ export default function VoicePanel() {
     const bedrock = overview ? bedrockRows(overview) : [];
 
     return (
-        <div className="flex flex-col gap-4">
-            <div className="flex items-end justify-between gap-3 flex-wrap">
-                <div className="flex items-center gap-2">
-                    <Mic size={16} className="text-(--base-06)" aria-hidden="true" />
-                    <span className="mono-label">Voice chat</span>
-                </div>
-                <label className="flex flex-col gap-1">
-                    <span className="mono-label">Month</span>
-                    <input
-                        type="month"
-                        value={period}
-                        onChange={e => setPeriod(e.target.value || currentMonth())}
-                        className="input-field w-44"
-                    />
-                </label>
-            </div>
-
-            {loading && !overview ? (
-                <>
-                    <SkeletonCard height="h-32" />
-                    <SkeletonTable />
-                </>
-            ) : error ? (
-                <div className="alert alert-error text-sm flex items-start gap-2" role="alert">
-                    <AlertTriangle size={15} className="mt-0.5 shrink-0" />
-                    <span>{error}</span>
-                </div>
-            ) : regions.length === 0 && bedrock.length === 0 ? (
-                <div className="card p-8 text-center text-(--base-06) text-sm">
-                    No voice relay is running and no server has voice chat on.
-                </div>
-            ) : (
-                <>
-                    {regions.length > 0 && <section className="card p-4 overflow-x-auto" aria-label="Voice per region">
-                        <table className="w-full text-sm">
-                            <thead>
-                                <tr className="border-b border-(--base-03)">
-                                    <th className="mono-label text-left pb-2 pr-4">Region</th>
-                                    <th className="mono-label text-left pb-2 pr-4">Relays</th>
-                                    <th className="mono-label text-left pb-2 pr-4">Ports</th>
-                                    <th className="mono-label text-right pb-2 pr-4">To servers</th>
-                                    <th className="mono-label text-right pb-2">To players</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {regions.map(r => (
-                                    <tr key={r.region} className="border-b border-(--base-03)/50 last:border-0">
-                                        <td className="py-2.5 pr-4 text-(--base-09) font-medium">{r.region}</td>
-                                        <td className={`py-2.5 pr-4 tabular-nums ${r.relays === 0 ? 'text-(--warning-light)' : 'text-(--base-07)'}`}>
-                                            {r.relays === 0 ? 'None running' : r.relays}
-                                        </td>
-                                        <td className="py-2.5 pr-4 min-w-40">
-                                            <div className="text-xs text-(--base-07) tabular-nums mb-1">
-                                                {r.portsUsed} of {r.portsTotal} ({r.pct}%)
+        <div className="flex flex-col gap-6">
+            <Section
+                title="Voice chat"
+                description="Relays, port pools and voice traffic for one month."
+                actions={
+                    <label className="flex items-center gap-2">
+                        <span className="srv-label">Month</span>
+                        <input
+                            type="month"
+                            value={period}
+                            onChange={e => setPeriod(e.target.value || currentMonth())}
+                            className="input-field w-44"
+                        />
+                    </label>
+                }
+            >
+                {loading && !overview ? (
+                    <div className="flex flex-col gap-3" aria-busy="true">
+                        <SkeletonCard height="h-32" />
+                        <SkeletonTable />
+                    </div>
+                ) : error ? (
+                    <EmptyState tone="error" icon={<AlertTriangle size={20} />} title="Could not load voice chat" description={error} />
+                ) : regions.length === 0 && bedrock.length === 0 ? (
+                    <EmptyState icon={<Mic size={20} />} title="No voice relay is running" description="No server has voice chat on either." />
+                ) : (
+                    <div className="flex flex-col gap-3">
+                        {regions.length > 0 && (
+                            <section className="srv-surface overflow-x-auto" aria-label="Voice per region">
+                                <div className="min-w-[36rem] p-1.5">
+                                    <div className={`${REGION_GRID} srv-label px-3 pb-1 pt-2`}>
+                                        <span>Region</span><span>Relays</span><span>Ports</span>
+                                        <span className="text-right">To servers</span><span className="text-right">To players</span>
+                                    </div>
+                                    {regions.map(r => (
+                                        <div key={r.region} className={`app-row ${REGION_GRID}`}>
+                                            <span className="truncate text-sm font-medium text-(--base-09)">{r.region}</span>
+                                            <span className={`srv-num text-sm ${r.relays === 0 ? 'text-(--warning-light)' : 'text-(--base-07)'}`}>
+                                                {r.relays === 0 ? 'None running' : r.relays}
+                                            </span>
+                                            <div className="min-w-0 space-y-1.5">
+                                                <div className="srv-num text-xs text-(--base-07)">
+                                                    {r.portsUsed} of {r.portsTotal} ({r.pct}%)
+                                                </div>
+                                                <Meter value={Math.min(100, r.pct)} min={0} max={100} aria-label={`${r.region}: ${r.portsUsed} of ${r.portsTotal} voice ports held`}>
+                                                    <MeterTrack className="srv-meter-track">
+                                                        <MeterIndicator className="srv-meter-fill" data-tone={r.pct >= 90 ? 'error' : r.pct >= 80 ? 'warning' : undefined} />
+                                                    </MeterTrack>
+                                                </Meter>
                                             </div>
-                                            <div
-                                                className="h-1.5 rounded-full bg-(--base-03) overflow-hidden"
-                                                role="progressbar"
-                                                aria-valuenow={r.pct}
-                                                aria-valuemin={0}
-                                                aria-valuemax={100}
-                                                aria-label={`${r.region}: ${r.portsUsed} of ${r.portsTotal} voice ports held`}
-                                            >
-                                                <div
-                                                    className={`h-full rounded-full ${r.pct >= 90 ? 'bg-(--error)' : r.pct >= 80 ? 'bg-(--warning)' : 'bg-(--accent)'}`}
-                                                    style={{ width: `${Math.min(100, r.pct)}%` }}
-                                                />
-                                            </div>
-                                        </td>
-                                        <td className="py-2.5 pr-4 text-right tabular-nums text-(--base-07)">{formatBytes(r.rxBytes)}</td>
-                                        <td className="py-2.5 text-right tabular-nums text-(--base-07)">{formatBytes(r.txBytes)}</td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    </section>}
-
-                    {regions.length > 0 && <section className="card p-4 overflow-x-auto" aria-label="Voice per server">
-                        {overview!.servers.length === 0 ? (
-                            <p className="text-sm text-(--base-06) text-center py-4">No server has voice chat on or moved voice this month.</p>
-                        ) : (
-                            <table className="w-full text-sm">
-                                <thead>
-                                    <tr className="border-b border-(--base-03)">
-                                        <th className="mono-label text-left pb-2 pr-4">Server</th>
-                                        <th className="mono-label text-left pb-2 pr-4">Region</th>
-                                        <th className="mono-label text-left pb-2 pr-4 hidden md:table-cell">Port</th>
-                                        <th className="mono-label text-left pb-2 pr-4 hidden md:table-cell">Mod</th>
-                                        <th className="mono-label text-right pb-2 pr-4">To server</th>
-                                        <th className="mono-label text-right pb-2">To players</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {overview!.servers.map(s => (
-                                        <tr key={`${s.serverId}|${s.region}`} className="border-b border-(--base-03)/50 last:border-0 hover:bg-(--base-03)/30 transition-colors">
-                                            <td className="py-2.5 pr-4 text-(--base-09)">{s.serverName || `Server ${s.serverId}`}</td>
-                                            <td className="py-2.5 pr-4 text-(--base-07)">{s.region}</td>
-                                            <td className="py-2.5 pr-4 text-(--base-07) font-mono text-xs hidden md:table-cell">{s.port > 0 ? s.port : 'Off'}</td>
-                                            <td className="py-2.5 pr-4 text-(--base-07) hidden md:table-cell">{MOD_LABEL[s.mod] || '-'}</td>
-                                            <td className="py-2.5 pr-4 text-right tabular-nums text-(--base-07)">{formatBytes(s.rxBytes)}</td>
-                                            <td className="py-2.5 text-right tabular-nums text-(--base-07)">{formatBytes(s.txBytes)}</td>
-                                        </tr>
+                                            <span className="srv-num text-right text-sm text-(--base-07)">{formatBytes(r.rxBytes)}</span>
+                                            <span className="srv-num text-right text-sm text-(--base-07)">{formatBytes(r.txBytes)}</span>
+                                        </div>
                                     ))}
-                                </tbody>
-                            </table>
+                                </div>
+                            </section>
                         )}
-                    </section>}
 
-                    {bedrock.length > 0 && (
-                        <section className="card p-4 overflow-x-auto" aria-label="Bedrock per server">
-                            <span className="mono-label block mb-2">Bedrock players</span>
-                            <table className="w-full text-sm">
-                                <thead>
-                                    <tr className="border-b border-(--base-03)">
-                                        <th className="mono-label text-left pb-2 pr-4">Server</th>
-                                        <th className="mono-label text-left pb-2 pr-4">Region</th>
-                                        <th className="mono-label text-right pb-2 pr-4">To server</th>
-                                        <th className="mono-label text-right pb-2">To players</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
+                        {regions.length > 0 && (
+                            <section className="srv-surface overflow-x-auto" aria-label="Voice per server">
+                                {overview!.servers.length === 0 ? (
+                                    <p className="py-6 text-center text-[13px] text-(--base-06)">No server has voice chat on or moved voice this month.</p>
+                                ) : (
+                                    <div className="min-w-[36rem] p-1.5">
+                                        <div className={`${SERVER_GRID} srv-label px-3 pb-1 pt-2`}>
+                                            <span>Server</span><span>Region</span><span>Port</span><span>Mod</span>
+                                            <span className="text-right">To server</span><span className="text-right">To players</span>
+                                        </div>
+                                        {overview!.servers.map(s => (
+                                            <div key={`${s.serverId}|${s.region}`} className={`app-row ${SERVER_GRID}`}>
+                                                <span className="truncate text-sm text-(--base-09)">{s.serverName || `Server ${s.serverId}`}</span>
+                                                <span className="truncate text-sm text-(--base-07)">{s.region}</span>
+                                                <span className="srv-num text-xs text-(--base-07)">{s.port > 0 ? s.port : 'Off'}</span>
+                                                <span className="truncate text-sm text-(--base-07)">{MOD_LABEL[s.mod] || '-'}</span>
+                                                <span className="srv-num text-right text-sm text-(--base-07)">{formatBytes(s.rxBytes)}</span>
+                                                <span className="srv-num text-right text-sm text-(--base-07)">{formatBytes(s.txBytes)}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </section>
+                        )}
+
+                        {bedrock.length > 0 && (
+                            <section className="srv-surface overflow-x-auto" aria-label="Bedrock per server">
+                                <div className="min-w-[30rem] p-1.5">
+                                    <div className="srv-label px-3 pb-1 pt-2 text-[13px] font-semibold text-(--base-09)">Bedrock players</div>
+                                    <div className={`${BEDROCK_GRID} srv-label px-3 pb-1`}>
+                                        <span>Server</span><span>Region</span>
+                                        <span className="text-right">To server</span><span className="text-right">To players</span>
+                                    </div>
                                     {bedrock.map(s => (
-                                        <tr key={`${s.serverId}|${s.region}`} className="border-b border-(--base-03)/50 last:border-0 hover:bg-(--base-03)/30 transition-colors">
-                                            <td className="py-2.5 pr-4 text-(--base-09)">{s.serverName || `Server ${s.serverId}`}</td>
-                                            <td className="py-2.5 pr-4 text-(--base-07)">{s.region}</td>
-                                            <td className="py-2.5 pr-4 text-right tabular-nums text-(--base-07)">{formatBytes(s.rxBytes)}</td>
-                                            <td className="py-2.5 text-right tabular-nums text-(--base-07)">{formatBytes(s.txBytes)}</td>
-                                        </tr>
+                                        <div key={`${s.serverId}|${s.region}`} className={`app-row ${BEDROCK_GRID}`}>
+                                            <span className="truncate text-sm text-(--base-09)">{s.serverName || `Server ${s.serverId}`}</span>
+                                            <span className="truncate text-sm text-(--base-07)">{s.region}</span>
+                                            <span className="srv-num text-right text-sm text-(--base-07)">{formatBytes(s.rxBytes)}</span>
+                                            <span className="srv-num text-right text-sm text-(--base-07)">{formatBytes(s.txBytes)}</span>
+                                        </div>
                                     ))}
-                                </tbody>
-                            </table>
-                        </section>
-                    )}
-                </>
-            )}
+                                </div>
+                            </section>
+                        )}
+                    </div>
+                )}
+            </Section>
         </div>
     );
 }

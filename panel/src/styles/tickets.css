@@ -1,0 +1,72 @@
+/* Tickets area (tk-*). Tokens only; the page frame comes from app-* / srv-*. */
+.tk-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 9999px;
+  background: var(--base-03);
+  color: var(--base-07);
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.tk-pill[data-tone="accent"] { background: var(--accent-ghost); color: var(--accent-light); }
+.tk-pill[data-tone="warning"] { background: var(--warning-ghost); color: var(--warning-light); }
+.tk-pill[data-tone="success"] { background: var(--success-ghost); color: var(--success-light); }
+.tk-pill[data-tone="error"] { background: var(--error-ghost); color: var(--error-light); }
+.tk-pill[data-tone="muted"] { color: var(--base-06); }
+
+.tk-msg {
+  max-width: 42rem;
+  padding: 12px 14px;
+  border-radius: var(--radius-lg);
+  background: var(--base-02);
+  color: var(--base-09);
+  font-size: 14px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.tk-msg[data-mine="true"] { background: var(--accent-ghost); }
+.tk-msg[data-internal="true"] { background: var(--warning-ghost); }
+
+.tk-link-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--accent-light);
+  border-radius: var(--radius-md);
+  transition: color 0.15s ease-out;
+}
+.tk-link-btn:hover { color: var(--base-09); }
+.tk-link-btn:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.tk-link-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.tk-link-btn[data-danger="true"] { color: var(--error-light); }
+
+.tk-field { display: flex; flex-direction: column; gap: 6px; }
+.tk-hint { font-size: 12px; color: var(--base-06); line-height: 1.45; }
+
+/* Access: invited list + detail pane */
+.tk-split { display: grid; gap: 24px; grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 900px) { .tk-split { grid-template-columns: 280px minmax(0, 1fr); } }
+
+/* Custom tabs workspace: nav + frame, sized against the viewport below the page header */
+.tk-tabs-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 16rem) 70vh;
+  gap: 16px;
+}
+@media (min-width: 900px) {
+  .tk-tabs-shell {
+    grid-template-columns: 260px minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+    height: calc(100vh - 280px);
+    min-height: 420px;
+  }
+}
+@media (prefers-reduced-motion: reduce) { .tk-link-btn { transition: none; } }

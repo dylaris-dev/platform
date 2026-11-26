@@ -11,6 +11,10 @@ import SettingsCard from '@/components/settings/SettingsCard';
 import { toast } from '@/components/ui/Toast';
 import { useBusy } from '@/lib/useBusy';
 import { fmtDateTime } from '@/lib/time';
+import Select from '@/components/ui/Select';
+import Checkbox from '@/components/ui/Checkbox';
+import Callout from '@/components/server/Callout';
+import '@/styles/settings-storage.css';
 
 /**
  * Reading a bundle back.
@@ -77,18 +81,17 @@ export default function PlatformRestoreCard() {
             description="Read a platform bundle back, from this instance or from another one."
             icon={RotateCcw}
         >
-            <div className="alert alert-info text-xs mb-3">
-                <Info size={13} className="text-(--accent-light) shrink-0 mt-0.5" />
-                <p>
+            <div className="mb-3">
+                <Callout tone="info" icon={<Info size={14} />}>
                     The database is restored into a <strong>new, empty database you name</strong>, never
                     over the one this Core is running on. Nothing here interrupts the running
                     platform: once you have checked the result, you switch over by restarting Core
                     with the new <code>DB_*</code> values.
-                </p>
+                </Callout>
             </div>
 
             {!file ? (
-                <label className="min-h-[110px] border-2 border-dashed border-(--base-04) rounded-lg flex flex-col items-center justify-center gap-2 cursor-pointer transition-all hover:border-(--accent) hover:bg-(--accent-ghost)/50">
+                <label className="set-sto-drop focus-within:[box-shadow:var(--focus-ring)]">
                     <Upload size={20} className="text-(--base-06)" />
                     <span className="text-sm text-(--base-07)">Choose a bundle</span>
                     <span className="text-xs text-(--base-06)">.dylaris-bundle</span>
@@ -97,7 +100,7 @@ export default function PlatformRestoreCard() {
                 </label>
             ) : (
                 <div className="space-y-3">
-                    <div className="flex items-center gap-3 p-3 rounded-md border border-(--base-04) bg-(--base-02)">
+                    <div className="flex items-center gap-3 p-3 rounded-lg bg-(--base-03)">
                         <div className="flex-1 min-w-0">
                             <p className="text-sm font-mono text-(--base-09) truncate">{file.name}</p>
                             <p className="text-xs text-(--base-06)">
@@ -123,7 +126,7 @@ export default function PlatformRestoreCard() {
                                     // not to the field: editing it makes the green line a lie.
                                     setInfo((prev: BundleInspection | null) => prev ? { ...prev, passphraseOk: false } : prev);
                                 }} />
-                            <button type="button" className="btn btn-sm" disabled={!passphrase || inspecting}
+                            <button type="button" className="btn btn-secondary btn-sm" disabled={!passphrase || inspecting}
                                 onClick={() => file && inspect(file, passphrase)}>
                                 Check
                             </button>
@@ -144,14 +147,11 @@ export default function PlatformRestoreCard() {
                     </div>
 
                     {info?.passphraseOk && info.carriesClusterSecret === false && (
-                        <div className="alert alert-warning text-xs">
-                            <AlertTriangle size={13} className="text-(--warning-light) shrink-0 mt-0.5" />
-                            <p>
-                                This bundle carries no cluster secret, so the credentials inside it
-                                cannot be re-encrypted for this installation. Nodes will have to
-                                re-pair and storage credentials will have to be entered again.
-                            </p>
-                        </div>
+                        <Callout tone="warning" icon={<AlertTriangle size={14} />}>
+                            This bundle carries no cluster secret, so the credentials inside it
+                            cannot be re-encrypted for this installation. Nodes will have to
+                            re-pair and storage credentials will have to be entered again.
+                        </Callout>
                     )}
 
                     <div>
@@ -161,11 +161,9 @@ export default function PlatformRestoreCard() {
                                 ['database', 'Platform database'],
                                 ['modpacks', 'Modpacks'],
                             ] as [keyof PlatformRestoreSelection, string][]).map(([key, label]) => (
-                                <label key={key} className="flex items-center gap-2.5 cursor-pointer">
-                                    <input type="checkbox" checked={components[key]}
-                                        onChange={e => setComponents((prev: PlatformRestoreSelection) => ({ ...prev, [key]: e.target.checked }))} />
-                                    <span className="text-sm text-(--base-09)">{label}</span>
-                                </label>
+                                <Checkbox key={key} checked={components[key]}
+                                    onChange={c => setComponents((prev: PlatformRestoreSelection) => ({ ...prev, [key]: c }))}
+                                    label={label} />
                             ))}
                         </div>
                         <p className="text-xs text-(--base-06) mt-1">
@@ -196,25 +194,13 @@ export default function PlatformRestoreCard() {
                                     onChange={e => setTarget(t => ({ ...t, password: e.target.value }))} />
                                 <input className="input-field" placeholder="Database name" value={target.dbName}
                                     onChange={e => setTarget(t => ({ ...t, dbName: e.target.value }))} />
-                                <select className="input-field" value={target.sslMode}
-                                    onChange={e => setTarget(t => ({ ...t, sslMode: e.target.value }))}>
-                                    <option value="disable">sslmode: disable</option>
-                                    <option value="require">sslmode: require</option>
-                                    <option value="verify-full">sslmode: verify-full</option>
-                                </select>
+                                <Select ariaLabel="SSL mode" value={target.sslMode}
+                                    onChange={v => setTarget(t => ({ ...t, sslMode: v }))}
+                                    options={['disable', 'require', 'verify-full'].map(v => ({ value: v, label: `sslmode: ${v}` }))} />
                             </div>
-                            <label className="flex items-start gap-2.5 cursor-pointer">
-                                <input type="checkbox" className="mt-0.5" checked={overwrite}
-                                    onChange={e => setOverwrite(e.target.checked)} />
-                                <span className="min-w-0">
-                                    <span className="text-sm text-(--base-09)">This database already has tables, overwrite them</span>
-                                    <span className="block text-xs text-(--base-06)">
-                                        Without this a target that is not empty is refused. Restoring over an
-                                        existing schema leaves rows from two installations in one database,
-                                        with nothing afterwards saying which came from where.
-                                    </span>
-                                </span>
-                            </label>
+                            <Checkbox checked={overwrite} onChange={setOverwrite}
+                                label="This database already has tables, overwrite them"
+                                hint="Without this a target that is not empty is refused. Restoring over an existing schema leaves rows from two installations in one database, with nothing afterwards saying which came from where." />
                         </div>
                     )}
 
@@ -232,7 +218,7 @@ export default function PlatformRestoreCard() {
 
 function RestoreResult({ result }: { result: PlatformRestoreResult }) {
     return (
-        <div className="border border-(--base-04) rounded-md p-3 space-y-2 bg-(--base-02)">
+        <div className="p-3 space-y-2 rounded-lg bg-(--base-03)">
             <p className="text-sm text-(--base-09)">
                 From {result.source || 'an unknown release'}
                 {result.createdAt ? `, ${fmtDateTime(result.createdAt)}` : ''}
@@ -252,10 +238,7 @@ function RestoreResult({ result }: { result: PlatformRestoreResult }) {
                 </p>
             )}
             {(result.warnings || []).map((wmsg, i) => (
-                <div key={i} className="alert alert-warning text-xs">
-                    <AlertTriangle size={13} className="text-(--warning-light) shrink-0 mt-0.5" />
-                    <p>{wmsg}</p>
-                </div>
+                <Callout key={i} tone="warning" icon={<AlertTriangle size={14} />}>{wmsg}</Callout>
             ))}
         </div>
     );

@@ -2,6 +2,9 @@
 
 import React, { useMemo } from 'react';
 import { X, RotateCcw, Trash2, RefreshCw, AlertTriangle, Pencil, Eye } from 'lucide-react';
+import InstallMethodTabs from './InstallMethodTabs';
+import Callout from '@/components/server/Callout';
+import '@/styles/server-setup.css';
 import JavaVersionPicker, { recommendJavaForSetup } from './JavaVersionPicker';
 import JvmFlagsSection from './JvmFlagsSection';
 import VersionPicker, { VersionEntry } from './VersionPicker';
@@ -42,7 +45,7 @@ function InstalledNow({ install, kind }: { install?: SubServerInstall; kind: 'mo
         : `build ${install.packBuildId}`;
 
     return (
-        <div className="mb-3 rounded-md border border-(--base-03) bg-(--base-02) px-3 py-2">
+        <div className="mb-3 rounded-md bg-(--base-03) px-3 py-2">
             <div className="text-xs text-(--base-06)">Installed now</div>
             <div className="text-sm text-(--base-09) mt-0.5 flex flex-wrap items-baseline gap-x-2">
                 <span className="font-medium break-all">{name}</span>
@@ -150,7 +153,7 @@ function InstalledSoftware({ model }: { model: SetupPreviewModel }) {
             {model.installed.map(r => (
                 <React.Fragment key={r.label}>
                     <dt className="text-(--base-06)">{r.label}</dt>
-                    <dd className={`text-(--base-09) break-all ${r.mono ? 'font-mono' : 'font-medium'}`}>{r.value}</dd>
+                    <dd className={`text-(--base-09) break-all ${r.mono ? 'srv-num' : 'font-medium'}`}>{r.value}</dd>
                 </React.Fragment>
             ))}
         </dl>
@@ -170,18 +173,18 @@ export default function SetupEditMode(props: SetupEditModeProps) {
     const view = props.view;
 
     return (
-        <div className="flex-1 card flex flex-col overflow-hidden min-w-0">
+        <div className="srv-surface flex min-w-0 flex-1 flex-col overflow-hidden">
             {/* Header */}
-            <div className="modal-header flex items-center justify-between shrink-0">
+            <div className="flex shrink-0 items-start justify-between gap-3 px-6 pt-6">
                 {view ? (
                     <>
                         <div className="min-w-0">
-                            <h3 className="modal-title">Server Configuration</h3>
-                            <p className="text-xs text-(--base-07) mt-1 flex items-center gap-2 flex-wrap">
+                            <h2 className="h-page">Server configuration</h2>
+                            <p className="mt-1 flex flex-wrap items-center gap-2 text-sm text-(--base-06)">
                                 {view.model.isActive ? 'Active:' : 'Viewing:'}
-                                <span className="font-mono text-(--primary-light) break-all">{view.model.subServer}</span>
+                                <span className="srv-num text-(--primary-light) break-all">{view.model.subServer}</span>
                                 {!view.model.isActive && (
-                                    <span className="badge badge-warning"><Eye size={11} /> Preview - not active</span>
+                                    <span className="srv-chip text-(--warning-light)"><Eye size={14} /> Preview, not active</span>
                                 )}
                             </p>
                         </div>
@@ -200,39 +203,33 @@ export default function SetupEditMode(props: SetupEditModeProps) {
                 ) : (
                     <>
                         <div>
-                            <h3 className="modal-title">Edit Server Config</h3>
-                            <p className="text-xs text-(--base-07) mt-1">
-                                Editing: <span className="font-mono text-(--primary-light)">{props.subName}</span>
+                            <h2 className="h-page">Edit server config</h2>
+                            <p className="mt-1 text-sm text-(--base-06)">
+                                Editing: <span className="srv-num text-(--primary-light)">{props.subName}</span>
                             </p>
                         </div>
-                        <button type="button" onClick={props.onClose} aria-label="Close editing" className="text-(--base-07) hover:text-(--error-light) transition-colors">
-                            <X size={20} />
+                        <button type="button" onClick={props.onClose} aria-label="Close editing" className="btn btn-ghost btn-icon">
+                            <X size={16} />
                         </button>
                     </>
                 )}
             </div>
 
             {/* Body */}
-            <div className="flex-1 overflow-y-auto p-6 space-y-4 min-h-0">
+            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 py-5">
 
                 {/* Warning banner */}
                 {props.activeServerMissing && (!view || view.model.isActive) && (
-                    <div className="alert alert-warning gap-3 rounded-xl">
-                        <AlertTriangle size={20} className="text-(--warning-light) shrink-0" />
-                        <div className="text-sm">
-                            <p className="font-medium text-(--warning-light)">Server folder not found</p>
-                            <p className="text-(--base-07) mt-1">
-                                The folder <code className="bg-black/20 px-1 rounded font-mono">{props.activeSubServer}</code> no longer exists.
-                            </p>
-                        </div>
-                    </div>
+                    <Callout tone="warning" icon={<AlertTriangle size={16} />} title="Server folder not found">
+                        The folder <code className="srv-num rounded bg-black/20 px-1">{props.activeSubServer}</code> no longer exists.
+                    </Callout>
                 )}
 
                 {/* Card 1: Runtime Settings */}
-                <div className="card p-5 space-y-5">
+                <div className="srv-setup-card space-y-5">
                     <div className="flex items-baseline justify-between gap-3">
-                        <p className="text-sm font-semibold text-(--base-09)">Runtime Settings</p>
-                        <span className="text-xs text-(--base-06)">{props.ramMB} MB RAM</span>
+                        <h3 className="text-sm font-medium text-(--base-09)">Runtime settings</h3>
+                        <span className="srv-num text-xs text-(--base-06)">{props.ramMB} MB RAM</span>
                     </div>
                     {view && !view.model.isActive && (
                         <p className="text-xs text-(--base-07) -mt-2">
@@ -260,49 +257,17 @@ export default function SetupEditMode(props: SetupEditModeProps) {
                 </div>
 
                 {view && (
-                    <div className="card p-5 space-y-4">
-                        <p className="text-sm font-semibold text-(--base-09)">Installed Software</p>
+                    <div className="srv-setup-card space-y-4">
+                        <h3 className="text-sm font-medium text-(--base-09)">Installed software</h3>
                         <InstalledSoftware model={view.model} />
                     </div>
                 )}
 
                 {/* Card 2: Reinstall Software */}
-                {!view && <div className="card p-5 space-y-4">
-                    <p className="text-sm font-semibold text-(--base-09)">Reinstall Software</p>
+                {!view && <div className="srv-setup-card space-y-4">
+                    <h3 className="text-sm font-medium text-(--base-09)">Reinstall software</h3>
 
-                    {/* Install tabs */}
-                    <div className="flex flex-wrap gap-1 bg-(--base-03) p-1 rounded-md">
-                        <button type="button" onClick={() => props.onInstallTabChange('online')}
-                            className={`btn flex-auto whitespace-nowrap py-2 text-sm border-0 rounded-md ${props.installTab === 'online' ? 'bg-(--accent) text-white' : 'bg-transparent text-(--base-07) hover:text-(--base-09)'}`}>
-                            Online
-                        </button>
-                        {props.templatesEnabled && (
-                            <button type="button" onClick={() => props.onInstallTabChange('template')}
-                                className={`btn flex-auto whitespace-nowrap py-2 text-sm border-0 rounded-md ${props.installTab === 'template' ? 'bg-(--accent) text-white' : 'bg-transparent text-(--base-07) hover:text-(--base-09)'}`}>
-                                Template
-                            </button>
-                        )}
-                        <button type="button" onClick={() => props.onInstallTabChange('upload')}
-                            className={`btn flex-auto whitespace-nowrap py-2 text-sm border-0 rounded-md ${props.installTab === 'upload' ? 'bg-(--accent) text-white' : 'bg-transparent text-(--base-07) hover:text-(--base-09)'}`}>
-                            Upload / SFTP
-                        </button>
-                        <button type="button" onClick={() => props.onInstallTabChange('backup')}
-                            className={`btn flex-auto whitespace-nowrap py-2 text-sm border-0 rounded-md ${props.installTab === 'backup' ? 'bg-(--accent) text-white' : 'bg-transparent text-(--base-07) hover:text-(--base-09)'}`}>
-                            Backup
-                        </button>
-                        <button type="button" onClick={() => props.onInstallTabChange('modpack')}
-                            className={`btn flex-auto whitespace-nowrap py-2 text-sm border-0 rounded-md ${props.installTab === 'modpack' ? 'bg-(--accent) text-white' : 'bg-transparent text-(--base-07) hover:text-(--base-09)'}`}>
-                            Modrinth modpacks
-                        </button>
-                        <button type="button" onClick={() => props.onInstallTabChange('pack')}
-                            className={`btn flex-auto whitespace-nowrap py-2 text-sm border-0 rounded-md ${props.installTab === 'pack' ? 'bg-(--accent) text-white' : 'bg-transparent text-(--base-07) hover:text-(--base-09)'}`}>
-                            My modpacks
-                        </button>
-                        <button type="button" onClick={() => props.onInstallTabChange('technic')}
-                            className={`btn flex-auto whitespace-nowrap py-2 text-sm border-0 rounded-md ${props.installTab === 'technic' ? 'bg-(--accent) text-white' : 'bg-transparent text-(--base-07) hover:text-(--base-09)'}`}>
-                            Technic
-                        </button>
-                    </div>
+                    <InstallMethodTabs value={props.installTab} onChange={props.onInstallTabChange} templatesEnabled={props.templatesEnabled} />
 
                     {/* Tab content */}
                     {props.installTab === 'online' && (
@@ -384,16 +349,16 @@ export default function SetupEditMode(props: SetupEditModeProps) {
                     )}
                 </div>}
 
-                {props.error && <p className="text-(--error-light) text-sm font-medium">{props.error}</p>}
+                {props.error && <Callout tone="error" icon={<AlertTriangle size={16} />} role="alert">{props.error}</Callout>}
             </div>
 
             {/* Footer */}
-            {!view && <div className="modal-footer flex gap-2">
+            {!view && <div className="srv-setup-footer shrink-0">
                 <button
                     type="button"
                     onClick={props.onSubmit}
                     disabled={props.submitting || props.fileTooLarge || props.submitBlocked}
-                    className="btn btn-primary btn-lg flex-1"
+                    className="btn btn-primary"
                 >
                     {props.submitting
                         ? <><RefreshCw size={16} className="animate-spin" /> Working...</>
@@ -403,8 +368,9 @@ export default function SetupEditMode(props: SetupEditModeProps) {
                 <button
                     type="button"
                     onClick={props.onDelete}
-                    className="btn btn-danger btn-lg"
+                    className="btn btn-danger ml-auto"
                     title="Delete this sub-server"
+                    aria-label="Delete this sub-server"
                 >
                     <Trash2 size={16} />
                 </button>

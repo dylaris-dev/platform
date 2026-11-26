@@ -1,6 +1,7 @@
 "use client";
 
 import { AlertTriangle, RefreshCw } from 'lucide-react';
+import EmptyState from '@/components/ui/EmptyState';
 
 /**
  * Shown in place of a settings form whose load failed.
@@ -24,22 +25,16 @@ export default function SettingsLoadError({ what, onRetry }: {
     onRetry: () => void;
 }) {
     return (
-        <div className="card p-5 space-y-3">
-            <div className="flex items-center gap-2 text-sm font-medium text-(--warning-light)">
-                <AlertTriangle size={15} />
-                Could not load {what}
-            </div>
-            <p className="text-sm text-(--base-07)">
-                Nothing has changed. The form is hidden on purpose: it would show its own defaults,
-                which look exactly like a configuration that was never set.
-            </p>
-            <button
-                type="button"
-                onClick={onRetry}
-                className="btn btn-secondary btn-sm inline-flex w-fit items-center gap-1.5"
-            >
-                <RefreshCw size={13} /> Try again
-            </button>
-        </div>
+        <EmptyState
+            tone="error"
+            icon={<AlertTriangle size={20} />}
+            title={`Could not load ${what}`}
+            description="Nothing has changed. The form is hidden on purpose: it would show its own defaults, which look exactly like a configuration that was never set."
+            action={
+                <button type="button" onClick={onRetry} className="btn btn-secondary btn-sm inline-flex items-center gap-1.5">
+                    <RefreshCw size={13} /> Try again
+                </button>
+            }
+        />
     );
 }

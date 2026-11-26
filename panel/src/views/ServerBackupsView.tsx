@@ -2,11 +2,13 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 
-import { Plus, Play, Trash2, Pencil, X, Download, Clock, HardDrive, CircleAlert, Save, Undo2, AlertTriangle } from 'lucide-react';
+import { Plus, Play, Trash2, Pencil, X, Download, Clock, HardDrive, CircleAlert, Save, Undo2, AlertTriangle, MoreHorizontal } from 'lucide-react';
+import { Meter, MeterIndicator, MeterTrack } from '@ui-sdk/react/meter';
+import '@/styles/server-backups.css';
 import { useAppData } from '@/lib/AppDataContext';
 import { restoresNeedPolling } from '@/lib/backupPolling';
 import {
-    BackupJob, BackupRun, BackupStorage, BackupRestore,
+    BackupJob, BackupRun, BackupStorage, BackupRestore, BackupConfig, BackupUsage, getBackupConfig, getBackupUsage,
     listBackupJobs, createBackupJob, updateBackupJob, deleteBackupJob, triggerBackupJob,
     listBackupRuns, deleteBackupRun, restoreBackupRun, backupDownloadUrl,
     listBackupStorages, listBackupRestores,
@@ -17,6 +19,11 @@ import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import { toast } from '@/components/ui/Toast';
 import { useRouteId } from '@/lib/routeParams';
 import ModalPanel from '@/components/ui/ModalPanel';
+import Select from '@/components/ui/Select';
+import Switch from '@/components/ui/Switch';
+import Menu from '@/components/ui/Menu';
+import NumberField from '@/components/ui/NumberField';
+import Callout from '@/components/server/Callout';
 import { formatBytes } from '@/lib/format';
 import { currentSkip, relativeTime } from '@/lib/backupJobStatus';
 import { fmtDateTime } from '@/lib/time';
@@ -109,10 +116,13 @@ function JobForm({ initial, storages, subServers, onClose, onSave }: JobFormProp
                     {mode !== 'full-container' && (
                         <div className="form-group">
                             <label className="input-label">Sub-Server</label>
-                            <select value={job.subServer ?? ''} onChange={e => updateField('subServer', e.target.value)} className="input-field">
-                                {subServers.length === 0 && <option value="">(no sub-servers found)</option>}
-                                {subServers.map(s => <option key={s} value={s}>{s}</option>)}
-                            </select>
+                            <Select
+                                ariaLabel="Sub-Server"
+                                value={job.subServer ?? ''}
+                                onChange={v => updateField('subServer', v)}
+                                placeholder={subServers.length === 0 ? '(no sub-servers found)' : undefined}
+                                options={subServers.map(s => ({ value: s, label: s }))}
+                            />
                         </div>
                     )}
 
@@ -140,43 +150,43 @@ function JobForm({ initial, storages, subServers, onClose, onSave }: JobFormProp
                         </>
                     )}
 
-                    <BackupScheduleEditor
-                        idPrefix="job-schedule"
-                        schedule={job.schedule ?? 'manual'}
-                        timezone={zone}
-                        onChange={(schedule, tz) => { updateField('schedule', schedule); setZone(tz); }}
+                    <div className="srv-backups-card">
+                        <BackupScheduleEditor
+                            idPrefix="job-schedule"
+                            schedule={job.schedule ?? 'manual'}
+                            timezone={zone}
+                            onChange={(schedule, tz) => { updateField('schedule', schedule); setZone(tz); }}
+                        />
+                    </div>
+
+                    <NumberField
+                        label="Keep last N runs"
+                        min={1}
+                        max={100}
+                        value={job.retentionCount ?? 3}
+                        onChange={v => updateField('retentionCount', Math.max(1, v))}
+                        className="max-w-32"
                     />
 
                     <div className="form-group">
-                        <label className="input-label" htmlFor="job-retention">Keep last N runs</label>
-                        <input id="job-retention" type="number" min={1} max={100} value={job.retentionCount ?? 3} onChange={e => updateField('retentionCount', Math.max(1, Number(e.target.value)))} className="input-field text-right tabular-nums max-w-32" />
-                    </div>
-
-                    <div className="form-group">
                         <label className="input-label">Storage</label>
-                        <select value={job.storageId ?? ''} onChange={e => updateField('storageId', e.target.value ? Number(e.target.value) : null)} className="input-field">
-                            <option value="">Default storage</option>
-                            {storages.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
-                        </select>
+                        <Select
+                            ariaLabel="Storage"
+                            value={job.storageId == null ? '' : String(job.storageId)}
+                            onChange={v => updateField('storageId', v ? Number(v) : null)}
+                            options={[{ value: '', label: 'Default storage' }, ...storages.map(s => ({ value: String(s.id), label: s.label }))]}
+                        />
                     </div>
 
                     <div className="flex items-center justify-between pt-2 border-t border-(--base-03)">
-                        <label className="input-label">Enabled</label>
-                        <button
-                            type="button"
-                            onClick={() => updateField('enabled', !job.enabled)}
-                            className={`toggle-track ${(job.enabled !== false) ? 'toggle-track-on' : 'toggle-track-off'}`}
-                            role="switch"
-                            aria-checked={job.enabled !== false}
-                        >
-                            <span className={`toggle-knob ${(job.enabled !== false) ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
-                        </button>
+                        <span className="input-label">Enabled</span>
+                        <Switch checked={job.enabled !== false} onChange={v => updateField('enabled', v)} ariaLabel="Enabled" />
                     </div>
                 </div>
                 <div className="modal-footer">
                     <button onClick={onClose} className="btn btn-secondary">Cancel</button>
                     <button onClick={submit} disabled={saving} className="btn btn-primary disabled:opacity-40">
-                        <Save size={13} /> {saving ? 'Saving…' : 'Save Job'}
+                        <Save size={14} /> {saving ? 'Saving…' : 'Save Job'}
                     </button>
                 </div>
             </ModalPanel>
@@ -184,14 +194,34 @@ function JobForm({ initial, storages, subServers, onClose, onSave }: JobFormProp
     );
 }
 
-// The dot was already coloured; the word beside it was not, so a failure read
-// as neutral grey. badge-success / badge-error / badge-warning all exist in
-// globals.css and were simply never used here.
-function runBadgeClass(status: string): string {
-    if (status === 'success') return 'badge badge-success';
-    if (status === 'failed') return 'badge badge-error';
-    return 'badge badge-warning';
+function runTone(status: string): 'success' | 'error' | 'warning' {
+    if (status === 'success') return 'success';
+    if (status === 'failed') return 'error';
+    return 'warning';
 }
+
+const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
+function StatusPill({ tone, children, pulse }: { tone: 'success' | 'error' | 'warning' | 'accent' | 'neutral'; children: React.ReactNode; pulse?: boolean }) {
+    return (
+        <span className="srv-backups-pill" data-tone={tone} data-pulse={pulse ? 'true' : undefined}>
+            <i aria-hidden="true" />{children}
+        </span>
+    );
+}
+
+function Tile({ label, value, sub, meter }: { label: string; value: React.ReactNode; sub?: React.ReactNode; meter?: React.ReactNode }) {
+    return (
+        <div className="srv-surface flex min-w-0 flex-col gap-3 p-5">
+            <span className="srv-label">{label}</span>
+            <span className="srv-num truncate text-[28px] font-medium leading-none text-(--base-09)">{value}</span>
+            {meter}
+            <div className="min-h-4 truncate text-xs text-(--base-06)">{sub}</div>
+        </div>
+    );
+}
+
+const MENU_BTN = 'btn btn-ghost btn-icon btn-sm';
 
 export default function ServerBackupsView() {
     const paramId = useRouteId('servers');
@@ -221,6 +251,9 @@ export default function ServerBackupsView() {
     const restoreJob = restoreTarget ? jobs.find(j => j.id === restoreTarget.jobId) : undefined;
     // The run's own record wins: its job's patterns may have changed since it ran.
     const restoreIsSelective = restoreTarget?.partial ?? (restoreJob?.includePatterns?.length || 0) + (restoreJob?.excludePatterns?.length || 0) > 0;
+    // The per-server quota, only meaningful for node-local storage with its own budget.
+    const [backupConfig, setBackupConfig] = useState<BackupConfig | null>(null);
+    const [backupUsage, setBackupUsage] = useState<BackupUsage | null>(null);
     const [expandedJobs, setExpandedJobs] = useState<Set<number>>(new Set());
     const toggleRuns = (id: number) => setExpandedJobs(prev => {
         const next = new Set(prev);
@@ -264,6 +297,19 @@ export default function ServerBackupsView() {
     }, [serverId, isOwner]);
 
     useEffect(() => { reload(); }, [reload]);
+
+    // The same two reads the Overview's backup card makes.
+    useEffect(() => {
+        getBackupConfig().then(res => {
+            if (res.success && res.settings) setBackupConfig(res.settings);
+        }).catch(() => {});
+    }, []);
+    // A string, not `jobs`: the poll replaces that array every tick while a run is going.
+    const finishedKey = jobs.map(j => `${j.id}:${j.lastRunAt ?? ''}`).join(',');
+    useEffect(() => {
+        if (!serverId || backupConfig?.mode !== 'node-local') { setBackupUsage(null); return; }
+        getBackupUsage(serverId).then(u => { if (u && u.success) setBackupUsage(u); }).catch(() => {});
+    }, [serverId, backupConfig, finishedKey]);
 
     // Refresh while any run or restore is in progress. The two conditions are
     // computed outside the effect so it depends on BOOLEANS: runs and
@@ -361,253 +407,248 @@ export default function ServerBackupsView() {
 
     if (!server) return null;
 
+    // Summary across the jobs of this server.
+    const totalCount = jobs.reduce((n, j) => n + (j.keptRuns ?? 0), 0);
+    const totalBytes = jobs.reduce((n, j) => n + (j.keptBytes ?? 0), 0);
+    const nextJob = jobs
+        .filter(j => j.enabled && j.schedule !== 'manual' && j.nextRunAt)
+        .sort((a, b) => new Date(a.nextRunAt!).getTime() - new Date(b.nextRunAt!).getTime())[0];
+    // A cap of 0 is a real ceiling ("none allowed"), null is no cap; only a positive one draws a meter.
+    const quotaGb = backupConfig?.mode === 'node-local' && !backupConfig.shareQuotaWithServer ? backupConfig.quotaPerServerGb : null;
+    const quotaBytes = quotaGb !== null && quotaGb > 0 ? quotaGb * 1024 ** 3 : 0;
+    const quotaUsed = backupUsage && !backupUsage.degraded ? backupUsage.usedBytes : null;
+    const showQuota = quotaBytes > 0 && quotaUsed !== null;
+    const quotaPct = showQuota ? quotaUsed / quotaBytes : 0;
+
     return (
-        <div className="flex flex-col gap-4 h-full">
-            <div className="flex items-center gap-3 flex-wrap">
-                <h1 className="h-page">Backups</h1>
-                <span className="mono-label">{server.activeSubServer || 'no sub-server selected'}</span>
-                <button onClick={() => setShowForm(true)} className="btn btn-primary ml-auto">
-                    <Plus size={14} /> New Job
-                </button>
+        <div className="flex flex-col gap-6">
+            <div className="flex flex-wrap items-start gap-x-4 gap-y-3">
+                <div className="min-w-0">
+                    <h1 className="h-page">Backups</h1>
+                    <p className="mt-1 text-sm text-(--base-06)">
+                        {server.activeSubServer
+                            ? <>Scheduled and manual archives for <span className="srv-num text-(--base-07)">{server.activeSubServer}</span>.</>
+                            : 'Scheduled and manual archives. No sub-server selected.'}
+                    </p>
+                </div>
+                {/* The empty state carries its own "New job" button. */}
+                {(loading || jobs.length > 0) && (
+                    <button onClick={() => setShowForm(true)} className="btn btn-primary ml-auto">
+                        <Plus size={16} /> New job
+                    </button>
+                )}
             </div>
 
             {storageOptions.length === 0 && (
-                <div className="alert alert-warning">
-                    <CircleAlert size={14} className="shrink-0 mt-0.5" />
-                    <div>
-                        <p className="font-medium">No storage configured</p>
-                        <p className="text-xs">Admins: head over to Settings → Backups and add at least one storage (Local or S3-compatible) before creating jobs. You can also connect your own bucket under Account &gt; Storage.</p>
-                    </div>
+                <Callout tone="warning" icon={<CircleAlert size={16} />} title="No storage configured">
+                    Admins: head over to Settings → Backups and add at least one storage (Local or S3-compatible) before creating jobs. You can also connect your own bucket under Account &gt; Storage.
+                </Callout>
+            )}
+
+            {!loading && jobs.length > 0 && (
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                    <Tile
+                        label="Backups kept"
+                        value={totalCount}
+                        sub={`${jobs.length} ${jobs.length === 1 ? 'job' : 'jobs'}`}
+                    />
+                    <Tile
+                        label="Total size"
+                        value={formatBytes(showQuota ? quotaUsed! : totalBytes)}
+                        meter={showQuota ? (
+                            <Meter value={Math.min(quotaUsed!, quotaBytes)} min={0} max={quotaBytes} aria-label="Backup storage used">
+                                <MeterTrack className="srv-meter-track">
+                                    <MeterIndicator className="srv-meter-fill" data-tone={quotaPct >= 0.9 ? 'error' : quotaPct >= 0.75 ? 'warning' : undefined} />
+                                </MeterTrack>
+                            </Meter>
+                        ) : undefined}
+                        sub={showQuota ? `of ${formatBytes(quotaBytes)} quota` : undefined}
+                    />
+                    <Tile
+                        label="Next scheduled run"
+                        value={<span className="font-body">{nextJob ? relativeTime(nextJob.nextRunAt) : 'None'}</span>}
+                        sub={nextJob ? `${nextJob.name}, ${localTime(nextJob.nextRunAt!)}` : 'No job is scheduled'}
+                    />
                 </div>
             )}
 
             {loading ? (
-                <div className="flex-1 overflow-auto space-y-3">
+                <div className="flex flex-col gap-4">
                     {Array.from({ length: 2 }).map((_, i) => (
-                        <div key={i} className="card card-pad">
-                            <div className="flex items-start justify-between gap-3 flex-wrap">
-                                <div className="min-w-0 space-y-2">
-                                    <div className="flex items-center gap-2 flex-wrap">
-                                        <SkeletonText width="w-32" className="h-4" />
-                                        <Skeleton className="w-16 h-4 rounded-sm" />
-                                        <Skeleton className="w-20 h-4 rounded-sm" />
-                                    </div>
-                                    <div className="flex items-center gap-3 mt-1">
-                                        <SkeletonText width="w-20" className="h-2.5" />
-                                        <SkeletonText width="w-14" className="h-2.5" />
-                                        <SkeletonText width="w-24" className="h-2.5" />
-                                    </div>
+                        <div key={i} className="srv-surface space-y-4 p-5">
+                            <div className="flex items-start justify-between gap-3">
+                                <div className="space-y-2">
+                                    <SkeletonText width="w-40" className="h-4" />
+                                    <SkeletonText width="w-56" className="h-3" />
                                 </div>
-                                <div className="flex items-center gap-1.5">
-                                    <Skeleton className="w-20 h-7 rounded-md" />
-                                    <Skeleton className="w-7 h-7 rounded-md" />
-                                    <Skeleton className="w-7 h-7 rounded-md" />
+                                <Skeleton className="h-8 w-24 rounded-md" />
+                            </div>
+                            {Array.from({ length: 3 }).map((_, j) => (
+                                <div key={j} className="flex items-center gap-3 px-3">
+                                    <SkeletonText width="w-28" className="flex-1" />
+                                    <SkeletonText width="w-16" />
+                                    <Skeleton className="h-5 w-16 rounded-full" />
+                                    <Skeleton className="h-7 w-7 rounded-md" />
                                 </div>
-                            </div>
-                            <div className="mt-4 border-t border-(--base-03) pt-3 space-y-2">
-                                <SkeletonText width="w-24" className="h-2.5" />
-                                {Array.from({ length: 3 }).map((_, j) => (
-                                    <div key={j} className="flex items-center gap-3 py-1.5 px-2">
-                                        <Skeleton className="w-2 h-2 rounded-full" />
-                                        <SkeletonText width="w-24" className="flex-1" />
-                                        <SkeletonText width="w-16" />
-                                        <Skeleton className="w-16 h-4 rounded-sm" />
-                                        <Skeleton className="w-7 h-7 rounded-md" />
-                                        <Skeleton className="w-7 h-7 rounded-md" />
-                                        <Skeleton className="w-7 h-7 rounded-md" />
-                                    </div>
-                                ))}
-                            </div>
+                            ))}
                         </div>
                     ))}
                 </div>
             ) : jobs.length === 0 ? (
-                <div className="flex-1 flex flex-col items-center justify-center text-(--base-06) gap-2">
-                    <HardDrive size={40} className="opacity-40" />
-                    <p className="text-sm">No backup jobs configured.</p>
+                <div className="srv-surface flex flex-col items-center justify-center gap-3 px-6 py-16 text-center">
+                    <HardDrive size={28} className="text-(--base-05)" />
+                    <div>
+                        <p className="text-sm font-medium text-(--base-09)">No backup jobs yet</p>
+                        <p className="mt-1 text-sm text-(--base-06)">A job decides what is archived, when, and how many copies are kept.</p>
+                    </div>
+                    <button onClick={() => setShowForm(true)} className="btn btn-primary"><Plus size={16} /> New job</button>
                 </div>
             ) : (
-                <div className="flex-1 overflow-auto space-y-3">
-                    {jobs.map(job => (
-                        <div key={job.id} className="card card-pad">
-                            <div className="flex items-start justify-between gap-3 flex-wrap">
-                                <div className="min-w-0">
-                                    <div className="flex items-center gap-2 flex-wrap">
-                                        <span className="h-section">{job.name}</span>
-                                        {!job.enabled && <span className="badge badge-neutral">disabled</span>}
-                                        {job.subServer ? <span className="badge badge-neutral">{job.subServer}</span> : <span className="badge badge-accent">full container</span>}
-                                        {(job.includePatterns?.length || job.excludePatterns?.length) ? <span className="badge badge-accent">selective</span> : null}
+                <div className="flex flex-col gap-4">
+                    {jobs.map(job => {
+                        const skip = currentSkip(job);
+                        const scheduled = job.enabled && job.schedule !== 'manual' && job.nextRunAt;
+                        const all = runs[job.id] ?? [];
+                        const open = expandedJobs.has(job.id);
+                        const shown = open ? all : all.slice(0, RUNS_COLLAPSED);
+                        return (
+                            <section key={job.id} className="srv-surface p-5" aria-label={job.name}>
+                                <div className="flex flex-wrap items-start gap-x-4 gap-y-3">
+                                    <div className="min-w-0 flex-1">
+                                        <div className="flex flex-wrap items-center gap-2">
+                                            <h2 className="text-base font-medium text-(--base-09)">{job.name}</h2>
+                                            {!job.enabled && <StatusPill tone="neutral">Disabled</StatusPill>}
+                                            {job.subServer ? <StatusPill tone="neutral">{job.subServer}</StatusPill> : <StatusPill tone="accent">Full container</StatusPill>}
+                                            {(job.includePatterns?.length || job.excludePatterns?.length) ? <StatusPill tone="accent">Selective</StatusPill> : null}
+                                        </div>
+                                        <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-(--base-06)">
+                                            <span className="inline-flex items-center gap-1.5"><Clock size={14} />{describeSchedule(job.schedule, job.timezone)}</span>
+                                            <span>Keep last <span className="srv-num">{job.retentionCount}</span></span>
+                                            <span title={job.lastRunAt ? localTime(job.lastRunAt) : undefined}>Last run {job.lastRunAt ? `${relativeTime(job.lastRunAt)} (${localTime(job.lastRunAt)})` : 'never'}</span>
+                                            <span title={scheduled ? localTime(job.nextRunAt!) : undefined}>
+                                                Next run {scheduled ? `${relativeTime(job.nextRunAt)} (${localTime(job.nextRunAt!)})` : job.enabled ? 'manual only' : 'disabled'}
+                                            </span>
+                                            <span className="srv-num">{job.keptRuns ?? 0} {(job.keptRuns ?? 0) === 1 ? 'backup' : 'backups'}, {formatBytes(job.keptBytes ?? 0)}</span>
+                                        </div>
                                     </div>
-                                    <div className="flex items-center gap-x-3 gap-y-1 mt-1 text-xs text-(--base-06) flex-wrap">
-                                        <span className="inline-flex items-center gap-1"><Clock size={11} />{describeSchedule(job.schedule, job.timezone)}</span>
-                                        <span>keep {job.retentionCount}</span>
-                                    </div>
-                                </div>
-                                <div className="flex items-center gap-1.5">
-                                    <button onClick={() => handleTrigger(job.id)} disabled={busyJob === job.id} className="btn btn-primary btn-sm disabled:opacity-40">
-                                        {busyJob === job.id ? <Spinner size="xs" /> : <Play size={12} />}
-                                        Run Now
-                                    </button>
-                                    <button onClick={() => setEditingJob(job)} className="btn btn-secondary btn-sm">
-                                        <Pencil size={12} />
-                                    </button>
-                                    <button onClick={() => handleDeleteJob(job.id)} className="btn btn-danger btn-sm">
-                                        <Trash2 size={12} />
-                                    </button>
-                                </div>
-                            </div>
-
-                            {(() => {
-                                const skip = currentSkip(job);
-                                const scheduled = job.enabled && job.schedule !== 'manual' && job.nextRunAt;
-                                return (
-                                    <>
-                                        <dl className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-3 rounded-md bg-(--base-02) border border-(--base-03) px-3 py-2.5">
-                                            <div className="min-w-0">
-                                                <dt className="mono-label">Kept</dt>
-                                                <dd className="text-sm text-(--base-09) tabular-nums mt-0.5">
-                                                    {job.keptRuns ?? 0} {(job.keptRuns ?? 0) === 1 ? 'backup' : 'backups'}
-                                                </dd>
-                                            </div>
-                                            <div className="min-w-0">
-                                                <dt className="mono-label">Total size</dt>
-                                                <dd className="text-sm text-(--base-09) tabular-nums mt-0.5">{formatBytes(job.keptBytes ?? 0)}</dd>
-                                            </div>
-                                            <div className="min-w-0">
-                                                <dt className="mono-label">Last run</dt>
-                                                <dd className="text-sm text-(--base-09) mt-0.5 truncate" title={job.lastRunAt ? localTime(job.lastRunAt) : undefined}>
-                                                    {job.lastRunAt ? relativeTime(job.lastRunAt) : 'Never'}
-                                                </dd>
-                                                {job.lastRunAt && <dd className="text-[11px] text-(--base-06) truncate">{localTime(job.lastRunAt)}</dd>}
-                                            </div>
-                                            <div className="min-w-0">
-                                                <dt className="mono-label">Next run</dt>
-                                                <dd className="text-sm text-(--base-09) mt-0.5 truncate">
-                                                    {scheduled ? relativeTime(job.nextRunAt) : job.enabled ? 'Manual only' : 'Disabled'}
-                                                </dd>
-                                                {scheduled && <dd className="text-[11px] text-(--base-06) truncate">{localTime(job.nextRunAt!)}</dd>}
-                                            </div>
-                                        </dl>
-                                        {skip && (
-                                            <div className="alert alert-warning mt-3" role="status">
-                                                <AlertTriangle size={14} className="shrink-0 mt-0.5" />
-                                                <div className="min-w-0">
-                                                    <p className="font-medium">Skipped at {localTime(skip.at)}</p>
-                                                    <p className="text-xs break-words">{skip.reason}</p>
-                                                </div>
-                                            </div>
-                                        )}
-                                    </>
-                                );
-                            })()}
-
-                            {(runs[job.id] ?? []).length > 0 && (() => {
-                                const all = runs[job.id];
-                                const open = expandedJobs.has(job.id);
-                                const shown = open ? all : all.slice(0, RUNS_COLLAPSED);
-                                return (
-                                <div className="mt-4 border-t border-(--base-03) pt-3">
-                                    <div className="flex items-center justify-between gap-2 mb-2">
-                                        <span className="mono-label">Runs</span>
-                                        <span className="mono-label">{shown.length} of {all.length}</span>
-                                    </div>
-                                    <div className="space-y-1">
-                                        {shown.map(run => (
-                                            <div key={run.id} className="rounded hover:bg-(--base-03)/40">
-                                            <div className="flex items-center gap-3 py-1.5 px-2">
-                                                <span className={`badge-dot ${run.status === 'success' ? 'bg-(--success-light)' : run.status === 'failed' ? 'bg-(--error)' : 'bg-(--warning) animate-pulse'}`} />
-                                                <span className="text-sm text-(--base-08) flex-1">{relativeTime(run.startedAt)}</span>
-                                                <span className="text-xs text-(--base-06) tabular-nums w-20 text-right" title={run.status === 'running' ? 'Archived so far' : 'Archive size'}>{runSize(run.sizeBytes)}</span>
-                                                <span className={runBadgeClass(run.status) + ' capitalize'}>{run.status}</span>
-                                                {run.status === 'success' && (
-                                                    <>
-                                                        <button
-                                                            onClick={() => setRestoreTarget(run)}
-                                                            className="btn btn-secondary btn-sm"
-                                                            title="Restore this backup"
-                                                        >
-                                                            <Undo2 size={11} />
-                                                        </button>
-                                                        <a href={backupDownloadUrl(run.id)} className="btn btn-secondary btn-sm" download title="Download archive">
-                                                            <Download size={11} />
-                                                        </a>
-                                                    </>
-                                                )}
-                                                <button onClick={() => handleDeleteRun(run.id)} className="btn btn-danger btn-sm" title="Delete">
-                                                    <Trash2 size={11} />
-                                                </button>
-                                            </div>
-                                            {/* Its own line, full width. It used to sit AFTER the delete
-                                                button, truncated with the text only in a tooltip - so the
-                                                one thing a failed backup has to tell you was the least
-                                                readable thing in the row. */}
-                                            {run.status === 'failed' && run.errorMessage && (
-                                                <p className="px-2 pb-2 -mt-0.5 text-xs text-(--error-light) break-words">
-                                                    {run.errorMessage}
-                                                </p>
-                                            )}
-                                            </div>
-                                        ))}
-                                    </div>
-                                    {all.length > RUNS_COLLAPSED && (
-                                        <button
-                                            type="button"
-                                            onClick={() => toggleRuns(job.id)}
-                                            aria-expanded={open}
-                                            className="btn btn-ghost btn-sm mt-2 w-full justify-center"
-                                        >
-                                            {open ? 'Show fewer' : `Show all ${all.length} runs`}
+                                    <div className="flex items-center gap-1.5">
+                                        <button onClick={() => handleTrigger(job.id)} disabled={busyJob === job.id} className="btn btn-secondary btn-sm">
+                                            {busyJob === job.id ? <Spinner size="xs" /> : <Play size={14} />}
+                                            Run now
                                         </button>
-                                    )}
-                                    {/* Core lists the newest 50 runs; a longer retention keeps more. */}
-                                    {open && (job.keptRuns ?? 0) > all.filter(r => r.status === 'success').length && (
-                                        <p className="mt-2 text-xs text-(--base-06)">
-                                            Showing the newest {all.length} runs. This job keeps {job.keptRuns} backups in total.
-                                        </p>
-                                    )}
+                                        <Menu
+                                            trigger={<button className={MENU_BTN} aria-label={`Actions for ${job.name}`}><MoreHorizontal size={16} /></button>}
+                                            items={[
+                                                { label: 'Edit job', icon: <Pencil size={14} />, onSelect: () => setEditingJob(job) },
+                                                { type: 'separator' },
+                                                { label: 'Delete job', icon: <Trash2 size={14} />, danger: true, onSelect: () => handleDeleteJob(job.id) },
+                                            ]}
+                                        />
+                                    </div>
                                 </div>
-                                );
-                            })()}
-                        </div>
-                    ))}
+
+                                {skip && (
+                                    <div className="mt-4">
+                                        <Callout tone="warning" icon={<AlertTriangle size={16} />} role="status" title={`Skipped at ${localTime(skip.at)}`}>
+                                            <span className="break-words">{skip.reason}</span>
+                                        </Callout>
+                                    </div>
+                                )}
+
+                                {all.length > 0 ? (
+                                    <div className="mt-4">
+                                        <div className="flex items-center justify-between gap-2 px-3 pb-1">
+                                            <span className="srv-label">Backups</span>
+                                            <span className="srv-num text-xs text-(--base-06)">{shown.length} of {all.length}</span>
+                                        </div>
+                                        <div className="flex flex-col">
+                                            {shown.map(run => (
+                                                <div key={run.id}>
+                                                    <div className="srv-backups-row">
+                                                        <span className="min-w-0 flex-1 truncate text-sm text-(--base-08)">
+                                                            {localTime(run.startedAt)}
+                                                            <span className="ml-2 text-xs text-(--base-06)">{relativeTime(run.startedAt)}</span>
+                                                        </span>
+                                                        <span className="srv-num w-20 text-right text-xs text-(--base-07)" title={run.status === 'running' ? 'Archived so far' : 'Archive size'}>{runSize(run.sizeBytes)}</span>
+                                                        <span className="w-24"><StatusPill tone={runTone(run.status)} pulse={run.status === 'running'}>{cap(run.status)}</StatusPill></span>
+                                                        <Menu
+                                                            trigger={<button className={MENU_BTN} aria-label={`Actions for backup from ${localTime(run.startedAt)}`}><MoreHorizontal size={16} /></button>}
+                                                            items={[
+                                                                ...(run.status === 'success' ? [
+                                                                    { label: 'Restore', icon: <Undo2 size={14} />, onSelect: () => setRestoreTarget(run) },
+                                                                    { label: 'Download', icon: <Download size={14} />, href: backupDownloadUrl(run.id) },
+                                                                    { type: 'separator' as const },
+                                                                ] : []),
+                                                                { label: 'Delete', icon: <Trash2 size={14} />, danger: true, onSelect: () => handleDeleteRun(run.id) },
+                                                            ]}
+                                                        />
+                                                    </div>
+                                                    {/* Its own line, full width: the one thing a failed
+                                                        backup has to tell you must be readable. */}
+                                                    {run.status === 'failed' && run.errorMessage && (
+                                                        <p className="break-words px-3 pb-2 text-xs text-(--error-light)">{run.errorMessage}</p>
+                                                    )}
+                                                </div>
+                                            ))}
+                                        </div>
+                                        {all.length > RUNS_COLLAPSED && (
+                                            <button
+                                                type="button"
+                                                onClick={() => toggleRuns(job.id)}
+                                                aria-expanded={open}
+                                                className="btn btn-ghost btn-sm mt-1 w-full justify-center"
+                                            >
+                                                {open ? 'Show fewer' : `Show all ${all.length} runs`}
+                                            </button>
+                                        )}
+                                        {/* Core lists the newest 50 runs; a longer retention keeps more. */}
+                                        {open && (job.keptRuns ?? 0) > all.filter(r => r.status === 'success').length && (
+                                            <p className="mt-2 px-3 text-xs text-(--base-06)">
+                                                Showing the newest {all.length} runs. This job keeps {job.keptRuns} backups in total.
+                                            </p>
+                                        )}
+                                    </div>
+                                ) : (
+                                    <p className="mt-4 px-3 text-sm text-(--base-06)">No backups yet. Use Run now to create the first one.</p>
+                                )}
+                            </section>
+                        );
+                    })}
                 </div>
             )}
 
             {restoreHistory.length > 0 && (
-                <div className="card card-pad">
-                    <div className="flex items-center gap-2 mb-3">
-                        <Undo2 size={14} className="text-(--accent-light)" />
-                        <span className="h-section">Restore History</span>
-                        <span className="mono-label">{restoreHistory.length}</span>
+                <section className="srv-surface p-5" aria-label="Restore history">
+                    <div className="mb-2 flex items-baseline gap-2 px-3">
+                        <h2 className="text-sm font-medium text-(--base-09)">Restore history</h2>
+                        <span className="srv-num text-xs text-(--base-06)">{restoreHistory.length}</span>
                     </div>
-                    <div className="space-y-1">
+                    <div className="flex flex-col">
                         {restoreHistory.slice(0, 8).map(restore => (
-                            <div key={restore.id} className="flex items-center gap-3 py-1.5 px-2 rounded hover:bg-(--base-03)/40">
+                            <div key={restore.id} className="srv-backups-row flex-wrap">
+                                <span className="min-w-0 flex-1 text-sm text-(--base-08)">
+                                    Run <span className="srv-num">#{restore.runId}</span>
+                                    <span className="ml-2 text-xs text-(--base-06)">{relativeTime(restore.requestedAt)}</span>
+                                </span>
+                                {restore.stalled && (
+                                    <span className="max-w-xs truncate text-xs text-(--warning-light)" title={restore.stallReason}>{restore.stallReason}</span>
+                                )}
+                                {restore.errorMessage && (
+                                    <span className="max-w-xs truncate text-xs text-(--error-light)" title={restore.errorMessage}>{restore.errorMessage}</span>
+                                )}
                                 {/* No pulse on a stalled one: the animation is the
                                     claim that something is happening, and for
                                     these nothing is until the node returns. */}
-                                <span className={`badge-dot ${restore.status === 'success' ? 'bg-(--success-light)' : restore.status === 'failed' ? 'bg-(--error)' : restore.stalled ? 'bg-(--warning)' : 'bg-(--warning) animate-pulse'}`} />
-                                <span className="text-sm text-(--base-08) flex-1">
-                                    Run #{restore.runId}
-                                    <span className="text-xs text-(--base-06) ml-2">{relativeTime(restore.requestedAt)}</span>
-                                </span>
-                                <span className="badge badge-neutral capitalize">
-                                    {restore.stalled ? 'paused' : restore.status}
-                                </span>
-                                {restore.stalled && (
-                                    <span className="text-[10px] text-(--warning-light) max-w-xs truncate" title={restore.stallReason}>
-                                        {restore.stallReason}
-                                    </span>
-                                )}
-                                {restore.errorMessage && (
-                                    <span className="text-[10px] text-(--error-light) max-w-xs truncate" title={restore.errorMessage}>
-                                        {restore.errorMessage}
-                                    </span>
-                                )}
+                                <StatusPill
+                                    tone={restore.status === 'success' ? 'success' : restore.status === 'failed' ? 'error' : 'warning'}
+                                    pulse={restore.status !== 'success' && restore.status !== 'failed' && !restore.stalled}
+                                >
+                                    {restore.stalled ? 'Paused' : cap(restore.status)}
+                                </StatusPill>
                             </div>
                         ))}
                     </div>
-                </div>
+                </section>
             )}
 
             {showForm && (
@@ -642,22 +683,19 @@ export default function ServerBackupsView() {
                     <ModalPanel onClose={() => !restoring && setRestoreTarget(null)} className="modal-panel max-w-md" onClick={e => e.stopPropagation()}>
                         <div className="modal-header">
                             <h3 className="modal-title flex items-center gap-2 text-(--warning-light)">
-                                <AlertTriangle size={18} /> Restore Backup
+                                <AlertTriangle size={18} /> Restore backup
                             </h3>
                         </div>
                         <div className="modal-body space-y-3">
                             <p className="text-sm text-(--base-08)">
                                 Replace the current world data with the backup from {' '}
-                                <span className="font-mono text-(--base-09)">{fmtDateTime(restoreTarget.startedAt)}</span>?
+                                <span className="srv-num text-(--base-09)">{fmtDateTime(restoreTarget.startedAt)}</span>?
                             </p>
-                            <p className="alert alert-warning text-xs">
-                                <AlertTriangle size={13} className="shrink-0 mt-0.5" />
-                                <span>
-                                    {restoreIsSelective
-                                        ? 'Your server will be stopped, every file in this selective backup written over its current version, and the server restarted automatically. Files the backup does not hold stay as they are. No copy of the replaced files is kept.'
-                                        : 'Your server will be stopped, its directory replaced with the archive, and the server restarted automatically. The current contents are deleted, including anything written since this backup. No copy of them is kept.'}
-                                </span>
-                            </p>
+                            <Callout tone="warning" icon={<AlertTriangle size={16} />}>
+                                {restoreIsSelective
+                                    ? 'Your server will be stopped, every file in this selective backup written over its current version, and the server restarted automatically. Files the backup does not hold stay as they are. No copy of the replaced files is kept.'
+                                    : 'Your server will be stopped, its directory replaced with the archive, and the server restarted automatically. The current contents are deleted, including anything written since this backup. No copy of them is kept.'}
+                            </Callout>
                         </div>
                         <div className="modal-footer">
                             <button onClick={() => setRestoreTarget(null)} disabled={restoring} className="btn btn-secondary">
@@ -672,13 +710,12 @@ export default function ServerBackupsView() {
                                     ? 'Queueing…'
                                     : restoreCountdown > 0
                                         ? `Restore (${restoreCountdown}s)`
-                                        : <><Undo2 size={13} /> Restore now</>}
+                                        : <><Undo2 size={14} /> Restore now</>}
                             </button>
                         </div>
                     </ModalPanel>
                 </div>
             )}
-
         </div>
     );
 }

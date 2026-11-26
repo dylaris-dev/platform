@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertTriangle, Loader2, Pencil, Plug, Plus, Search, Trash2 } from 'lucide-react';
+import '@/styles/settings-net.css';
 import SettingsCard, { SettingsGroup } from '@/components/settings/SettingsCard';
 import { LimitField, LimitHelp, limitLabel } from '@/components/settings/LimitField';
 import { SwitchRow } from '@/components/ui/Switch';
@@ -14,6 +15,7 @@ import {
 } from '@/lib/api';
 import { formatBitRate, formatMaxPerUser, parseMaxPerUser, portsError, rangeSource } from '@/lib/serverPorts';
 import { formatBytes } from '@/lib/format';
+import Select from '@/components/ui/Select';
 
 type ScopeKind = 'server' | 'user' | 'role';
 const KIND_LABEL: Record<ScopeKind, string> = { server: 'Server', user: 'User', role: 'Role' };
@@ -102,16 +104,16 @@ export default function ExtraPortsCard() {
                             {rows.length === 0 ? (
                                 <p className="text-xs text-(--base-06)">{q.trim() ? 'No port matches the search.' : 'No extra ports yet.'}</p>
                             ) : (
-                                <div className="overflow-x-auto rounded-md border border-(--base-03)">
-                                    <table className="w-full text-xs">
+                                <div className="overflow-x-auto">
+                                    <table className="set-net-table">
                                         <thead>
-                                            <tr className="text-left text-(--base-06) border-b border-(--base-03)">
+                                            <tr>
                                                 {['Port', 'Protocol', 'Server', 'Traffic', 'Owner', 'Node', 'Name', 'Note'].map(h => (
-                                                    <th key={h} className="mono-label px-3 py-2 font-normal">{h}</th>
+                                                    <th key={h}>{h}</th>
                                                 ))}
                                             </tr>
                                         </thead>
-                                        <tbody className="divide-y divide-(--base-03)">
+                                        <tbody>
                                             {rows.map(r => (
                                                 <tr key={r.id} className="text-(--base-08)">
                                                     <td className="px-3 py-2 font-mono">{r.hostPort} <span className="text-(--base-06)">-&gt; {r.containerPort}</span></td>
@@ -202,7 +204,7 @@ function SettingsSection({ stored, loadError, onSaved }: {
             />
             <SettingsGroup title="Range">
                 <label className="flex flex-col gap-1 max-w-xs">
-                    <span className="mono-label">Global range</span>
+                    <span className="srv-label">Global range</span>
                     <input
                         value={range}
                         onChange={e => setRange(e.target.value)}
@@ -256,8 +258,8 @@ function NodeRangeRow({ node, onSaved }: { node: PortsNodeUsage; onSaved: () => 
                 <span className="font-medium text-(--base-09) min-w-32">{node.nodeName}</span>
                 <code className="input-mono text-xs text-(--base-08)">{node.range || 'no range'}</code>
                 {source && <span className={`badge ${source === 'Own' ? 'badge-accent' : 'badge-neutral'}`}>{source}</span>}
-                {node.gameRange && <span className="mono-label">Game {node.gameRange}</span>}
-                <span className="mono-label" title="The address players use for this node's extra ports">
+                {node.gameRange && <span className="srv-label">Game {node.gameRange}</span>}
+                <span className="srv-label" title="The address players use for this node's extra ports">
                     Address {node.host || 'automatic'}
                 </span>
                 <span className="ml-auto flex items-center gap-2">
@@ -294,11 +296,11 @@ function NodeRangeRow({ node, onSaved }: { node: PortsNodeUsage; onSaved: () => 
             {editing && (
                 <form className="flex flex-wrap items-end gap-2" onSubmit={e => { e.preventDefault(); void save(value.trim()); }}>
                     <label className="flex flex-col gap-1">
-                        <span className="mono-label">Own range</span>
+                        <span className="srv-label">Own range</span>
                         <input value={value} onChange={e => setValue(e.target.value)} className="input-field input-mono text-sm w-44" placeholder={node.ownRange ? 'e.g. 27000-27099' : `Empty: ${node.range || 'none'}`} autoFocus />
                     </label>
                     <label className="flex flex-col gap-1">
-                        <span className="mono-label">Address players use for extra ports</span>
+                        <span className="srv-label">Address players use for extra ports</span>
                         <input value={host} onChange={e => setHost(e.target.value)} maxLength={253} className="input-field input-mono text-sm w-64" placeholder="Empty: the node's public IP" />
                     </label>
                     <button type="submit" className="btn btn-primary btn-sm" disabled={busy}>
@@ -334,13 +336,12 @@ function ScopeInputs({ kinds, kind, setKind, id, setId }: {
     return (
         <>
             <label className="flex flex-col gap-1">
-                <span className="mono-label">Scope</span>
-                <select value={kind} onChange={e => setKind(e.target.value as ScopeKind)} className="input-field text-sm w-28">
-                    {kinds.map(k => <option key={k} value={k}>{KIND_LABEL[k]}</option>)}
-                </select>
+                <span className="srv-label">Scope</span>
+                <Select ariaLabel="Scope" value={kind} onChange={v => setKind(v as ScopeKind)} className="w-28"
+                    options={kinds.map(k => ({ value: k, label: KIND_LABEL[k] }))} />
             </label>
             <label className="flex flex-col gap-1 flex-1 min-w-36">
-                <span className="mono-label">{KIND_LABEL[kind]} ID</span>
+                <span className="srv-label">{KIND_LABEL[kind]} ID</span>
                 <input
                     value={id}
                     onChange={e => setId(e.target.value)}
@@ -367,7 +368,7 @@ function ScopeLabel({ scope }: { scope: string }) {
     const [k, ...rest] = scope.split(':');
     return (
         <>
-            <span className="mono-label text-(--base-06) w-14">{KIND_LABEL[k as ScopeKind] ?? k}</span>
+            <span className="srv-label text-(--base-06) w-14">{KIND_LABEL[k as ScopeKind] ?? k}</span>
             <code className="input-mono text-xs text-(--base-08)">{rest.join(':')}</code>
         </>
     );
@@ -465,11 +466,9 @@ function AccessSection() {
             <form className="flex flex-wrap items-end gap-2 pt-3 border-t border-(--base-03)" onSubmit={e => { e.preventDefault(); void add(); }}>
                 <ScopeInputs kinds={['server', 'user', 'role']} kind={kind} setKind={setKind} id={id} setId={setId} />
                 <label className="flex flex-col gap-1">
-                    <span className="mono-label">Extra ports</span>
-                    <select value={allowed ? 'allow' : 'deny'} onChange={e => setAllowed(e.target.value === 'allow')} className="input-field text-sm w-28">
-                        <option value="allow">Allow</option>
-                        <option value="deny">Deny</option>
-                    </select>
+                    <span className="srv-label">Extra ports</span>
+                    <Select ariaLabel="Extra ports" value={allowed ? 'allow' : 'deny'} onChange={v => setAllowed(v === 'allow')} className="w-28"
+                        options={[{ value: 'allow', label: 'Allow' }, { value: 'deny', label: 'Deny' }]} />
                 </label>
                 <button type="submit" className="btn btn-primary btn-sm" disabled={adding || !idOk}>
                     {adding ? <Loader2 size={13} className="animate-spin" aria-hidden="true" /> : <Plus size={13} aria-hidden="true" />}
@@ -561,7 +560,7 @@ function LimitsSection() {
             <form className="flex flex-wrap items-end gap-2 pt-3 border-t border-(--base-03)" onSubmit={e => { e.preventDefault(); void add(); }}>
                 <ScopeInputs kinds={['user', 'role']} kind={kind} setKind={setKind} id={id} setId={setId} />
                 <div className="flex flex-col gap-1">
-                    <span className="mono-label">Max ports</span>
+                    <span className="srv-label">Max ports</span>
                     <LimitField value={max} onChange={setMax} />
                 </div>
                 <button type="submit" className="btn btn-primary btn-sm" disabled={adding || !idOk}>

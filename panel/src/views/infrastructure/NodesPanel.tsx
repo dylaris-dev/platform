@@ -1,6 +1,8 @@
 "use client";
 
 import { useRouter } from 'next/navigation';
+import { Server } from 'lucide-react';
+import EmptyState from '@/components/ui/EmptyState';
 import { isKind, NODE_KIND_DESCRIPTION, type NodeKind } from '@/lib/nodeKind';
 import { NodeCard } from './InfraCards';
 import CustomerEstate from './CustomerEstate';
@@ -35,7 +37,7 @@ export default function NodesPanel({ kind }: { kind: NodeKind }) {
 
     return (
         <>
-            <p className="text-xs text-(--base-06) max-w-3xl -mt-1">{NODE_KIND_DESCRIPTION[kind]}</p>
+            <p className="text-[13px] text-(--base-06) max-w-3xl">{NODE_KIND_DESCRIPTION[kind]}</p>
 
             {/* Only on the BYON tab: it is the estate this summarises, and on the
                 other two it would be a count of somebody else's machines under a
@@ -43,7 +45,7 @@ export default function NodesPanel({ kind }: { kind: NodeKind }) {
             {kind === 'byon' && <CustomerEstate customers={infra.customers} />}
 
             {nodes.length === 0 ? (
-                <div className="card p-8 text-center text-(--base-06) text-sm">{EMPTY[kind]}</div>
+                <EmptyState icon={<Server size={20} />} title={EMPTY[kind]} />
             ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                     {nodes.map(node => (

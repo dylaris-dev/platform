@@ -2,7 +2,9 @@
 
 import { useState } from 'react';
 import { ChevronRight, ExternalLink, CircleAlert, Loader2, RefreshCw } from 'lucide-react';
+import '@/styles/server-content.css';
 import Segmented from '@/components/ui/Segmented';
+import Select from '@/components/ui/Select';
 import { Skeleton, SkeletonText } from '@/components/Skeleton';
 import type {
     CompatMatrix as CompatMatrixData,
@@ -99,15 +101,13 @@ export default function CompatMatrix({
                 {mode === 'specific' && (
                     <div className="flex flex-col gap-[5px]">
                         <label className="input-label" htmlFor="compat-specific">Minecraft version</label>
-                        <select
+                        <Select
                             id="compat-specific"
-                            className="input-field"
                             value={specific}
-                            onChange={e => onSpecificChange(e.target.value)}
-                        >
-                            <option value="">Pick a version</option>
-                            {versionOptions.map(v => <option key={v} value={v}>{v}</option>)}
-                        </select>
+                            onChange={onSpecificChange}
+                            placeholder="Pick a version"
+                            options={versionOptions.map(v => ({ value: v, label: v }))}
+                        />
                     </div>
                 )}
 
@@ -139,7 +139,7 @@ function MatrixSkeleton() {
     return (
         <div className="flex flex-col gap-2" aria-hidden>
             {[0, 1, 2].map(i => (
-                <div key={i} className="card p-4 flex flex-col gap-3">
+                <div key={i} className="srv-surface p-5 flex flex-col gap-3">
                     <Skeleton className="h-4 w-24" />
                     <SkeletonText width="w-full" />
                     <SkeletonText width="w-2/3" />
@@ -173,30 +173,30 @@ function MatrixBody({
     }
 
     return (
-        <div className="flex flex-col gap-2">
-            <p className="text-xs text-(--base-06)">
-                Checked <span className="font-mono text-(--base-08)">{data.checked}</span> items against{' '}
-                <span className="font-mono text-(--base-08)">{data.loader}</span>, currently on{' '}
-                <span className="font-mono text-(--base-08)">{data.current}</span>. Availability only: a mod that
+        <div className="flex flex-col gap-3">
+            <p className="text-[13px] text-(--base-06)">
+                Checked <span className="srv-num text-(--base-08)">{data.checked}</span> items against{' '}
+                <span className="srv-num text-(--base-08)">{data.loader}</span>, currently on{' '}
+                <span className="srv-num text-(--base-08)">{data.current}</span>. Availability only: a mod that
                 exists for a version can still be broken by a dependency.
             </p>
 
             {data.lines.map(line => {
                 const open = !!openLines[line.line];
                 return (
-                    <div key={line.line} className="card overflow-hidden">
+                    <div key={line.line} className="srv-content-matrix-line">
                         <button
                             type="button"
                             onClick={() => setOpenLines(s => ({ ...s, [line.line]: !s[line.line] }))}
                             aria-expanded={open}
-                            className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-(--base-03) focus-visible:outline-none focus-visible:shadow-[var(--focus-ring)] transition-colors"
+                            className="srv-content-matrix-head"
                         >
                             <ChevronRight
                                 size={14}
                                 className={`text-(--base-06) transition-transform ${open ? 'rotate-90' : ''}`}
                             />
-                            <span className="font-display font-bold text-(--base-09)">{line.line}</span>
-                            <span className="ml-auto flex items-center gap-3 mono-label">
+                            <span className="srv-num text-sm font-medium text-(--base-09)">{line.line}</span>
+                            <span className="srv-num ml-auto flex items-center gap-3 text-xs">
                                 {line.green > 0 && <LineCount status="green" n={line.green} />}
                                 {line.orange > 0 && <LineCount status="orange" n={line.orange} />}
                                 {line.red > 0 && <LineCount status="red" n={line.red} />}
@@ -204,7 +204,7 @@ function MatrixBody({
                         </button>
 
                         {open && (
-                            <div className="border-t border-(--base-03)">
+                            <div>
                                 {line.versions.map(v => (
                                     <VersionRow key={v.minecraft} version={v} renderAction={renderAction} />
                                 ))}
@@ -237,8 +237,8 @@ function VersionRow({
     const expandable = version.missing.length > 0;
 
     return (
-        <div className="border-b border-(--base-03) last:border-b-0">
-            <div className="flex flex-wrap items-center gap-3 px-4 py-2.5">
+        <div className="srv-content-matrix-row">
+            <div className="flex flex-wrap items-center gap-3 px-5 py-2.5">
                 <button
                     type="button"
                     disabled={!expandable}
@@ -252,7 +252,7 @@ function VersionRow({
                         className={`transition-transform ${open ? 'rotate-90' : ''} ${expandable ? 'text-(--base-06)' : 'opacity-0'}`}
                     />
                     <span className={`w-2 h-2 rounded-full shrink-0 ${STATUS_DOT[version.status]}`} />
-                    <span className="font-mono text-sm text-(--base-08)">{version.minecraft}</span>
+                    <span className="srv-num text-sm text-(--base-08)">{version.minecraft}</span>
                 </button>
 
                 <div className="flex flex-wrap items-center gap-1.5">
@@ -265,7 +265,7 @@ function VersionRow({
             </div>
 
             {open && expandable && (
-                <ul className="px-4 pb-3 pt-1 flex flex-col gap-1.5">
+                <ul className="px-5 pb-3 pt-1 flex flex-col gap-1.5">
                     {version.missing.map(m => (
                         <li key={m.key} className="flex flex-wrap items-center gap-2 text-xs">
                             <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${m.side === 'both' ? 'bg-(--error-light)' : 'bg-(--warning-light)'}`} />
@@ -279,9 +279,9 @@ function VersionRow({
                                 <ExternalLink size={10} />
                             </a>
                             {m.currentVersion && (
-                                <span className="font-mono text-(--base-06)">on {m.currentVersion}</span>
+                                <span className="srv-num text-(--base-06)">on {m.currentVersion}</span>
                             )}
-                            <span className="mono-label text-(--base-06)">{SIDE_LABELS[m.side]}</span>
+                            <span className="text-(--base-06)">{SIDE_LABELS[m.side]}</span>
                             <span className="text-(--base-06)">
                                 {m.reason === 'unresolvable'
                                     ? 'not listed on Modrinth any more, so this could not be checked'
@@ -299,13 +299,11 @@ function SideChip({ side, bucket }: { side: CompatSide; bucket?: { total: number
     // An empty bucket is not rendered at all: a pack with no client-only mods
     // should not show a grey "Client only 0/0" that reads like a warning.
     if (!bucket || bucket.total === 0) return null;
-    const cls =
-        bucket.status === 'green' ? 'bg-(--success-ghost) text-(--success-light)'
-            : bucket.status === 'red' ? 'bg-(--error-ghost) text-(--error-light)'
-                : 'bg-(--warning-ghost) text-(--warning-light)';
+    const tone = bucket.status === 'green' ? 'success' : bucket.status === 'red' ? 'error' : 'warning';
     return (
         <span
-            className={`mono-label inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm ${cls}`}
+            className="srv-content-tag srv-num"
+            data-tone={tone}
             title={`${bucket.available} of ${bucket.total} ${SIDE_LABELS[side].toLowerCase()} items are available`}
         >
             {SIDE_LABELS[side]} {bucket.available}/{bucket.total}

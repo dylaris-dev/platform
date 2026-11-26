@@ -119,7 +119,7 @@ export default function NodeJoinAttempts({ onAdmitted }: { onAdmitted: () => voi
                     ].filter(Boolean).join(' - ');
 
                     return (
-                        <div key={a.nodeToken} className="card p-3 space-y-2">
+                        <div key={a.nodeToken} className="rounded-lg bg-(--base-03) p-3 space-y-2">
                             <div className="flex items-start justify-between gap-3">
                                 <div className="min-w-0">
                                     <div className="flex items-center gap-2 flex-wrap">
@@ -160,22 +160,22 @@ export default function NodeJoinAttempts({ onAdmitted }: { onAdmitted: () => voi
 
                             <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 text-xs">
                                 <div className="flex gap-2">
-                                    <dt className="mono-label shrink-0">From</dt>
+                                    <dt className="srv-label shrink-0">From</dt>
                                     <dd className="text-(--base-08) font-mono">{a.peerIp || 'unknown'}</dd>
                                 </div>
                                 <div className="flex gap-2">
-                                    <dt className="mono-label shrink-0">Last try</dt>
+                                    <dt className="srv-label shrink-0">Last try</dt>
                                     <dd className="text-(--base-08)">{timeAgo(a.lastSeenAt)}</dd>
                                 </div>
                                 {specs && (
                                     <div className="flex gap-2 sm:col-span-2">
-                                        <dt className="mono-label shrink-0">Reported</dt>
+                                        <dt className="srv-label shrink-0">Reported</dt>
                                         <dd className="text-(--base-07)">{specs}</dd>
                                     </div>
                                 )}
                                 {(a.reportedPublicIp || a.reportedPrivateIps) && (
                                     <div className="flex gap-2 sm:col-span-2">
-                                        <dt className="mono-label shrink-0">Reported IPs</dt>
+                                        <dt className="srv-label shrink-0">Reported IPs</dt>
                                         <dd className="text-(--base-07) font-mono break-all">
                                             {[a.reportedPublicIp, a.reportedPrivateIps].filter(Boolean).join(', ')}
                                         </dd>

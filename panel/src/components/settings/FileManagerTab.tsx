@@ -6,6 +6,8 @@ import { getFileManagerSettings, saveFileManagerSettings, FileManagerSettings } 
 import { useSettingsForm } from '@/lib/useSettingsForm';
 import SettingsPage from '@/components/settings/SettingsPage';
 import SettingsCard, { SettingsGroup } from '@/components/settings/SettingsCard';
+import Select from '@/components/ui/Select';
+import Switch from '@/components/ui/Switch';
 
 const UNITS = [
     { label: 'MB', multiplier: 1024 * 1024 },
@@ -88,30 +90,22 @@ function LimitField({ id, label, bytes, onChange }: LimitFieldProps) {
                             onChange={e => handleValueChange(Math.max(0, parseInt(e.target.value) || 0))}
                             className="input-field w-24 text-right"
                         />
-                        <select
+                        <Select
                             value={unit}
-                            onChange={e => handleUnitChange(e.target.value)}
-                            aria-label={`${label} unit`}
-                            className="input-field w-20"
-                        >
-                            {UNITS.map(u => (
-                                <option key={u.label} value={u.label}>{u.label}</option>
-                            ))}
-                        </select>
+                            onChange={handleUnitChange}
+                            ariaLabel={`${label} unit`}
+                            className="w-20"
+                            options={UNITS.map(u => ({ value: u.label, label: u.label }))}
+                        />
                     </>
                 )}
                 <label className="flex items-center gap-1.5 cursor-pointer select-none">
-                    <button
-                        type="button"
-                        role="switch"
-                        aria-checked={unlimited}
-                        aria-label={`${label}: no limit`}
-                        onClick={() => onChange(unlimited ? displayToBytes(value || 1, unit) : null)}
-                        className={`toggle-track ${unlimited ? 'toggle-track-on' : 'toggle-track-off'}`}
-                    >
-                        <span className={`toggle-knob ${unlimited ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
-                    </button>
-                    <span className="text-[10px] font-mono uppercase text-(--base-06)">No limit</span>
+                    <Switch
+                        ariaLabel={`${label}: no limit`}
+                        checked={unlimited}
+                        onChange={() => onChange(unlimited ? displayToBytes(value || 1, unit) : null)}
+                    />
+                    <span className="text-xs text-(--base-06)">No limit</span>
                 </label>
             </div>
         </div>
@@ -168,7 +162,7 @@ export default function FileManagerTab() {
                         </>
                     }
                 >
-                    <div className="grid grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                         <LimitField id="fm-admin-up" label="Upload limit" bytes={s.adminUploadLimit} onChange={v => set('adminUploadLimit', v)} />
                         <LimitField id="fm-admin-down" label="Download limit" bytes={s.adminDownloadLimit} onChange={v => set('adminDownloadLimit', v)} />
                     </div>
@@ -191,7 +185,7 @@ export default function FileManagerTab() {
                         </>
                     }
                 >
-                    <div className="grid grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                         <LimitField id="fm-user-up" label="Upload limit" bytes={s.userUploadLimit} onChange={v => set('userUploadLimit', v)} />
                         <LimitField id="fm-user-down" label="Download limit" bytes={s.userDownloadLimit} onChange={v => set('userDownloadLimit', v)} />
                     </div>

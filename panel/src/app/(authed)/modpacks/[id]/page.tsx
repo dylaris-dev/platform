@@ -14,6 +14,9 @@ import { fmtDateTime } from '@/lib/time';
 import PackBuildBadges from '@/components/modpacks/PackBuildBadges';
 import { SkeletonList } from '@/components/Skeleton';
 import DeleteBuildButton from '@/components/modpacks/DeleteBuildButton';
+import Section from '@/components/ui/Section';
+import EmptyState from '@/components/ui/EmptyState';
+import { RowList, Row } from '@/components/ui/RowList';
 import styles from '@/components/modpacks/workspace.module.css';
 
 export default function PackDetailPage() {
@@ -24,10 +27,20 @@ export default function PackDetailPage() {
     if (loading) return <div className={styles.scroll}><SkeletonList rows={5} /></div>;
     if (!pack) return <p className="p-6 text-sm text-(--base-06)">Pack not found.</p>;
     const canDelete = permissions.canDelete && featureFlags.modpacks;
-    return <div className={styles.scroll}>
-        <div className="flex items-center justify-between gap-3 mb-5"><div><h2 className="text-base font-medium text-(--base-09)">Builds</h2><p className="text-xs text-(--base-06) mt-1">Each build pins its Minecraft environment and content.</p></div>{pack.modrinthProjectId && <a href={`https://modrinth.com/modpack/${encodeURIComponent(pack.modrinthProjectId)}`} target="_blank" rel="noopener noreferrer" className="btn btn-secondary btn-sm"><ExternalLink size={12} /> Modrinth</a>}</div>
-        {builds.length === 0 && <div className="py-14 text-center text-(--base-06)"><Layers size={28} className="mx-auto mb-3" /><p className="text-sm">No builds yet.</p>{permissions.canEdit && featureFlags.modpacks && <Link href={`/modpacks/${pack.id}/builds/new`} className="btn btn-primary btn-sm mt-4"><Plus size={12} /> Create the first build</Link>}</div>}
-        <div className="space-y-2">{builds.map(build => <div key={build.id} className="flex items-center gap-3 p-4 rounded-md border border-(--base-03) hover:bg-(--base-02)"><Link href={`/modpacks/${pack.id}/builds/${build.id}`} className="flex-1 min-w-0"><div className="flex items-center gap-2 flex-wrap"><strong className="font-mono text-sm text-(--base-09)">{build.versionString}</strong><PackBuildBadges build={build} builds={builds} recommendedBuildId={pack.recommendedBuildId}/></div><p className="text-xs text-(--base-06) mt-2">MC {build.minecraft || 'Unspecified'} · {build.loader || 'Vanilla'} {build.loaderVersion} · {fmtDateTime(build.createdAt)}</p></Link>{canDelete && <DeleteBuildButton packId={pack.id} build={build} onDeleted={() => { void refresh(); }} />}</div>)}</div>
-        {canDelete && <div className="pt-6 mt-7 border-t border-(--base-03)"><button className="btn btn-danger btn-sm" disabled={busy} onClick={() => run(async () => { if (!await confirmDialog({ title: `Delete ${pack.internalName}?`, message: 'This removes the local pack and all its builds. Any published Modrinth project remains on Modrinth.' })) return; const result = await deletePack(pack.id); toast(result.success ? 'Pack deleted.' : result.message || 'Delete failed.', !!result.success); if (result.success) router.push('/modpacks'); })}><Trash2 size={12} /> Delete pack</button></div>}
-    </div>;
+    return <div className={styles.scroll}><div className="mx-auto max-w-5xl space-y-6">
+        <Section
+            title="Builds"
+            description="Each build pins its Minecraft environment and content."
+            actions={pack.modrinthProjectId ? <a href={`https://modrinth.com/modpack/${encodeURIComponent(pack.modrinthProjectId)}`} target="_blank" rel="noopener noreferrer" className="btn btn-secondary btn-sm"><ExternalLink size={12} /> Modrinth</a> : undefined}
+        >
+            {builds.length === 0 ? <EmptyState icon={<Layers size={20} />} title="No builds yet" action={permissions.canEdit && featureFlags.modpacks ? <Link href={`/modpacks/${pack.id}/builds/new`} className="btn btn-primary btn-sm"><Plus size={12} /> Create the first build</Link> : undefined} /> : <div className="srv-surface"><RowList label="Builds">{builds.map(build => <Row
+                key={build.id}
+                href={`/modpacks/${pack.id}/builds/${build.id}`}
+                title={<span className="flex flex-wrap items-center gap-2"><strong className="srv-num text-sm">{build.versionString}</strong><PackBuildBadges build={build} builds={builds} recommendedBuildId={pack.recommendedBuildId} /></span>}
+                meta={`MC ${build.minecraft || 'Unspecified'} · ${build.loader || 'Vanilla'} ${build.loaderVersion} · ${fmtDateTime(build.createdAt)}`}
+                actions={canDelete ? <DeleteBuildButton packId={pack.id} build={build} onDeleted={() => { void refresh(); }} /> : undefined}
+            />)}</RowList></div>}
+        </Section>
+        {canDelete && <div className="pt-2"><button className="btn btn-danger btn-sm" disabled={busy} onClick={() => run(async () => { if (!await confirmDialog({ title: `Delete ${pack.internalName}?`, message: 'This removes the local pack and all its builds. Any published Modrinth project remains on Modrinth.' })) return; const result = await deletePack(pack.id); toast(result.success ? 'Pack deleted.' : result.message || 'Delete failed.', !!result.success); if (result.success) router.push('/modpacks'); })}><Trash2 size={12} /> Delete pack</button></div>}
+    </div></div>;
 }

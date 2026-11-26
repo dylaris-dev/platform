@@ -7,6 +7,8 @@ import HelpTip from '@/components/ui/HelpTip';
 import Select from '@/components/ui/Select';
 import { listSpeedTestNodes, runSpeedTest, suggestedCap, type SpeedTestNode, type SpeedTestResult } from '@/lib/api/speedTest';
 import { withRateFloor } from '@/components/settings/nodeBackupThrottleHelpers';
+import Segmented from '@/components/ui/Segmented';
+import '@/styles/settings-storage.css';
 
 const SIZES = [64, 256, 512] as const;
 
@@ -87,7 +89,7 @@ export default function StorageUploadCap({
             </div>
 
             {storageId != null && (
-                <div className="rounded-md border border-(--base-04) bg-(--base-02) p-3 space-y-3">
+                <div className="set-sto-panel space-y-3">
                     {nodes === null ? (
                         <div className="flex flex-wrap items-center justify-between gap-2">
                             <span className="text-xs text-(--base-06)">
@@ -116,20 +118,12 @@ export default function StorageUploadCap({
                                         placeholder="Pick a node"
                                     />
                                 </div>
-                                <div role="radiogroup" aria-label="Test size" className="flex gap-1">
-                                    {SIZES.map(s => (
-                                        <button
-                                            key={s}
-                                            type="button"
-                                            role="radio"
-                                            aria-checked={size === s}
-                                            onClick={() => setSize(s)}
-                                            className={`btn btn-sm ${size === s ? 'btn-primary' : 'btn-secondary'}`}
-                                        >
-                                            {s} MB
-                                        </button>
-                                    ))}
-                                </div>
+                                <Segmented
+                                    ariaLabel="Test size"
+                                    value={String(size)}
+                                    onChange={s => setSize(Number(s))}
+                                    options={SIZES.map(s => ({ id: String(s), label: `${s} MB` }))}
+                                />
                             </div>
                             <div className="flex flex-wrap items-center justify-between gap-2">
                                 <span className="text-xs text-(--base-06)">

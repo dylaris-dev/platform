@@ -1,7 +1,15 @@
 "use client";
 
+import Checkbox from '@/components/ui/Checkbox';
+import Select from '@/components/ui/Select';
 import React, { useCallback, useEffect, useState } from 'react';
-import { Key, Plus, Copy, Trash2, AlertTriangle, Shield, X, EyeOff, RefreshCw } from 'lucide-react';
+import { Key, Plus, Copy, Trash2, AlertTriangle, Shield, X, EyeOff, RefreshCw, MoreVertical } from 'lucide-react';
+import PageHeader from '@/components/ui/PageHeader';
+import Section from '@/components/ui/Section';
+import EmptyState from '@/components/ui/EmptyState';
+import { RowList, Row } from '@/components/ui/RowList';
+import Menu, { type MenuEntry } from '@/components/ui/Menu';
+import Callout from '@/components/server/Callout';
 import { useAppData } from '@/lib/AppDataContext';
 import { listAPIKeys, createAPIKey, revokeAPIKey, rollAPIKey, type APIKey, type APIKeyOptions } from '@/lib/api/apiKeys';
 import { getCatalog, type CatalogScope } from '@/lib/api/authzCatalog';
@@ -28,6 +36,7 @@ export default function ApiKeysPage() {
     const [options, setOptions] = useState<APIKeyOptions | null>(null);
     const [catalog, setCatalog] = useState<CatalogScope[]>([]);
     const [loading, setLoading] = useState(true);
+    const [loadError, setLoadError] = useState<string | null>(null);
     const [creating, setCreating] = useState(false);
 
     const [form, setForm] = useState<{
@@ -57,6 +66,7 @@ export default function ApiKeysPage() {
         const res = await listAPIKeys();
         if (res.success && res.keys) setKeys(res.keys);
         if (res.success && res.options) setOptions(res.options);
+        setLoadError(res.success ? null : (res.message || 'Could not load API keys.'));
         setLoading(false);
     }, []);
 
@@ -143,124 +153,121 @@ export default function ApiKeysPage() {
     if (!user) return null;
 
     return (
-        <main className="flex-1 overflow-y-auto p-6 max-w-4xl">
-            <header className="flex items-center gap-3 mb-4">
-                <Key size={20} className="text-(--accent-light)" />
-                <h1 className="text-base font-display font-semibold text-(--base-09)">API Keys</h1>
-                <div className="ml-auto">
+        <main className="flex-1 overflow-y-auto app-page space-y-6">
+            <PageHeader
+                title="API Keys"
+                description="Let scripts, bots and stream tools call Dylaris without your session."
+                actions={
                     <button
                         onClick={() => setCreating(true)}
                         disabled={options?.enabled === false}
                         className="btn btn-primary btn-sm"
                     >
-                        <Plus size={12} />
+                        <Plus size={14} />
                         New API Key
                     </button>
-                </div>
-            </header>
+                }
+            />
 
-            <div className="card p-4 mb-4 text-xs text-(--base-07) flex items-start gap-2">
-                <Shield size={14} className="text-(--accent-light) shrink-0 mt-0.5" />
-                <div>
-                    <p>
-                        Used by external automation (Discord bots, stream alerts, scripts) to call
-                        Dylaris APIs without your session token. Authenticate with{' '}
-                        <code className="font-mono">Authorization: Bearer dyl_…</code>. Each key is
-                        scoped to a list of servers + capabilities.
-                    </p>
-                    <p className="mt-1 text-(--base-06)">
-                        Base path: <code className="font-mono">/api/external</code>, servers addressed
-                        by UUID — e.g. <code className="font-mono">POST /api/external/servers/&lt;uuid&gt;/power</code>
-                        {' '}with <code className="font-mono">{'{ "action": "restart" }'}</code>.
-                    </p>
-                    <p className="mt-1 text-(--base-06)">
-                        A key counts like an invited member: auditing is switched on for every server it
-                        can reach, and its actions show in the server&apos;s audit log as
-                        {' '}<code className="font-mono">key: &lt;name&gt; (owner &lt;you&gt;)</code>. Signing out
-                        everywhere does not revoke keys; revoke them here.
-                    </p>
-                </div>
-            </div>
+            <Callout tone="info" icon={<Shield size={16} />} foldable title="How API keys work">
+                <p>
+                    Used by external automation (Discord bots, stream alerts, scripts) to call
+                    Dylaris APIs without your session token. Authenticate with{' '}
+                    <code className="font-mono">Authorization: Bearer dyl_…</code>. Each key is
+                    scoped to a list of servers + capabilities.
+                </p>
+                <p className="mt-1 text-(--base-06)">
+                    Base path: <code className="font-mono">/api/external</code>, servers addressed
+                    by UUID — e.g. <code className="font-mono">POST /api/external/servers/&lt;uuid&gt;/power</code>
+                    {' '}with <code className="font-mono">{'{ "action": "restart" }'}</code>.
+                </p>
+                <p className="mt-1 text-(--base-06)">
+                    A key counts like an invited member: auditing is switched on for every server it
+                    can reach, and its actions show in the server&apos;s audit log as
+                    {' '}<code className="font-mono">key: &lt;name&gt; (owner &lt;you&gt;)</code>. Signing out
+                    everywhere does not revoke keys; revoke them here.
+                </p>
+            </Callout>
 
             {/* The operator can turn user keys off entirely. Existing keys stop
                 working at that moment (the switch is enforced at use, not only at
                 mint), so the page has to say that rather than just hide the
                 button and leave the listed keys looking live. */}
             {options?.enabled === false && (
-                <div className="card p-4 mb-4 text-xs flex items-start gap-2">
-                    <AlertTriangle size={14} className="text-(--warning-light) shrink-0 mt-0.5" />
-                    <div>
-                        <p className="text-(--base-08)">API keys are turned off for users on this platform.</p>
-                        <p className="mt-1 text-(--base-06)">
-                            New keys cannot be created, and any key listed below is already being
-                            refused. An admin can re-enable them under Settings → Features.
-                        </p>
-                    </div>
-                </div>
+                <Callout tone="warning" icon={<AlertTriangle size={16} />} title="API keys are turned off for users on this platform.">
+                    New keys cannot be created, and any key listed below is already being
+                    refused. An admin can re-enable them under Settings → Features.
+                </Callout>
             )}
 
-            {loading ? (
-                <SkeletonList rows={3} />
-            ) : keys.length === 0 ? (
-                <div className="card p-8 flex flex-col items-center text-center gap-2">
-                    <Key size={28} className="text-(--base-05)" />
-                    <p className="text-sm text-(--base-07)">No API keys yet.</p>
-                </div>
-            ) : (
-                <div className="space-y-2">
-                    {keys.map(k => (
-                        <article key={k.id} className="card p-3 flex items-start gap-3">
-                            <Key size={16} className={k.revokedAt ? 'text-(--base-05)' : 'text-(--accent-light)'} />
-                            <div className="min-w-0 flex-1">
-                                <div className="flex items-center gap-2 flex-wrap">
-                                    <span className="font-medium text-sm text-(--base-09)">{k.name}</span>
-                                    {k.revokedAt && (
-                                        <span className="mono-label bg-(--base-03) text-(--base-06) px-1.5 rounded-sm">revoked</span>
-                                    )}
-                                    {!k.revokedAt && k.expiresAt && new Date(k.expiresAt).getTime() <= Date.now() && (
-                                        <span className="mono-label bg-(--base-03) text-(--base-06) px-1.5 rounded-sm">expired</span>
-                                    )}
-                                    <span className="mono-label bg-(--base-03) text-(--base-07) px-1.5 rounded-sm">
-                                        {k.ratePerMin}/min
-                                    </span>
-                                </div>
-                                <div className="mt-1 text-xs text-(--base-06)">
-                                    <span className="text-(--base-07)">Permissions:</span> {k.scope.permissions.join(', ') || '—'}
-                                </div>
-                                <div className="text-xs text-(--base-06)">
-                                    <span className="text-(--base-07)">Servers:</span>{' '}
-                                    {k.scope.servers.length === 0
-                                        ? <span className="text-(--base-05) italic">(none)</span>
-                                        : k.scope.servers.map(uuid => {
-                                            const srv = servers.find(s => s.uuid === uuid);
-                                            return srv ? srv.name : uuid.slice(0, 8) + '…';
-                                        }).join(', ')}
-                                </div>
-                                <div className="text-xs text-(--base-06) mt-0.5">
-                                    Expires: <span className="text-(--base-08)">{k.expiresAt ? fmtDateTime(k.expiresAt) : 'never'}</span>
-                                </div>
-                                {k.lastUsedAt && (
-                                    <div className="text-xs text-(--base-06) mt-0.5">
-                                        Last used: <span className="text-(--base-08)">{fmtDateTime(k.lastUsedAt)}</span>
-                                    </div>
-                                )}
-                            </div>
-                            {!k.revokedAt && !(k.expiresAt && new Date(k.expiresAt).getTime() <= Date.now()) && (
-                                <button onClick={() => setRolling(k)} className="btn btn-secondary btn-sm shrink-0">
-                                    <RefreshCw size={12} />
-                                    Roll
-                                </button>
-                            )}
-                            {!k.revokedAt && (
-                                <button onClick={() => setRevoking(k)} className="btn btn-secondary btn-sm shrink-0">
-                                    <Trash2 size={12} className="text-(--error-light)" />
-                                    Revoke
-                                </button>
-                            )}
-                        </article>
-                    ))}
-                </div>
-            )}
+            <Section title="Your keys" description="Plaintext is shown once at creation; the list only carries metadata.">
+                {loading ? (
+                    <SkeletonList rows={3} />
+                ) : loadError ? (
+                    <EmptyState
+                        tone="error"
+                        icon={<AlertTriangle size={20} />}
+                        title="Could not load API keys"
+                        description={loadError}
+                        action={<button onClick={() => { setLoading(true); refresh(); }} className="btn btn-secondary btn-sm">Retry</button>}
+                    />
+                ) : keys.length === 0 ? (
+                    <EmptyState
+                        icon={<Key size={20} />}
+                        title="No API keys yet"
+                        description="Create a key to let automation call Dylaris on your behalf."
+                        action={options?.enabled === false ? undefined : (
+                            <button onClick={() => setCreating(true)} className="btn btn-primary btn-sm"><Plus size={14} />New API Key</button>
+                        )}
+                    />
+                ) : (
+                    <div className="srv-surface">
+                        <RowList label="API keys">
+                            {keys.map(k => {
+                                const expired = !!k.expiresAt && new Date(k.expiresAt).getTime() <= Date.now();
+                                const rollable = !k.revokedAt && !expired;
+                                const entries: MenuEntry[] = [
+                                    ...(rollable ? [{ label: 'Roll', icon: <RefreshCw size={14} />, onSelect: () => setRolling(k) }] : []),
+                                    ...(!k.revokedAt ? [{ label: 'Revoke', icon: <Trash2 size={14} />, danger: true, onSelect: () => setRevoking(k) }] : []),
+                                ];
+                                const serverNames = k.scope.servers.length === 0
+                                    ? '(none)'
+                                    : k.scope.servers.map(uuid => {
+                                        const srv = servers.find(s => s.uuid === uuid);
+                                        return srv ? srv.name : uuid.slice(0, 8) + '…';
+                                    }).join(', ');
+                                return (
+                                    <Row
+                                        key={k.id}
+                                        leading={<Key size={16} className={k.revokedAt ? 'text-(--base-05)' : 'text-(--accent-light)'} />}
+                                        title={
+                                            <span className="flex flex-wrap items-center gap-2">
+                                                <span>{k.name}</span>
+                                                {k.revokedAt && <span className="srv-chip h-5 px-2 text-[11px]">revoked</span>}
+                                                {!k.revokedAt && expired && <span className="srv-chip h-5 px-2 text-[11px]">expired</span>}
+                                                <span className="srv-chip h-5 px-2 font-mono text-[11px]">{k.ratePerMin}/min</span>
+                                            </span>
+                                        }
+                                        meta={
+                                            <span className="block space-y-0.5 whitespace-normal">
+                                                <span className="block"><span className="text-(--base-07)">Permissions:</span> {k.scope.permissions.join(', ') || '—'}</span>
+                                                <span className="block"><span className="text-(--base-07)">Servers:</span> {serverNames}</span>
+                                                <span className="block">
+                                                    Expires: <span className="text-(--base-08)">{k.expiresAt ? fmtDateTime(k.expiresAt) : 'never'}</span>
+                                                    {k.lastUsedAt && <> · Last used: <span className="text-(--base-08)">{fmtDateTime(k.lastUsedAt)}</span></>}
+                                                </span>
+                                            </span>
+                                        }
+                                        actions={entries.length > 0 ? (
+                                            <Menu align="end" trigger={<button type="button" aria-label={`Actions for ${k.name}`} className="app-icon-btn"><MoreVertical size={16} /></button>} items={entries} />
+                                        ) : undefined}
+                                    />
+                                );
+                            })}
+                        </RowList>
+                    </div>
+                )}
+            </Section>
 
             {/* Create modal */}
             {creating && (
@@ -317,9 +324,8 @@ export default function ApiKeysPage() {
                                                                 const checked = form.permissions.includes(c.id);
                                                                 return (
                                                                     <label key={c.id} className="flex items-center gap-2 px-2 py-1 rounded-md cursor-pointer hover:bg-(--base-03)">
-                                                                        <input
-                                                                            type="checkbox"
-                            className="checkbox"
+                                                                        <Checkbox
+                                                                            ariaLabel={c.label}
                                                                             checked={checked}
                                                                             onChange={() => setForm({
                                                                                 ...form,
@@ -362,9 +368,8 @@ export default function ApiKeysPage() {
                                             const checked = form.servers.includes(s.uuid);
                                             return (
                                                 <label key={s.uuid} className="flex items-center gap-2 px-2 py-1 rounded-md cursor-pointer hover:bg-(--base-03)">
-                                                    <input
-                                                        type="checkbox"
-                            className="checkbox"
+                                                    <Checkbox
+                                                        ariaLabel={s.name}
                                                         checked={checked}
                                                         onChange={() => setForm({
                                                             ...form,
@@ -396,17 +401,18 @@ export default function ApiKeysPage() {
 
                             <div>
                                 <label className="input-label" htmlFor="apikey-expiry">Expires</label>
-                                <select
+                                <Select
                                     id="apikey-expiry"
-                                    className="input-field w-48"
-                                    value={form.expiresInDays}
-                                    onChange={e => setForm({ ...form, expiresInDays: parseInt(e.target.value, 10) })}
-                                >
-                                    <option value={30}>In 30 days</option>
-                                    <option value={90}>In 90 days</option>
-                                    <option value={365}>In a year</option>
-                                    <option value={0}>Never</option>
-                                </select>
+                                    className="w-48"
+                                    value={String(form.expiresInDays)}
+                                    onChange={v => setForm({ ...form, expiresInDays: parseInt(v, 10) })}
+                                    options={[
+                                        { value: '30', label: 'In 30 days' },
+                                        { value: '90', label: 'In 90 days' },
+                                        { value: '365', label: 'In a year' },
+                                        { value: '0', label: 'Never' },
+                                    ]}
+                                />
                             </div>
                         </div>
                         <ReauthFields

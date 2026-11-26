@@ -2,7 +2,8 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 
-import { Users, UserRound, Power, ShieldX, Skull, ShieldCheck, ShieldOff, Trash2, RefreshCw, Search, Send, AlertTriangle, Crown, ListChecks, CircleCheck, X, ListPlus, MessageSquare, Terminal, Lock, Info } from 'lucide-react';
+import { Users, UserRound, Power, ShieldX, Skull, ShieldCheck, ShieldOff, Trash2, RefreshCw, Search, Send, AlertTriangle, Crown, ListChecks, CircleCheck, X, ListPlus, MessageSquare, Terminal, Lock, Info, MoreHorizontal } from 'lucide-react';
+import { Dialog, DialogBackdrop, DialogClose, DialogContent, DialogTitle } from '@ui-sdk/react/dialog';
 import { useAppData } from '@/lib/AppDataContext';
 import PlayerHead from '@/components/PlayerHead';
 import {
@@ -18,7 +19,11 @@ import RconConfigCard from '@/components/RconConfigCard';
 import { Skeleton, SkeletonText, SkeletonCircle } from '@/components/Skeleton';
 import { toast } from '@/components/ui/Toast';
 import { useRouteId } from '@/lib/routeParams';
-import ModalPanel from '@/components/ui/ModalPanel';
+import Tabs, { type TabItem } from '@/components/ui/Tabs';
+import Menu, { type MenuEntry } from '@/components/ui/Menu';
+import Tooltip from '@/components/ui/Tooltip';
+import Callout from '@/components/server/Callout';
+import { confirmDialog } from '@/components/ui/ConfirmDialog';
 
 // Player Management. Everything here goes through /servers/{id}/players,
 // which is gated on players.read (the roster + the three list files) and
@@ -80,12 +85,11 @@ export default function ServerPlayersPage() {
     // players but not look at the server's configuration.
     const [rconConfigVisible, setRconConfigVisible] = useState(true);
 
-    const [confirm, setConfirm] = useState<{
-        title: string;
-        message: string;
-        onConfirm: () => void | Promise<void>;
-        danger?: boolean;
-    } | null>(null);
+    // The kit's confirm dialog; the handlers below keep their shape.
+    const setConfirm = (c: { title: string; message: string; onConfirm: () => void | Promise<void>; danger?: boolean }) => {
+        void confirmDialog({ title: c.title, message: c.message, confirmLabel: 'Confirm', destructive: !!c.danger })
+            .then(ok => (ok ? c.onConfirm() : undefined));
+    };
     const [tellPrompt, setTellPrompt] = useState<{ player: string; message: string } | null>(null);
     const [addPrompt, setAddPrompt] = useState<{ target: 'whitelist' | 'ops'; name: string } | null>(null);
 
@@ -99,9 +103,6 @@ export default function ServerPlayersPage() {
     const blockedHint = !canManage
         ? (server?.role === 'demo' ? 'Read-only: you cannot manage players on this server' : 'You need the Manage players permission')
         : OFFLINE_HINT;
-    // A button's own title wins over the fieldset's, so a blocked one carries
-    // the reason after its name.
-    const actionTip = (label: string) => (actionsBlocked ? `${label}: ${blockedHint}` : label);
     const [allLimit, setAllLimit] = useState(ALL_PAGE);
 
     // With RCON off, the effective section is always 'rcon' (the only usable
@@ -293,83 +294,129 @@ export default function ServerPlayersPage() {
 
     if (!server) return null;
 
+    const sectionItems: TabItem<Section>[] = visibleSections.map(({ id, label, Icon }) => {
+        const locked = !rconEnabled && RCON_DEPENDENT.includes(id);
+        return {
+            id,
+            label: (id === 'online' || id === 'all') && !locked && online.length > 0 ? `${label} (${online.length})` : label,
+            icon: locked ? Lock : Icon,
+            disabled: locked,
+            title: locked ? 'Enable RCON to unlock this section' : undefined,
+        };
+    });
+
+    // One trigger for every row menu. Wrapped in a span only when blocked, so
+    // the reason is reachable even though a disabled button takes no hover.
+    const rowMenu = (p: { name: string }, items: MenuEntry[]) => {
+        const menu = (
+            <Menu
+                trigger={
+                    <button type="button" aria-label={`Actions for ${p.name}`} disabled={actionsBlocked} className="btn btn-ghost btn-icon btn-sm">
+                        <MoreHorizontal size={16} />
+                    </button>
+                }
+                items={items}
+            />
+        );
+        return actionsBlocked ? <Tooltip content={blockedHint}><span className="inline-flex">{menu}</span></Tooltip> : menu;
+    };
+
+    // Single-action sections get the action itself, not a one-item menu.
+    const rowButton = (label: string, icon: React.ReactNode, onClick: () => void, name: string, tone?: string) => {
+        const btn = (
+            <button type="button" aria-label={`${label} ${name}`} onClick={onClick} disabled={actionsBlocked} className={`btn btn-secondary btn-sm ${tone ?? ''}`}>
+                {icon}
+                {label}
+            </button>
+        );
+        return actionsBlocked ? <Tooltip content={blockedHint}><span className="inline-flex">{btn}</span></Tooltip> : btn;
+    };
+
+    const rowActions = (p: any): React.ReactNode => {
+        const key = String(p.name).toLowerCase();
+        if (section === 'all') {
+            const items: MenuEntry[] = [];
+            if ((p as AllPlayerRow).online) items.push({ label: 'Kick', icon: <ShieldOff size={14} />, onSelect: () => handleKick(p.name) });
+            if (!whitelisted.has(key)) items.push({ label: 'Add to whitelist', icon: <ListChecks size={14} />, onSelect: () => handleWhitelistAdd(p.name) });
+            if (!opped.has(key)) items.push({ label: 'Make operator', icon: <ShieldCheck size={14} />, onSelect: () => handleOp(p.name) });
+            if (items.length) items.push({ type: 'separator', id: 'sep' });
+            items.push(banned.has(key)
+                ? { label: 'Unban', icon: <CircleCheck size={14} />, onSelect: () => handleUnban(p.name) }
+                : { label: 'Ban', icon: <Skull size={14} />, danger: true, onSelect: () => handleBan(p.name) });
+            return rowMenu(p, items);
+        }
+        if (section === 'online') {
+            return rowMenu(p, [
+                { label: 'Whisper', icon: <MessageSquare size={14} />, onSelect: () => setTellPrompt({ player: p.name, message: '' }) },
+                { label: 'Make operator', icon: <ShieldCheck size={14} />, onSelect: () => handleOp(p.name) },
+                { label: 'Kick', icon: <ShieldOff size={14} />, onSelect: () => handleKick(p.name) },
+                { type: 'separator', id: 'sep' },
+                { label: 'Ban', icon: <Skull size={14} />, danger: true, onSelect: () => handleBan(p.name) },
+            ]);
+        }
+        if (section === 'bans') return rowButton('Unban', <CircleCheck size={14} />, () => handleUnban(p.name), p.name);
+        if (section === 'whitelist') return rowButton('Remove', <Trash2 size={14} />, () => handleWhitelistRemove(p.name), p.name, 'text-(--error-light)');
+        if (section === 'ops') return rowButton('Remove operator', <Crown size={14} />, () => handleDeop(p.name), p.name, 'text-(--error-light)');
+        return null;
+    };
+
     return (
         // h-full, not flex-1: ServerShell's children box is a scrolling BLOCK, so
         // flex-1 sizes nothing here and the player list below never reached its own
-        // overflow - the whole window scrolled instead. The p-6 goes with it; the
-        // shell already applies one.
-        <main className="h-full flex flex-col gap-4 overflow-hidden">
-            <header className="flex items-center gap-3 shrink-0">
-                <Users size={20} className="text-(--accent-light)" />
-                <h1 className="text-base font-display font-semibold text-(--base-09)">Players</h1>
-                {live && ROSTER_SECTIONS.includes(effectiveSection) && (
-                    <span className="text-xs text-(--base-06)">Online list polls every 10s</span>
-                )}
+        // overflow - the whole window scrolled instead. The padding goes with it;
+        // the shell already applies one.
+        <main className="h-full flex flex-col gap-5 overflow-hidden">
+            <header className="flex shrink-0 flex-wrap items-end justify-between gap-x-6 gap-y-3">
+                <div className="min-w-0">
+                    <h1 className="font-display text-xl font-bold text-(--base-09)">Players</h1>
+                    <p className="mt-1 text-sm text-(--base-06)">
+                        Who is online and who may join.
+                        {live && ROSTER_SECTIONS.includes(effectiveSection) && ' The online list refreshes every 10 seconds.'}
+                    </p>
+                </div>
                 {effectiveSection !== 'rcon' && (
-                    <div className="ml-auto flex items-center gap-2">
+                    <div className="flex items-center gap-2">
                         <div className="relative">
-                            <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-(--base-05)" />
+                            <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-(--base-05)" aria-hidden="true" />
                             <input
                                 type="text"
                                 value={search}
                                 onChange={e => setSearch(e.target.value)}
-                                placeholder="Search…"
-                                className="input-field input-icon-left w-48"
+                                placeholder="Search players"
+                                aria-label="Search players"
+                                className="input-field input-icon-left w-44 sm:w-56"
                             />
                         </div>
                         {/* Not onClick={refresh}: the handler would receive the
                             MouseEvent as `background` and every manual refresh
                             would silently become a background one. */}
                         <button onClick={() => refresh()} className="btn btn-secondary btn-sm" disabled={loading}>
-                            <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
+                            <RefreshCw size={14} className={loading ? 'animate-spin motion-reduce:animate-none' : ''} />
                             Refresh
                         </button>
                     </div>
                 )}
             </header>
 
-            <p className="shrink-0 flex items-start gap-2 px-3 py-2 rounded-md bg-(--base-02) border border-(--base-03) text-(--base-07) text-xs">
-                <Info size={13} className="shrink-0 mt-0.5" />
-                <span>
+            <div className="shrink-0">
+                <Callout tone="info" icon={<Info size={16} />}>
                     Player actions run as Minecraft commands over RCON. What you see is the server&apos;s own reply; mods and
-                    plugins can change or delay it. The online list refreshes every 10 seconds.
-                </span>
-            </p>
+                    plugins can change or delay it.
+                </Callout>
+            </div>
 
-            {/* Section strip */}
-            <nav className="flex gap-1 shrink-0 border-b border-(--base-03)">
-                {visibleSections.map(({ id, label, Icon }) => {
-                    const locked = !rconEnabled && RCON_DEPENDENT.includes(id);
-                    const active = effectiveSection === id;
-                    return (
-                        <button
-                            key={id}
-                            onClick={() => { if (!locked) setSection(id); }}
-                            disabled={locked}
-                            title={locked ? 'Enable RCON to unlock this section' : undefined}
-                            className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium border-b-2 transition-colors ${
-                                active
-                                    ? 'border-(--accent) text-(--accent-light)'
-                                    : locked
-                                        ? 'border-transparent text-(--base-05) opacity-50 cursor-not-allowed'
-                                        : 'border-transparent text-(--base-07) hover:text-(--base-09) hover:border-(--base-04)'
-                            }`}
-                        >
-                            <Icon size={12} />
-                            {label}
-                            {locked && <Lock size={10} className="opacity-70" />}
-                            {(id === 'online' || id === 'all') && !locked && online.length > 0 && (
-                                <span className="ml-1 mono-label bg-(--base-03) px-1 rounded-sm">{online.length}</span>
-                            )}
-                        </button>
-                    );
-                })}
-            </nav>
+            <div className="shrink-0">
+                <Tabs<Section>
+                    items={sectionItems}
+                    active={effectiveSection}
+                    onChange={setSection}
+                    ariaLabel="Player sections"
+                />
+            </div>
 
             {actionError && (
-                <div className="shrink-0 flex items-start gap-2 px-3 py-2 rounded-md bg-(--error-ghost) border border-(--error)/30 text-(--error-light) text-sm">
-                    <AlertTriangle size={14} className="shrink-0 mt-0.5" />
-                    <span>{actionError}</span>
+                <div className="shrink-0">
+                    <Callout tone="error" icon={<AlertTriangle size={16} />} role="alert">{actionError}</Callout>
                 </div>
             )}
 
@@ -378,328 +425,255 @@ export default function ServerPlayersPage() {
                 {!rconLoaded ? (
                     <div className="space-y-1.5">
                         {Array.from({ length: 4 }).map((_, i) => (
-                            <Skeleton key={i} className="h-12 rounded-md" />
+                            <Skeleton key={i} className="h-14 rounded-xl" />
                         ))}
                     </div>
                 ) : effectiveSection === 'rcon' ? (
-                    <div className="space-y-3">
+                    <div className="space-y-4">
                         {!rconEnabled && (
-                            <div className="flex items-start gap-2 px-3 py-2 rounded-md bg-(--accent-ghost) border border-(--accent)/30 text-(--base-08) text-xs">
-                                <Lock size={13} className="shrink-0 mt-0.5 text-(--accent-light)" />
-                                <span>
-                                    RCON is off. Enable it below to unlock All players, Online, Bans, Whitelist and Operators - live
-                                    player management runs over RCON.
-                                </span>
-                            </div>
+                            <Callout tone="info" icon={<Lock size={16} />}>
+                                RCON is off. Enable it below to unlock All players, Online, Bans, Whitelist and Operators. Live
+                                player management runs over RCON.
+                            </Callout>
                         )}
                         <RconConfigCard serverId={serverId} onEnabledChange={setRconEnabled} />
                     </div>
                 ) : (
                     <>
-                {!live && (
-                    <div className="flex items-start gap-2 px-3 py-2 mb-3 rounded-md bg-(--base-02) border border-(--base-03) text-(--base-07) text-xs">
-                        <Power size={13} className="shrink-0 mt-0.5" />
-                        <span>
-                            The server is offline - start it to see who is online.
-                            {effectiveSection !== 'online' && ' The lists below are read from its files; changing them needs the server running.'}
-                        </span>
-                    </div>
-                )}
+                        {!live && (
+                            <div className="mb-4">
+                                <Callout tone="info" icon={<Power size={16} />}>
+                                    The server is offline. Start it to see who is online.
+                                    {effectiveSection !== 'online' && ' The lists below are read from its files; changing them needs the server running.'}
+                                </Callout>
+                            </div>
+                        )}
 
-                {effectiveSection === 'whitelist' && (
-                    <section className="card p-3 mb-3 space-y-2" aria-label="Whitelist status">
-                        <div className="flex items-center gap-3 flex-wrap">
-                            <span className="text-sm font-medium text-(--base-09)">Whitelist</span>
-                            {whitelistState.enabled === undefined ? (
-                                <span className="badge badge-neutral">Unknown</span>
-                            ) : whitelistState.enabled ? (
-                                <span className="badge badge-success">On</span>
-                            ) : (
-                                <span className="badge badge-warning">Off - anyone can join</span>
-                            )}
-                            {whitelistState.enforced !== undefined && (
-                                <span
-                                    className="badge badge-neutral"
-                                    title="enforce-whitelist has no RCON command. Change it under Configuration (server.properties); it applies after a restart."
-                                >
-                                    {whitelistState.enforced ? 'Enforced' : 'Not enforced'}
-                                </span>
-                            )}
-                            {whitelistState.enabled !== undefined && (
-                                <button
-                                    onClick={() => handleWhitelistToggle(!whitelistState.enabled)}
-                                    disabled={actionsBlocked}
-                                    title={!canManage ? blockedHint : live ? undefined : 'Start the server to change this, or change white-list under Configuration'}
-                                    className="btn btn-secondary btn-sm ml-auto"
-                                >
-                                    {whitelistState.enabled ? 'Turn off' : 'Turn on'}
-                                </button>
-                            )}
-                        </div>
-                        <p className="text-xs text-(--base-06)">
-                            Operators can always join, even when they are not on the whitelist.
-                            {' '}Enforced kicks online players who are removed from the whitelist; change it under Configuration.
-                        </p>
-                    </section>
-                )}
-
-                {/* "Add to whitelist/ops" affordance for those sections */}
-                {(effectiveSection === 'whitelist' || effectiveSection === 'ops') && (
-                    <button
-                        onClick={() => setAddPrompt({ target: effectiveSection as 'whitelist' | 'ops', name: '' })}
-                        disabled={actionsBlocked}
-                        title={actionsBlocked ? blockedHint : undefined}
-                        className="btn btn-secondary btn-sm mb-3"
-                    >
-                        <ListPlus size={12} />
-                        Add player to {effectiveSection === 'whitelist' ? 'whitelist' : 'operators'}
-                    </button>
-                )}
-
-                {loading ? (
-                    <div className="space-y-1.5">
-                        {Array.from({ length: 6 }).map((_, i) => (
-                            <article key={i} className="card p-2 flex items-center gap-3">
-                                <SkeletonCircle size="w-8 h-8 rounded-sm" />
-                                <div className="min-w-0 flex-1">
-                                    <SkeletonText width="w-32" className="h-3.5" />
-                                </div>
-                                <div className="flex items-center gap-1">
-                                    <Skeleton className="w-7 h-7 rounded-md" />
-                                    <Skeleton className="w-7 h-7 rounded-md" />
-                                    <Skeleton className="w-7 h-7 rounded-md" />
-                                </div>
-                            </article>
-                        ))}
-                    </div>
-                ) : currentList.length === 0 ? (
-                    // The offline note above already says why the roster is empty.
-                    effectiveSection === 'online' && !live ? null : (
-                        <div className="text-center py-12 text-sm text-(--base-06)">
-                            {section === 'online' ? 'Nobody is online.' : section === 'all' ? 'Nobody has joined yet.' : 'No entries.'}
-                        </div>
-                    )
-                ) : (
-                    <div className="space-y-1.5">
-                        {(section === 'all' ? currentList.slice(0, allLimit) : currentList).map((p: any) => (
-                            <article key={`${section}-${p.name}`} className="card p-2 flex items-center gap-3">
-                                {/* Player head */}
-                                <PlayerHead
-                                    name={p.name}
-                                    className="w-8 h-8 rounded-sm shrink-0 bg-(--base-03)"
-                                    fallback={
-                                        <div className="w-8 h-8 rounded-sm shrink-0 bg-(--base-03) flex items-center justify-center text-xs font-semibold text-(--base-07)">
-                                            {String(p.name).charAt(0).toUpperCase()}
-                                        </div>
-                                    }
-                                />
-                                <div className="min-w-0 flex-1">
-                                    <div className="text-sm font-medium text-(--base-09) flex items-center gap-1.5 flex-wrap">
-                                        {p.name}
-                                        {section === 'all' && (p as AllPlayerRow).online && <span className="badge badge-success">Online</span>}
-                                        {section === 'all' && opped.has(p.name.toLowerCase()) && <span className="badge badge-accent">Op</span>}
-                                        {section === 'all' && whitelisted.has(p.name.toLowerCase()) && <span className="badge badge-neutral">Whitelisted</span>}
-                                        {section === 'all' && banned.has(p.name.toLowerCase()) && <span className="badge badge-error">Banned</span>}
-                                    </div>
-                                    {section === 'bans' && (p as PlayerListEntry).reason && (
-                                        <div className="text-xs text-(--base-06) truncate">Reason: {(p as PlayerListEntry).reason}</div>
+                        {effectiveSection === 'whitelist' && (
+                            <section className="srv-surface mb-4 space-y-2 p-5" aria-label="Whitelist status">
+                                <div className="flex flex-wrap items-center gap-3">
+                                    <span className="text-sm font-medium text-(--base-09)">Whitelist</span>
+                                    {whitelistState.enabled === undefined ? (
+                                        <span className="srv-chip bg-(--base-03)">Unknown</span>
+                                    ) : whitelistState.enabled ? (
+                                        <span className="srv-chip bg-(--success-ghost) text-(--success-light)">On</span>
+                                    ) : (
+                                        <span className="srv-chip bg-(--warning-ghost) text-(--warning-light)">Off, anyone can join</span>
                                     )}
-                                </div>
-                                {/* Per-section actions. A disabled fieldset disables every
-                                    button in it: they all go through RCON. */}
-                                <fieldset disabled={actionsBlocked} title={actionsBlocked ? blockedHint : undefined} className="flex items-center gap-1 border-0 p-0 m-0 min-w-0">
-                                    {section === 'all' && (() => {
-                                        const key = p.name.toLowerCase();
+                                    {whitelistState.enforced !== undefined && (
+                                        <Tooltip content="enforce-whitelist has no RCON command. Change it under Configuration (server.properties); it applies after a restart.">
+                                            <span className="srv-chip bg-(--base-03)" tabIndex={0}>
+                                                {whitelistState.enforced ? 'Enforced' : 'Not enforced'}
+                                            </span>
+                                        </Tooltip>
+                                    )}
+                                    {whitelistState.enabled !== undefined && (() => {
+                                        const hint = !canManage ? blockedHint : live ? undefined : 'Start the server to change this, or change white-list under Configuration';
+                                        const btn = (
+                                            <button
+                                                onClick={() => handleWhitelistToggle(!whitelistState.enabled)}
+                                                disabled={actionsBlocked}
+                                                className="btn btn-secondary btn-sm"
+                                            >
+                                                {whitelistState.enabled ? 'Turn off' : 'Turn on'}
+                                            </button>
+                                        );
                                         return (
-                                            <>
-                                                {(p as AllPlayerRow).online && (
-                                                    <button onClick={() => handleKick(p.name)} className="btn btn-secondary btn-sm" title={actionTip('Kick')} aria-label={`Kick ${p.name}`}>
-                                                        <ShieldOff size={12} />
-                                                    </button>
-                                                )}
-                                                {!whitelisted.has(key) && (
-                                                    <button onClick={() => handleWhitelistAdd(p.name)} className="btn btn-secondary btn-sm" title={actionTip('Add to whitelist')} aria-label={`Add ${p.name} to whitelist`}>
-                                                        <ListChecks size={12} />
-                                                    </button>
-                                                )}
-                                                {!opped.has(key) && (
-                                                    <button onClick={() => handleOp(p.name)} className="btn btn-secondary btn-sm" title={actionTip('Op')} aria-label={`Op ${p.name}`}>
-                                                        <ShieldCheck size={12} className="text-(--accent-light)" />
-                                                    </button>
-                                                )}
-                                                {banned.has(key) ? (
-                                                    <button onClick={() => handleUnban(p.name)} className="btn btn-secondary btn-sm" title={actionTip('Unban')} aria-label={`Unban ${p.name}`}>
-                                                        <CircleCheck size={12} className="text-(--success-light)" />
-                                                    </button>
-                                                ) : (
-                                                    <button onClick={() => handleBan(p.name)} className="btn btn-secondary btn-sm" title={actionTip('Ban')} aria-label={`Ban ${p.name}`}>
-                                                        <Skull size={12} className="text-(--error-light)" />
-                                                    </button>
-                                                )}
-                                            </>
+                                            <span className="ml-auto inline-flex">
+                                                {hint && actionsBlocked ? <Tooltip content={hint}><span className="inline-flex">{btn}</span></Tooltip> : btn}
+                                            </span>
                                         );
                                     })()}
-                                    {section === 'online' && (
-                                        <>
-                                            <button onClick={() => setTellPrompt({ player: p.name, message: '' })} className="btn btn-secondary btn-sm" title={actionTip('Whisper')}>
-                                                <MessageSquare size={12} />
-                                            </button>
-                                            <button onClick={() => handleOp(p.name)} className="btn btn-secondary btn-sm" title={actionTip('Op')}>
-                                                <ShieldCheck size={12} className="text-(--accent-light)" />
-                                            </button>
-                                            <button onClick={() => handleKick(p.name)} className="btn btn-secondary btn-sm" title={actionTip('Kick')}>
-                                                <ShieldOff size={12} />
-                                            </button>
-                                            <button onClick={() => handleBan(p.name)} className="btn btn-secondary btn-sm" title={actionTip('Ban')}>
-                                                <Skull size={12} className="text-(--error-light)" />
-                                            </button>
-                                        </>
-                                    )}
-                                    {section === 'bans' && (
-                                        <button onClick={() => handleUnban(p.name)} className="btn btn-secondary btn-sm">
-                                            <CircleCheck size={12} className="text-(--success-light)" />
-                                            Unban
-                                        </button>
-                                    )}
-                                    {section === 'whitelist' && (
-                                        <button onClick={() => handleWhitelistRemove(p.name)} className="btn btn-secondary btn-sm" title={actionTip('Remove')}>
-                                            <Trash2 size={12} className="text-(--error-light)" />
-                                        </button>
-                                    )}
-                                    {section === 'ops' && (
-                                        <button onClick={() => handleDeop(p.name)} className="btn btn-secondary btn-sm" title={actionTip('De-op')}>
-                                            <Crown size={12} className="text-(--error-light)" />
-                                        </button>
-                                    )}
-                                </fieldset>
-                            </article>
-                        ))}
-                        {section === 'all' && currentList.length > allLimit && (
-                            <button onClick={() => setAllLimit(n => n + ALL_PAGE)} className="btn btn-secondary btn-sm w-full">
-                                Show more ({currentList.length - allLimit} more)
-                            </button>
+                                </div>
+                                <p className="text-xs text-(--base-06)">
+                                    Operators can always join, even when they are not on the whitelist.
+                                    {' '}Enforced kicks online players who are removed from the whitelist; change it under Configuration.
+                                </p>
+                            </section>
                         )}
-                    </div>
-                )}
+
+                        {/* "Add to whitelist/ops" affordance for those sections */}
+                        {(effectiveSection === 'whitelist' || effectiveSection === 'ops') && (
+                            <div className="mb-4">
+                                {(() => {
+                                    const btn = (
+                                        <button
+                                            onClick={() => setAddPrompt({ target: effectiveSection as 'whitelist' | 'ops', name: '' })}
+                                            disabled={actionsBlocked}
+                                            className="btn btn-secondary btn-sm"
+                                        >
+                                            <ListPlus size={14} />
+                                            Add player to {effectiveSection === 'whitelist' ? 'whitelist' : 'operators'}
+                                        </button>
+                                    );
+                                    return actionsBlocked ? <Tooltip content={blockedHint}><span className="inline-flex">{btn}</span></Tooltip> : btn;
+                                })()}
+                            </div>
+                        )}
+
+                        {loading ? (
+                            <div className="space-y-1.5">
+                                {Array.from({ length: 6 }).map((_, i) => (
+                                    <article key={i} className="srv-surface flex items-center gap-3 px-4 py-2.5">
+                                        <SkeletonCircle size="w-8 h-8 rounded-md" />
+                                        <div className="min-w-0 flex-1">
+                                            <SkeletonText width="w-32" className="h-3.5" />
+                                        </div>
+                                        <Skeleton className="h-8 w-8 rounded-lg" />
+                                    </article>
+                                ))}
+                            </div>
+                        ) : currentList.length === 0 ? (
+                            // The offline note above already says why the roster is empty.
+                            effectiveSection === 'online' && !live ? null : (
+                                <div className="srv-surface flex flex-col items-center gap-2 px-6 py-14 text-center">
+                                    <Users size={24} className="text-(--base-05)" aria-hidden="true" />
+                                    <p className="text-sm text-(--base-07)">
+                                        {section === 'online' ? 'Nobody is online.' : section === 'all' ? 'Nobody has joined yet.' : 'No entries.'}
+                                    </p>
+                                    {search.trim() && <p className="text-xs text-(--base-06)">Nothing matches &ldquo;{search.trim()}&rdquo;.</p>}
+                                </div>
+                            )
+                        ) : (
+                            <ul className="space-y-1.5">
+                                {(section === 'all' ? currentList.slice(0, allLimit) : currentList).map((p: any) => (
+                                    <li key={`${section}-${p.name}`}>
+                                        <article className="flex items-center gap-3 rounded-xl bg-(--base-02) px-4 py-2.5 transition-colors hover:bg-(--base-03)">
+                                            <PlayerHead
+                                                name={p.name}
+                                                className="size-8 shrink-0 rounded-md bg-(--base-03)"
+                                                fallback={
+                                                    <div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-(--base-03) text-xs font-semibold text-(--base-07)">
+                                                        {String(p.name).charAt(0).toUpperCase()}
+                                                    </div>
+                                                }
+                                            />
+                                            <div className="min-w-0 flex-1">
+                                                <div className="flex flex-wrap items-center gap-1.5 text-sm font-medium text-(--base-09)">
+                                                    <span className="truncate">{p.name}</span>
+                                                    {section === 'all' && (p as AllPlayerRow).online && <span className="srv-chip h-5 bg-(--success-ghost) text-(--success-light)">Online</span>}
+                                                    {section === 'all' && opped.has(p.name.toLowerCase()) && <span className="srv-chip h-5 bg-(--accent-ghost) text-(--accent-light)">Op</span>}
+                                                    {section === 'all' && whitelisted.has(p.name.toLowerCase()) && <span className="srv-chip h-5 bg-(--base-03)">Whitelisted</span>}
+                                                    {section === 'all' && banned.has(p.name.toLowerCase()) && <span className="srv-chip h-5 bg-(--error-ghost) text-(--error-light)">Banned</span>}
+                                                </div>
+                                                {section === 'bans' && (p as PlayerListEntry).reason && (
+                                                    <div className="truncate text-xs text-(--base-06)">Reason: {(p as PlayerListEntry).reason}</div>
+                                                )}
+                                            </div>
+                                            {/* Every action goes through RCON, so all of them are disabled together. */}
+                                            <div className="flex shrink-0 items-center gap-1">{rowActions(p)}</div>
+                                        </article>
+                                    </li>
+                                ))}
+                                {section === 'all' && currentList.length > allLimit && (
+                                    <li>
+                                        <button onClick={() => setAllLimit(n => n + ALL_PAGE)} className="btn btn-secondary btn-sm w-full">
+                                            Show more ({currentList.length - allLimit} more)
+                                        </button>
+                                    </li>
+                                )}
+                            </ul>
+                        )}
                     </>
                 )}
             </div>
 
-            {/* Confirm modal */}
-            {confirm && (
-                <div className="modal-overlay animate-fade-in" onClick={() => setConfirm(null)}>
-                    <ModalPanel onClose={() => setConfirm(null)} className="modal-panel max-w-sm" onClick={e => e.stopPropagation()}>
-                        <div className="modal-header">
-                            <h3 className={`modal-title flex items-center gap-2 ${confirm.danger ? 'text-(--error-light)' : ''}`}>
-                                {confirm.danger && <AlertTriangle size={18} />}
-                                {confirm.title}
-                            </h3>
-                        </div>
-                        <div className="modal-body">
-                            <p className="text-sm text-(--base-07)">{confirm.message}</p>
-                        </div>
-                        <div className="modal-footer">
-                            <button onClick={() => setConfirm(null)} className="btn btn-secondary">Cancel</button>
-                            <button
-                                onClick={async () => {
-                                    const fn = confirm.onConfirm;
-                                    setConfirm(null);
-                                    await fn();
-                                }}
-                                className={confirm.danger ? 'btn btn-danger' : 'btn btn-primary'}
-                            >
-                                Confirm
-                            </button>
-                        </div>
-                    </ModalPanel>
-                </div>
-            )}
-
-            {/* Tell prompt */}
-            {tellPrompt && (
-                <div className="modal-overlay animate-fade-in" onClick={() => setTellPrompt(null)}>
-                    <ModalPanel onClose={() => setTellPrompt(null)} className="modal-panel max-w-sm" onClick={e => e.stopPropagation()}>
-                        <div className="modal-header">
-                            <h3 className="modal-title flex items-center gap-2">
-                                <MessageSquare size={16} />
-                                Whisper to {tellPrompt.player}
-                            </h3>
-                            <button onClick={() => setTellPrompt(null)} className="text-(--base-06)"><X size={16} /></button>
-                        </div>
-                        <div className="modal-body">
-                            <input
-                                type="text"
-                                value={tellPrompt.message}
-                                onChange={e => setTellPrompt({ ...tellPrompt, message: e.target.value })}
-                                placeholder="Message…"
-                                className="input-field w-full"
-                                maxLength={200}
-                                autoFocus
-                            />
-                        </div>
-                        <div className="modal-footer">
-                            <button onClick={() => setTellPrompt(null)} className="btn btn-secondary">Cancel</button>
-                            <button
-                                onClick={async () => {
-                                    const msg = tellPrompt.message.trim();
-                                    const target = tellPrompt.player;
-                                    setTellPrompt(null);
-                                    if (msg) await run('Whisper', 'tell', target, { message: msg });
-                                }}
-                                className="btn btn-primary"
-                                disabled={!tellPrompt.message.trim()}
-                            >
-                                <Send size={12} />
-                                Send
-                            </button>
-                        </div>
-                    </ModalPanel>
-                </div>
-            )}
+            {/* Whisper */}
+            <PromptDialog
+                open={!!tellPrompt}
+                onClose={() => setTellPrompt(null)}
+                icon={<MessageSquare size={16} />}
+                title={`Whisper to ${tellPrompt?.player ?? ''}`}
+                value={tellPrompt?.message ?? ''}
+                onChange={message => setTellPrompt(t => (t ? { ...t, message } : t))}
+                placeholder="Message…"
+                label="Message"
+                maxLength={200}
+                submitLabel="Send"
+                submitIcon={<Send size={14} />}
+                onSubmit={async () => {
+                    if (!tellPrompt) return;
+                    const msg = tellPrompt.message.trim();
+                    const target = tellPrompt.player;
+                    setTellPrompt(null);
+                    if (msg) await run('Whisper', 'tell', target, { message: msg });
+                }}
+            />
 
             {/* Add to whitelist/ops */}
-            {addPrompt && (
-                <div className="modal-overlay animate-fade-in" onClick={() => setAddPrompt(null)}>
-                    <ModalPanel onClose={() => setAddPrompt(null)} className="modal-panel max-w-sm" onClick={e => e.stopPropagation()}>
-                        <div className="modal-header">
-                            <h3 className="modal-title flex items-center gap-2">
-                                <ListPlus size={16} />
-                                Add to {addPrompt.target === 'whitelist' ? 'whitelist' : 'operators'}
-                            </h3>
-                            <button onClick={() => setAddPrompt(null)} className="text-(--base-06)"><X size={16} /></button>
-                        </div>
-                        <div className="modal-body">
-                            <input
-                                type="text"
-                                value={addPrompt.name}
-                                onChange={e => setAddPrompt({ ...addPrompt, name: e.target.value })}
-                                placeholder="Player name"
-                                className="input-field w-full"
-                                maxLength={32}
-                                autoFocus
-                            />
-                        </div>
-                        <div className="modal-footer">
-                            <button onClick={() => setAddPrompt(null)} className="btn btn-secondary">Cancel</button>
-                            <button
-                                onClick={async () => {
-                                    const name = addPrompt.name.trim();
-                                    const target = addPrompt.target;
-                                    setAddPrompt(null);
-                                    if (!name) return;
-                                    if (target === 'whitelist') await handleWhitelistAdd(name);
-                                    else await handleOp(name);
-                                }}
-                                className="btn btn-primary"
-                                disabled={!addPrompt.name.trim()}
-                            >
-                                Add
-                            </button>
-                        </div>
-                    </ModalPanel>
-                </div>
-            )}
-
+            <PromptDialog
+                open={!!addPrompt}
+                onClose={() => setAddPrompt(null)}
+                icon={<ListPlus size={16} />}
+                title={`Add to ${addPrompt?.target === 'ops' ? 'operators' : 'whitelist'}`}
+                value={addPrompt?.name ?? ''}
+                onChange={name => setAddPrompt(a => (a ? { ...a, name } : a))}
+                placeholder="Player name"
+                label="Player name"
+                maxLength={32}
+                submitLabel="Add"
+                onSubmit={async () => {
+                    if (!addPrompt) return;
+                    const name = addPrompt.name.trim();
+                    const target = addPrompt.target;
+                    setAddPrompt(null);
+                    if (!name) return;
+                    if (target === 'whitelist') await handleWhitelistAdd(name);
+                    else await handleOp(name);
+                }}
+            />
         </main>
+    );
+}
+
+// A one-field prompt driven by `open`.
+function PromptDialog({ open, onClose, icon, title, value, onChange, placeholder, label, maxLength, submitLabel, submitIcon, onSubmit }: {
+    open: boolean;
+    onClose: () => void;
+    icon: React.ReactNode;
+    title: string;
+    value: string;
+    onChange: (v: string) => void;
+    placeholder: string;
+    label: string;
+    maxLength: number;
+    submitLabel: string;
+    submitIcon?: React.ReactNode;
+    onSubmit: () => void | Promise<void>;
+}) {
+    return (
+        <Dialog open={open} onOpenChange={o => { if (!o) onClose(); }}>
+            <DialogBackdrop className="modal-overlay animate-fade-in" />
+            <DialogContent className="modal-panel fixed inset-0 m-auto h-fit w-[calc(100%-2rem)] max-w-sm">
+                <div className="modal-header flex items-center justify-between gap-3">
+                    <DialogTitle className="modal-title flex min-w-0 items-center gap-2">
+                        {icon}
+                        <span className="truncate">{title}</span>
+                    </DialogTitle>
+                    <DialogClose aria-label="Close" className="btn btn-ghost btn-icon btn-sm shrink-0">
+                        <X size={16} />
+                    </DialogClose>
+                </div>
+                <div className="modal-body">
+                    <input
+                        type="text"
+                        value={value}
+                        onChange={e => onChange(e.target.value)}
+                        placeholder={placeholder}
+                        aria-label={label}
+                        className="input-field w-full"
+                        maxLength={maxLength}
+                        autoFocus
+                    />
+                </div>
+                <div className="modal-footer">
+                    <DialogClose className="btn btn-secondary">Cancel</DialogClose>
+                    <button onClick={() => { void onSubmit(); }} className="btn btn-primary" disabled={!value.trim()}>
+                        {submitIcon}
+                        {submitLabel}
+                    </button>
+                </div>
+            </DialogContent>
+        </Dialog>
     );
 }

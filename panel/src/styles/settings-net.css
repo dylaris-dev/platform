@@ -1,0 +1,9 @@
+/* Quiet tables for the network settings: no outer border, hairline-free rows, hover fill. */
+.set-net-table { width: 100%; font-size: 12px; border-collapse: collapse; }
+.set-net-table th { text-align: left; padding: 8px 12px; font-weight: 500; color: var(--base-06); }
+.set-net-table td { padding: 8px 12px; }
+.set-net-table tbody tr { transition: background-color 120ms ease-out; }
+.set-net-table tbody tr:hover { background: var(--base-03); }
+.set-net-table tbody tr > :first-child { border-top-left-radius: 8px; border-bottom-left-radius: 8px; }
+.set-net-table tbody tr > :last-child { border-top-right-radius: 8px; border-bottom-right-radius: 8px; }
+@media (prefers-reduced-motion: reduce) { .set-net-table tbody tr { transition: none; } }

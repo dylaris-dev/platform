@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+import ModalPanel from '@/components/ui/ModalPanel';
 import { Sparkles, X, AlertTriangle, RefreshCw, ChevronDown } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import {
@@ -263,7 +264,6 @@ export default function UpdatesBell() {
     // here would empty the list the click was meant to show.
     const [seenAtOpen, setSeenAtOpen] = useState<string | undefined>();
     const [expanded, setExpanded] = useState(false);
-    const closeRef = useRef<HTMLButtonElement>(null);
 
     const refresh = useCallback(async () => {
         setLoading(true);
@@ -283,14 +283,6 @@ export default function UpdatesBell() {
         const t = setInterval(refresh, REFRESH_MS);
         return () => clearInterval(t);
     }, [user, refresh]);
-
-    useEffect(() => {
-        if (!open) return;
-        const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
-        document.addEventListener('keydown', onKey);
-        closeRef.current?.focus();
-        return () => document.removeEventListener('keydown', onKey);
-    }, [open]);
 
     if (!user) return null;
 
@@ -313,10 +305,10 @@ export default function UpdatesBell() {
 
     const buttonClass =
         state === 'attention'
-            ? 'bg-(--warning-ghost) text-(--warning-light) border-(--warning)/40 hover:bg-(--warning-ghost)/80'
+            ? 'text-(--warning-light)'
             : state === 'unseen'
-                ? 'bg-(--accent-ghost) text-(--accent-light) border-(--accent-border) hover:bg-(--accent-ghost)/80'
-                : 'text-(--base-07) hover:bg-(--base-04)/50 hover:text-(--base-09) border-transparent';
+                ? 'text-(--accent-light)'
+                : '';
 
     const title =
         state === 'attention'
@@ -332,9 +324,9 @@ export default function UpdatesBell() {
                 onClick={openModal}
                 title={title}
                 aria-label={title}
-                className={`relative flex items-center justify-center w-9 h-9 rounded-md transition-colors border mr-2 ${buttonClass}`}
+                className={`app-icon-btn relative ${buttonClass}`}
             >
-                <Sparkles size={18} />
+                <Sparkles size={16} />
                 {state !== 'idle' && (
                     <span className={`absolute -top-1 -right-1 w-[10px] h-[10px] rounded-full border-2 border-(--base-01) ${
                         state === 'attention' ? 'bg-(--warning)' : 'bg-(--accent-light)'
@@ -347,7 +339,7 @@ export default function UpdatesBell() {
                     className="modal-overlay animate-fade-in z-50"
                     onClick={e => { if (e.target === e.currentTarget) setOpen(false); }}
                 >
-                    <div className="modal-panel w-full max-w-3xl" role="dialog" aria-modal="true" aria-label="Updates">
+                    <ModalPanel onClose={() => setOpen(false)} label="Updates" className="modal-panel w-full max-w-3xl">
                         <div className="flex items-center justify-between px-4 py-3 border-b border-(--base-03)">
                             <div className="flex items-center gap-2">
                                 <Sparkles size={15} className="text-(--accent-light)" />
@@ -368,7 +360,6 @@ export default function UpdatesBell() {
                                     <RefreshCw size={15} className={loading ? 'animate-spin' : ''} />
                                 </button>
                                 <button
-                                    ref={closeRef}
                                     type="button"
                                     onClick={() => setOpen(false)}
                                     className="text-(--base-06) hover:text-(--base-09) p-1 rounded-md hover:bg-(--base-03) transition-colors"
@@ -425,7 +416,7 @@ export default function UpdatesBell() {
                                 );
                             })()}
                         </div>
-                    </div>
+                    </ModalPanel>
                 </div>
             )}
         </>

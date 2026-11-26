@@ -5,6 +5,7 @@ import { Check, Loader2, Pencil, Plug, Plus, Trash2, X } from 'lucide-react';
 import ModalPanel from '@/components/ui/ModalPanel';
 import CopyText from '@/components/ui/CopyText';
 import Checkbox from '@/components/ui/Checkbox';
+import Select from '@/components/ui/Select';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import { toast } from '@/components/ui/Toast';
 import {
@@ -338,23 +339,32 @@ function AddPortForm({ serverId, voiceAvailable, isAdmin, range, onAdded }: {
             <div className="mono-label">Add port</div>
             <div className="flex flex-wrap gap-2">
                 {voiceAvailable && (
-                    <label className="flex flex-col gap-1">
+                    <div className="flex flex-col gap-1">
                         <span className="mono-label">Type</span>
-                        <select value={kind} onChange={e => setKind(e.target.value as 'custom' | 'voice')} className="input-field text-sm w-64">
-                            <option value="custom">Custom</option>
-                            <option value="voice">Voice chat (Simple Voice Chat or Plasmo Voice)</option>
-                        </select>
-                    </label>
+                        <Select
+                            ariaLabel="Type"
+                            className="w-64"
+                            value={kind}
+                            onChange={v => setKind(v as 'custom' | 'voice')}
+                            options={[
+                                { value: 'custom', label: 'Custom' },
+                                { value: 'voice', label: 'Voice chat (Simple Voice Chat or Plasmo Voice)' },
+                            ]}
+                        />
+                    </div>
                 )}
                 {!voice && (
                     <>
-                        <label className="flex flex-col gap-1">
+                        <div className="flex flex-col gap-1">
                             <span className="mono-label">Protocol</span>
-                            <select value={protocol} onChange={e => setProtocol(e.target.value as 'tcp' | 'udp')} className="input-field text-sm w-24">
-                                <option value="tcp">TCP</option>
-                                <option value="udp">UDP</option>
-                            </select>
-                        </label>
+                            <Select
+                                ariaLabel="Protocol"
+                                className="w-28"
+                                value={protocol}
+                                onChange={v => setProtocol(v as 'tcp' | 'udp')}
+                                options={[{ value: 'tcp', label: 'TCP' }, { value: 'udp', label: 'UDP' }]}
+                            />
+                        </div>
                         <label className="flex flex-col gap-1">
                             <span className="mono-label">Port inside the server</span>
                             <input

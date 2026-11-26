@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
+import { Popover, PopoverContent, PopoverTrigger } from '@ui-sdk/react/popover';
 import { Plus, Server, HardDrive, Globe, ArrowRight, Lock } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import { getNodes } from '@/lib/api';
@@ -32,8 +33,8 @@ function MenuEntry({
 }) {
     const body = (
         <>
-            <div className={`w-8 h-8 rounded-md flex items-center justify-center shrink-0 ${
-                option.enabled ? 'bg-(--accent-ghost) text-(--accent-light)' : 'bg-(--base-03) text-(--base-06)'
+            <div className={`w-8 h-8 rounded-md flex items-center justify-center shrink-0 bg-(--base-03) ${
+                option.enabled ? 'text-(--base-08)' : 'text-(--base-06)'
             }`}>
                 {option.enabled ? icon : <Lock size={14} />}
             </div>
@@ -81,7 +82,6 @@ export default function CreateMenu({ onNewServer, compact = false }: { onNewServ
     const { user, featureFlags, entitlement, gatewayEnabled, byonEnabled, routeOnlyEnabled } = useAppData();
     const [open, setOpen] = useState(false);
     const [deployableNodes, setDeployableNodes] = useState<number | null>(null);
-    const wrapRef = useRef<HTMLDivElement>(null);
 
     const isAdmin = user?.isAdmin ?? false;
 
@@ -101,14 +101,6 @@ export default function CreateMenu({ onNewServer, compact = false }: { onNewServ
         });
         return () => { cancelled = true; };
     }, [byonEnabled, isAdmin]);
-
-    useEffect(() => {
-        const handler = (e: MouseEvent) => {
-            if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
-        };
-        document.addEventListener('click', handler);
-        return () => document.removeEventListener('click', handler);
-    }, []);
 
     const input: CreateOptionsInput = {
         isAdmin,
@@ -140,31 +132,28 @@ export default function CreateMenu({ onNewServer, compact = false }: { onNewServ
     };
 
     return (
-        <div ref={wrapRef} className={`relative shrink-0 ${compact ? '' : 'border-t border-(--base-03)'}`}>
-            <button
-                type="button"
-                onClick={() => setOpen(v => !v)}
-                aria-expanded={open}
-                aria-haspopup="menu"
+        <div className={`relative shrink-0 ${compact ? '' : 'p-3'}`}>
+          <Popover open={open} onOpenChange={setOpen}>
+            <PopoverTrigger
+                render={<button type="button" />}
                 title={compact ? 'Create' : undefined}
                 aria-label={compact ? 'Create' : undefined}
-                className={`btn text-sm bg-transparent border-0 transition-colors ${
-                    compact
-                        ? 'w-9 h-9 p-0 justify-center rounded-md'
-                        : 'w-full px-4 py-3 justify-start'
-                } ${open ? 'bg-(--base-03) text-(--base-09)' : 'text-(--accent-light) hover:bg-(--base-03)'}`}
+                className={`btn btn-primary ${
+                    compact ? 'size-9 p-0' : 'w-full'
+                }`}
             >
-                <Plus size={compact ? 18 : 16} />
+                <Plus size={16} />
                 {!compact && 'Create'}
-            </button>
+            </PopoverTrigger>
 
-            {open && (
-                <div
-                    className={`absolute bottom-full mb-2 z-40 dropdown-menu p-1.5 animate-fade-in ${
-                        compact ? 'left-0 w-72' : 'left-2 right-2'
-                    }`}
-                    role="menu"
-                >
+            <PopoverContent
+                side="top"
+                align="start"
+                sideOffset={8}
+                aria-label="Create"
+                className={`ui-popup p-1.5 ${compact ? 'w-72' : 'w-(--anchor-width)'}`}
+            >
+                <div>
                     <MenuEntry
                         icon={<Server size={15} />}
                         title="New server"
@@ -201,7 +190,8 @@ export default function CreateMenu({ onNewServer, compact = false }: { onNewServ
                         />
                     )}
                 </div>
-            )}
+            </PopoverContent>
+          </Popover>
         </div>
     );
 }

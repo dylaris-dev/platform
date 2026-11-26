@@ -8,25 +8,25 @@ import React from 'react';
 // full disk exactly like one the owner had simply stopped. The Sidebar and the
 // server layout already treat disk_full as an error state; this matches them.
 export const STATUS_CLASSES: Record<string, string> = {
-    online: 'bg-(--success-ghost) text-(--success-light) border-(--success-border)',
-    offline: 'bg-(--base-03) text-(--base-06) border-(--base-04)',
-    stopped: 'bg-(--base-03) text-(--base-06) border-(--base-04)',
-    installing: 'bg-(--warning-ghost) text-(--warning) border-(--warning-border)',
-    pending_setup: 'bg-(--base-03) text-(--base-05) border-(--base-03)',
-    starting: 'bg-(--warning-ghost) text-(--warning) border-(--warning-border)',
-    stopping: 'bg-(--warning-ghost) text-(--warning) border-(--warning-border)',
-    suspended: 'bg-(--error-ghost) text-(--error-light) border-(--error-border)',
+    online: 'bg-(--success-ghost) text-(--success-light)',
+    offline: 'bg-(--base-03) text-(--base-06)',
+    stopped: 'bg-(--base-03) text-(--base-06)',
+    installing: 'bg-(--warning-ghost) text-(--warning)',
+    pending_setup: 'bg-(--base-03) text-(--base-06)',
+    starting: 'bg-(--warning-ghost) text-(--warning)',
+    stopping: 'bg-(--warning-ghost) text-(--warning)',
+    suspended: 'bg-(--error-ghost) text-(--error-light)',
 
-    disk_full: 'bg-(--error-ghost) text-(--error-light) border-(--error-border)',
-    restarting: 'bg-(--warning-ghost) text-(--warning) border-(--warning-border)',
-    migrating: 'bg-(--warning-ghost) text-(--warning) border-(--warning-border)',
+    disk_full: 'bg-(--error-ghost) text-(--error-light)',
+    restarting: 'bg-(--warning-ghost) text-(--warning)',
+    migrating: 'bg-(--warning-ghost) text-(--warning)',
 };
 
 export function StatusBadge({ status }: { status: string }) {
-    const cls = STATUS_CLASSES[status] ?? 'bg-(--base-03) text-(--base-06) border-(--base-04)';
+    const cls = STATUS_CLASSES[status] ?? 'bg-(--base-03) text-(--base-06)';
     return (
-        <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-mono border ${cls}`}>
-            {status}
+        <span className={`inline-flex h-6 items-center rounded-full px-2.5 text-xs ${cls}`}>
+            {status.replace(/_/g, ' ')}
         </span>
     );
 }

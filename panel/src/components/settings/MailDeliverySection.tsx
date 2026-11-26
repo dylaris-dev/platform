@@ -12,6 +12,7 @@ import { SMTP_TEST_TIMEOUT_MS } from '@/lib/connectionTest';
 import HelpTip from '@/components/ui/HelpTip';
 import SettingsCard, { StatusBadge } from '@/components/settings/SettingsCard';
 import { toast } from '@/components/ui/Toast';
+import Select from '@/components/ui/Select';
 
 // How the platform HANDS a message over - the SMTP server or the Resend key,
 // and the address it sends as. What the messages SAY is the Templates tab
@@ -127,14 +128,12 @@ export default function MailDeliverySection() {
                         </p>
                     </HelpTip>
                 </label>
-                <select
+                <Select
+                    ariaLabel="Provider"
                     value={cfg.provider}
-                    onChange={e => form.patch({ provider: e.target.value as MailProvider })}
-                    className="input-field w-full"
-                >
-                    <option value="smtp">SMTP server</option>
-                    <option value="resend">Resend (API)</option>
-                </select>
+                    onChange={v => form.patch({ provider: v as MailProvider })}
+                    options={[{ value: 'smtp', label: 'SMTP server' }, { value: 'resend', label: 'Resend (API)' }]}
+                />
             </div>
 
             {isResend ? (
@@ -167,13 +166,12 @@ export default function MailDeliverySection() {
                     />
                     <div className="flex flex-col gap-[5px] sm:col-span-2">
                         <label className="input-label">Encryption</label>
-                        <select
+                        <Select
+                            ariaLabel="Encryption"
                             value={cfg.encryption || 'starttls'}
-                            onChange={e => form.patch({ encryption: e.target.value })}
-                            className="input-field w-full"
-                        >
-                            {ENCRYPTION_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                        </select>
+                            onChange={v => form.patch({ encryption: v })}
+                            options={ENCRYPTION_OPTIONS.map(o => ({ value: o.value, label: o.label }))}
+                        />
                     </div>
                 </div>
             )}

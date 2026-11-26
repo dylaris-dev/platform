@@ -17,7 +17,7 @@ describe('after an install from the Setup tab', () => {
         // The Setup tab's own routes dialog is the second way to make one.
         expect(read('views/SetupView.tsx')).toMatch(/onRoutesChanged=\{\(rs\) => \{\s*setExistingRoutes\(rs\);\s*window\.dispatchEvent\(new CustomEvent\(ROUTES_CHANGED_EVENT/);
         // Every route, side by side: the header showed the first three only.
-        expect(shell).toContain('{serverRoutes.map(route => (');
+        expect(read('components/server/ServerHeader.tsx')).toContain('serverRoutes.map(route => (');
     });
 
     // Only a successful install moves on; a failed route keeps its error on screen.
@@ -27,13 +27,13 @@ describe('after an install from the Setup tab', () => {
         expect(read('app/(authed)/servers/[id]/setup/page.tsx')).toContain('router.push(`/servers/${server.id}/console`)');
     });
 
-    // Seven sources in a max-w-md strip overflowed their buttons.
-    it('lets the install-method strip wrap instead of overflowing', () => {
+    // Seven sources in a max-w-md strip overflowed their buttons. The shared
+    // tab bar scrolls sideways instead.
+    it('lets the install-method strip scroll instead of overflowing', () => {
         for (const f of ['views/setup/SetupNewWizard.tsx', 'views/setup/SetupEditMode.tsx']) {
-            const s = read(f);
-            expect(s).toContain('flex flex-wrap gap-1 bg-(--base-03) p-1 rounded-md">');
-            expect(s).not.toContain('btn flex-1 py-2 text-sm border-0 rounded-md ${props.installTab');
+            expect(read(f)).toContain('<InstallMethodTabs');
         }
+        expect(read('views/setup/InstallMethodTabs.tsx')).toContain('overflow-x-auto');
     });
 
     // The Java was keyed on the online pickers alone, which still held the
@@ -49,7 +49,7 @@ describe('after an install from the Setup tab', () => {
             expect(s).toMatch(/useMemo\(\s*\(\) => props\.targetMcVersion,/);
             expect(s).toContain('versionUnknown={props.javaVersionUnknown}');
         }
-        expect(read('views/setup/JavaVersionPicker.tsx')).toMatch(/\{versionUnknown && !showMismatchWarning && \(\s*<div className="alert alert-warning/);
+        expect(read('views/setup/JavaVersionPicker.tsx')).toMatch(/\{versionUnknown && !showMismatchWarning && \(\s*<Callout tone="warning"/);
     });
 
     // The console jumped back down on every line, so nothing above could be read.
@@ -63,8 +63,10 @@ describe('after an install from the Setup tab', () => {
         expect(c).not.toContain("behavior: 'smooth'");
     });
 
-    // Stuck at the scroller's padding edge, the search bar let rows show above it.
-    it('pins the properties search bar flush with the top', () => {
-        expect(read('views/ServerPropertiesView.tsx')).toContain('sticky -top-5 bg-(--base-02) z-10 -mx-5 -mt-5');
+    // The search and category list sit in their own sticky column beside the
+    // rows, so nothing scrolls underneath them.
+    it('keeps the properties search and categories in a sticky side column', () => {
+        expect(read('views/ServerPropertiesView.tsx')).toContain('className="srv-config-side"');
+        expect(read('styles/server-config.css')).toMatch(/\.srv-config-side \{\s*position: sticky;/);
     });
 });

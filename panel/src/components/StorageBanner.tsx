@@ -68,9 +68,7 @@ export default function StorageBanner() {
     // clock icon standing beside an empty string.
     const sinceLabel = view.since ? formatSince(view.since) : '';
     const error = view.severity === 'error';
-    const tone = error
-        ? 'bg-(--error-ghost) border-(--error)/30 text-(--error-light)'
-        : 'bg-(--warning-ghost) border-(--warning)/30 text-(--warning-light)';
+    const tone = error ? 'error' : 'warning';
 
     return (
         // role="status" (polite), not role="alert": this is a standing
@@ -78,17 +76,17 @@ export default function StorageBanner() {
         // something the user just did. Assertive would cut across whatever a
         // screen reader is currently reading, and would do it again on every
         // flap between the two backends.
-        <div role="status" className={`w-full shrink-0 border-b px-4 py-2.5 ${tone}`}>
-            <div className="max-w-7xl mx-auto flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
+        <div role="status" className="app-banner shrink-0" data-tone={tone}>
+            <div className="flex w-full flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
                 <div className="flex items-start gap-2 min-w-0 flex-1">
                     <HardDrive size={16} className="shrink-0 mt-0.5" aria-hidden="true" />
                     <div className="min-w-0">
                         <p className="text-sm font-medium">{view.title}</p>
-                        <p className="text-xs text-(--base-08) mt-0.5">{view.message}</p>
+                        <p className="text-xs text-(--base-07) mt-0.5">{view.message}</p>
                     </div>
                 </div>
                 {sinceLabel && (
-                    <div className="flex items-center gap-1.5 text-xs font-mono shrink-0 sm:ml-auto">
+                    <div className="srv-num flex items-center gap-1.5 text-xs shrink-0 sm:ml-auto">
                         <Clock size={12} aria-hidden="true" />
                         <span>{sinceLabel}</span>
                     </div>

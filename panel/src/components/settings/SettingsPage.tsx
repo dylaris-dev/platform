@@ -2,6 +2,7 @@
 
 import React from 'react';
 import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
+import PageHeader from '@/components/ui/PageHeader';
 
 /**
  * The frame every settings screen sits in.
@@ -45,7 +46,7 @@ export default function SettingsPage({
     actions?: React.ReactNode;
     children: React.ReactNode;
 }) {
-    const frame = `space-y-5 ${WIDTHS[width]}`;
+    const frame = `space-y-6 ${WIDTHS[width]}`;
 
     if (loading) {
         return (
@@ -60,20 +61,13 @@ export default function SettingsPage({
 
     return (
         <div className={frame}>
-            <header className="flex items-start justify-between gap-4">
-                <div className="min-w-0">
-                    <h2 className="h-section flex items-center gap-2">
-                        {Icon && <Icon size={17} className="text-(--accent-light) shrink-0" />}
-                        {title}
-                    </h2>
-                    {description && (
-                        <p className="text-sm text-(--base-06) mt-1 leading-relaxed">
-                            {description}
-                        </p>
-                    )}
-                </div>
-                {actions && <div className="shrink-0 flex items-center gap-2">{actions}</div>}
-            </header>
+            <PageHeader
+                as="h2"
+                title={title}
+                description={description}
+                icon={Icon ? <Icon size={18} /> : undefined}
+                actions={actions}
+            />
             {children}
         </div>
     );

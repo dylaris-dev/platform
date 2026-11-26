@@ -13,6 +13,10 @@ import {
 } from '@/lib/storageOrphans';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import { toast } from '@/components/ui/Toast';
+import Checkbox from '@/components/ui/Checkbox';
+import Tooltip from '@/components/ui/Tooltip';
+import Callout from '@/components/server/Callout';
+import '@/styles/settings-storage.css';
 
 // Core refuses a larger request (services.MaxOrphanDeleteKeys).
 const MAX_DELETE = 1000;
@@ -41,62 +45,46 @@ function OrphanTable({ rows, selected, onSelect, onCopy }: {
 }) {
     const allSelected = rows.length > 0 && selectionTotals(rows, selected).count === rows.length;
     return (
-        <div className="table-wrapper max-h-[420px] overflow-y-auto">
-            <table className="w-full">
-                <thead>
-                    <tr>
-                        <th className="table-th w-8">
-                            <input
-                                type="checkbox"
-                                className="checkbox"
-                                aria-label="Select all"
-                                checked={allSelected}
-                                onChange={() => onSelect(toggleAll(rows, selected))}
-                            />
-                        </th>
-                        <th className="table-th text-left">File</th>
-                        <th className="table-th text-left">Kind</th>
-                        <th className="table-th text-right">Size</th>
-                        <th className="table-th text-right">Age</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {rows.map(c => (
-                        <tr key={c.key} className="table-tr table-tr-hover">
-                            <td className="table-td">
-                                <input
-                                    type="checkbox"
-                                    className="checkbox"
-                                    aria-label={`Select ${c.key}`}
-                                    checked={selected.has(c.key)}
-                                    onChange={() => {
-                                        const next = new Set(selected);
-                                        if (next.has(c.key)) next.delete(c.key); else next.add(c.key);
-                                        onSelect(next);
-                                    }}
-                                />
-                            </td>
-                            <td className="table-td">
-                                <div className="flex items-center gap-1.5 min-w-0">
-                                    <span className="font-mono text-xs text-(--base-08) truncate" title={c.key}>{truncateKey(c.key)}</span>
-                                    <button onClick={() => onCopy(c.key)} className="btn btn-ghost btn-icon btn-sm shrink-0" aria-label="Copy key" title="Copy key">
-                                        <Copy size={12} />
-                                    </button>
-                                </div>
-                            </td>
-                            <td className="table-td">
-                                <div className="flex flex-wrap items-center gap-1">
-                                    <span className="text-xs text-(--base-07)">{KIND_LABEL[c.kind] ?? c.kind}</span>
-                                    <ExistsBadge label="server" exists={c.serverExists} />
-                                    <ExistsBadge label="job" exists={c.jobExists} />
-                                </div>
-                            </td>
-                            <td className="table-td text-right text-xs tabular-nums">{formatBytes(c.size)}</td>
-                            <td className="table-td text-right text-xs tabular-nums" title={c.lastModified}>{orphanAge(c.lastModified)}</td>
-                        </tr>
-                    ))}
-                </tbody>
-            </table>
+        <div className="set-sto-orphans">
+            <div className="set-sto-orphan set-sto-orphan-head srv-label">
+                <Checkbox
+                    ariaLabel="Select all"
+                    checked={allSelected}
+                    onChange={() => onSelect(toggleAll(rows, selected))}
+                />
+                <span className="min-w-0 flex-1">File</span>
+                <span className="hidden w-48 sm:block">Kind</span>
+                <span className="w-20 text-right">Size</span>
+                <span className="w-14 text-right">Age</span>
+            </div>
+            <div role="list" aria-label="Orphaned files" className="max-h-[420px] overflow-y-auto">
+                {rows.map(c => (
+                    <div key={c.key} role="listitem" className="set-sto-orphan">
+                        <Checkbox
+                            ariaLabel={`Select ${c.key}`}
+                            checked={selected.has(c.key)}
+                            onChange={() => {
+                                const next = new Set(selected);
+                                if (next.has(c.key)) next.delete(c.key); else next.add(c.key);
+                                onSelect(next);
+                            }}
+                        />
+                        <div className="flex min-w-0 flex-1 items-center gap-1.5">
+                            <span className="truncate font-mono text-xs text-(--base-08)" title={c.key}>{truncateKey(c.key)}</span>
+                            <Tooltip content="Copy key"><button onClick={() => onCopy(c.key)} className="btn btn-ghost btn-icon btn-sm shrink-0" aria-label="Copy key" >
+                                <Copy size={12} />
+                            </button></Tooltip>
+                        </div>
+                        <div className="hidden w-48 flex-wrap items-center gap-1 sm:flex">
+                            <span className="text-xs text-(--base-07)">{KIND_LABEL[c.kind] ?? c.kind}</span>
+                            <ExistsBadge label="server" exists={c.serverExists} />
+                            <ExistsBadge label="job" exists={c.jobExists} />
+                        </div>
+                        <span className="srv-num w-20 text-right text-xs">{formatBytes(c.size)}</span>
+                        <span className="srv-num w-14 text-right text-xs" title={c.lastModified}>{orphanAge(c.lastModified)}</span>
+                    </div>
+                ))}
+            </div>
         </div>
     );
 }
@@ -213,7 +201,7 @@ export default function StorageMaintenance({ storageId }: { storageId: number })
     };
 
     return (
-        <div className="bg-(--base-02) border border-(--base-04) rounded-md p-3 space-y-4">
+        <div className="set-sto-panel space-y-5">
             <section className="space-y-2">
                 <div className="flex items-center justify-between gap-3">
                     <h4 className="text-sm font-medium text-(--base-09)">Lifecycle rules</h4>
@@ -227,7 +215,7 @@ export default function StorageMaintenance({ storageId }: { storageId: number })
                         Apply
                     </button>
                 </div>
-                {rulesError && <p className="alert alert-warning text-xs">{rulesError}</p>}
+                {rulesError && <Callout tone="warning" icon={<AlertTriangle size={14} />} role="alert">{rulesError}</Callout>}
                 {rules !== null && (rules.length === 0 ? (
                     <p className="text-xs text-(--base-06)">This bucket has no lifecycle rules.</p>
                 ) : (
@@ -254,7 +242,7 @@ export default function StorageMaintenance({ storageId }: { storageId: number })
                         {scanning ? 'Scanning...' : 'Scan'}
                     </button>
                 </div>
-                {scanError && <p className="alert alert-error text-xs">{scanError}</p>}
+                {scanError && <Callout tone="error" icon={<AlertTriangle size={14} />} role="alert">{scanError}</Callout>}
                 {scan && (
                     <>
                         <p className="text-xs text-(--base-06)">
@@ -264,7 +252,7 @@ export default function StorageMaintenance({ storageId }: { storageId: number })
                             {' '}{scan.unclassifiedCount} other files ({formatBytes(scan.unclassifiedBytes)}).
                         </p>
                         {candidates.length === 0 ? (
-                            <p className="alert alert-success text-xs">No orphaned files.</p>
+                            <p className="text-xs text-(--success-light)" role="status">No orphaned files.</p>
                         ) : (
                             <>
                                 <OrphanTable rows={candidates} selected={selected} onSelect={setSelected} onCopy={copyKey} />
@@ -290,15 +278,15 @@ export default function StorageMaintenance({ storageId }: { storageId: number })
                                 <h5 className="text-sm font-medium text-(--base-09)">
                                     Unreferenced, but server and job still exist ({live.length}, {formatBytes(scan.liveBytes)})
                                 </h5>
-                                <div className="alert alert-warning text-xs flex items-start gap-2">
-                                    <AlertTriangle size={14} className="shrink-0 mt-0.5" />
-                                    <span>These belong to a server and backup job that still exist. They may be real backups this database lost, e.g. after a database restore. Delete only if you are sure.</span>
-                                </div>
+                                <Callout tone="warning" icon={<AlertTriangle size={14} />} role="alert">
+                                    These belong to a server and backup job that still exist. They may be real backups this database lost, e.g. after a database restore. Delete only if you are sure.
+                                </Callout>
                                 <OrphanTable rows={live} selected={liveSelected} onSelect={setLiveSelected} onCopy={copyKey} />
-                                <label className="checkbox-row flex items-center gap-2 text-xs text-(--base-07)">
-                                    <input type="checkbox" className="checkbox" checked={liveAck} onChange={e => setLiveAck(e.target.checked)} />
-                                    I checked these are not backups this database still needs
-                                </label>
+                                <Checkbox
+                                    checked={liveAck}
+                                    onChange={setLiveAck}
+                                    label="I checked these are not backups this database still needs"
+                                />
                                 <div className="flex items-center justify-between gap-3">
                                     <span className="text-xs text-(--base-06)">
                                         {liveTotals.count} selected ({formatBytes(liveTotals.bytes)})
@@ -318,7 +306,7 @@ export default function StorageMaintenance({ storageId }: { storageId: number })
 
                         {(scan.unclassified?.length ?? 0) > 0 && (
                             <details className="text-xs">
-                                <summary className="cursor-pointer text-(--base-06) mono-label">
+                                <summary className="srv-label cursor-pointer">
                                     Other files, never deleted here ({scan.unclassifiedCount}
                                     {scan.unclassifiedCount > (scan.unclassified?.length ?? 0) && `, first ${scan.unclassified?.length} shown`})
                                 </summary>

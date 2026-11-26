@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useEffect, useState } from 'react';
+import React from 'react';
+import { Menu, MenuContent, MenuContextTrigger, MenuItem } from '@ui-sdk/react/menu';
 import { Server as ServerIcon, Plus, Pencil, Trash2, Play, Loader2 } from 'lucide-react';
 
 interface SubServerSidebarProps {
@@ -29,7 +30,7 @@ interface SubServerSidebarProps {
 // Width: ~50% wider than the previous w-60 (240px) per user request --
 // each row now has three inline action buttons (switch / edit / delete)
 // next to the name, and the old layout's name column had no room left.
-const SIDEBAR_WIDTH = 'w-[360px]';
+const SIDEBAR_WIDTH = 'w-full lg:w-[320px]';
 
 export default function SubServerSidebar({
     subServers, activeSubServer,
@@ -39,33 +40,15 @@ export default function SubServerSidebar({
     submitting: _submitting, disabled, maxSubServers,
 }: SubServerSidebarProps) {
     const limitReached = maxSubServers != null && maxSubServers > 0 && subServers.length >= maxSubServers;
-    // Right-click context menu, retained from the prior design as a
-    // power-user shortcut. Inline action buttons are the primary path
-    // now, but right-click still works for keyboard / touch-pad users
-    // who prefer the gesture. Fixed-position so it pierces overflow.
-    const [ctxMenu, setCtxMenu] = useState<{ name: string; x: number; y: number } | null>(null);
-
-    useEffect(() => {
-        if (!ctxMenu) return;
-        const close = () => setCtxMenu(null);
-        const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close(); };
-        window.addEventListener('click', close);
-        window.addEventListener('contextmenu', close);
-        window.addEventListener('keydown', onKey);
-        return () => {
-            window.removeEventListener('click', close);
-            window.removeEventListener('contextmenu', close);
-            window.removeEventListener('keydown', onKey);
-        };
-    }, [ctxMenu]);
-
     return (
-        <div className={`${SIDEBAR_WIDTH} shrink-0 card flex flex-col overflow-hidden`}>
-            <div className="px-3 py-3 border-b border-(--base-03) flex items-center justify-between">
-                <p className="input-label mb-0">Servers</p>
+        <Menu>
+        <div className={`${SIDEBAR_WIDTH} shrink-0 srv-surface flex flex-col overflow-hidden self-start lg:max-h-full`}>
+            <div className="flex items-center justify-between px-5 pt-5 pb-2">
+                <h2 className="text-sm font-medium text-(--base-09)">Servers</h2>
+                {maxSubServers != null && maxSubServers > 0 && <span className="srv-num text-xs text-(--base-06)">{subServers.length} / {maxSubServers}</span>}
             </div>
 
-            <div className="flex-1 overflow-y-auto p-2 space-y-1">
+            <div className="flex-1 overflow-y-auto p-3 space-y-1">
                 {/* Empty-state hint when there are no sub-servers yet
                     (fresh container, pre-setup). The Add Server button
                     below is still the action; this just orients the
@@ -82,26 +65,22 @@ export default function SubServerSidebar({
                     const isPendingDelete = !!pendingDelete?.has(name);
                     const rowDisabled = !!disabled || isPendingDelete;
                     return (
-                        <div
+                        <MenuContextTrigger
                             key={name}
-                            onContextMenu={e => {
-                                if (isPendingDelete) return;
-                                if (!onEditSubServer && !onDeleteSubServer) return;
-                                e.preventDefault();
-                                setCtxMenu({ name, x: e.clientX, y: e.clientY });
-                            }}
-                            className={`group relative flex items-center gap-2 px-2.5 py-2 rounded-md text-sm font-mono border transition-opacity ${
-                                isActive
-                                    ? 'border-(--success-border) bg-(--success-ghost) text-(--success-light)'
-                                    : isPreview
-                                    ? 'border-(--accent-border) bg-(--accent-ghost) text-(--base-09)'
-                                    : 'border-transparent hover:bg-(--base-04) text-(--base-07) hover:text-(--base-09)'
+                            payload={name}
+                            disabled={isPendingDelete || (!onEditSubServer && !onDeleteSubServer)}
+                            className={`group relative flex items-center gap-2 px-3 py-2 rounded-md text-sm srv-num transition-colors ${
+                                isPreview
+                                    ? 'bg-(--accent-ghost) text-(--accent-light)'
+                                    : isActive
+                                    ? 'bg-(--base-03) text-(--base-09)'
+                                    : 'hover:bg-(--base-03) text-(--base-07) hover:text-(--base-09)'
                             } ${isPendingDelete ? 'opacity-50 pointer-events-none' : ''}`}
                         >
                             {isActive ? (
-                                <span className="w-2 h-2 rounded-full bg-(--success-light) shrink-0" title="Active" />
+                                <span className="size-2 rounded-full bg-(--success-light) shrink-0" role="img" aria-label="Active" title="Active" />
                             ) : (
-                                <ServerIcon size={14} className="shrink-0" />
+                                <ServerIcon size={14} className="shrink-0 text-(--base-05)" />
                             )}
                             {onPreview ? (
                                 <button
@@ -130,9 +109,9 @@ export default function SubServerSidebar({
                                         disabled={rowDisabled}
                                         title="Switch active sub-server to this"
                                         aria-label={`Switch to ${name}`}
-                                        className="p-1.5 rounded text-(--success-light) hover:bg-(--success-ghost) disabled:opacity-40 disabled:cursor-not-allowed"
+                                        className="p-1.5 rounded-md text-(--success-light) hover:bg-(--success-ghost) focus-visible:outline-none focus-visible:[box-shadow:var(--focus-ring)] disabled:opacity-40 disabled:cursor-not-allowed"
                                     >
-                                        <Play size={12} />
+                                        <Play size={14} />
                                     </button>
                                 )}
                                 {onEditSubServer && !isPendingDelete && (
@@ -142,9 +121,9 @@ export default function SubServerSidebar({
                                         disabled={rowDisabled}
                                         title="Edit"
                                         aria-label={`Edit ${name}`}
-                                        className="p-1.5 rounded text-(--base-07) hover:bg-(--base-04) hover:text-(--base-09) disabled:opacity-40 disabled:cursor-not-allowed"
+                                        className="p-1.5 rounded-md text-(--base-07) hover:bg-(--base-04) hover:text-(--base-09) focus-visible:outline-none focus-visible:[box-shadow:var(--focus-ring)] disabled:opacity-40 disabled:cursor-not-allowed"
                                     >
-                                        <Pencil size={12} />
+                                        <Pencil size={14} />
                                     </button>
                                 )}
                                 {onDeleteSubServer && !isPendingDelete && (
@@ -154,9 +133,9 @@ export default function SubServerSidebar({
                                         disabled={rowDisabled}
                                         title="Delete"
                                         aria-label={`Delete ${name}`}
-                                        className="p-1.5 rounded text-(--error-light) hover:bg-(--error-ghost) disabled:opacity-40 disabled:cursor-not-allowed"
+                                        className="p-1.5 rounded-md text-(--error-light) hover:bg-(--error-ghost) focus-visible:outline-none focus-visible:[box-shadow:var(--focus-ring)] disabled:opacity-40 disabled:cursor-not-allowed"
                                     >
-                                        <Trash2 size={12} />
+                                        <Trash2 size={14} />
                                     </button>
                                 )}
                             </div>
@@ -167,12 +146,12 @@ export default function SubServerSidebar({
                                 the row is being torn down, not just
                                 disabled. */}
                             {isPendingDelete && (
-                                <span className="absolute inset-y-0 right-2 flex items-center gap-1.5 text-xs font-mono text-(--base-06) pointer-events-none">
+                                <span className="absolute inset-y-0 right-2 flex items-center gap-1.5 text-xs srv-num text-(--base-06) pointer-events-none">
                                     <Loader2 size={12} className="animate-spin" />
                                     deleting…
                                 </span>
                             )}
-                        </div>
+                        </MenuContextTrigger>
                     );
                 })}
 
@@ -181,48 +160,31 @@ export default function SubServerSidebar({
                     type="button"
                     onClick={onAddNew}
                     disabled={disabled || limitReached}
-                    className={`w-full mt-2 px-3 py-2 rounded-md text-sm font-medium flex items-center justify-center gap-2 transition-all border ${
-                        disabled || limitReached
-                            ? 'border-(--base-04) text-(--base-05) bg-(--base-02) cursor-not-allowed'
-                            : 'border-(--accent-border) bg-(--accent) text-white hover:bg-(--accent-light)'
-                    }`}
+                    className="btn btn-primary mt-2 w-full justify-center"
                     title={limitReached ? `Limit reached (${maxSubServers})` : 'Add sub-server'}
                 >
-                    <Plus size={14} />
-                    <span>Add Server</span>
+                    <Plus size={16} />
+                    <span>Add server</span>
                 </button>
             </div>
 
-            {/* Right-click context menu. Position-fixed so it pierces
-                the sidebar's overflow-y-auto clipping; click-outside
-                closes via the global listener registered in useEffect. */}
-            {ctxMenu && (
-                <div
-                    className="fixed z-50 min-w-[140px] rounded-md bg-(--base-02) border border-(--base-03) shadow-lg py-1 text-sm"
-                    style={{ left: ctxMenu.x, top: ctxMenu.y }}
-                    onClick={e => e.stopPropagation()}
-                    onContextMenu={e => e.preventDefault()}
-                >
-                    {onEditSubServer && (
-                        <button
-                            type="button"
-                            onClick={() => { onEditSubServer(ctxMenu.name); setCtxMenu(null); }}
-                            className="w-full px-3 py-1.5 flex items-center gap-2 text-(--base-08) hover:bg-(--base-04) hover:text-(--base-09)"
-                        >
-                            <Pencil size={13} /> Edit
-                        </button>
-                    )}
-                    {onDeleteSubServer && (
-                        <button
-                            type="button"
-                            onClick={() => { onDeleteSubServer(ctxMenu.name); setCtxMenu(null); }}
-                            className="w-full px-3 py-1.5 flex items-center gap-2 text-(--error-light) hover:bg-(--error-ghost)"
-                        >
-                            <Trash2 size={13} /> Delete
-                        </button>
-                    )}
-                </div>
-            )}
+            <MenuContent<string> className="ui-popup p-1.5 min-w-36">
+                {state => (
+                    <>
+                        {onEditSubServer && (
+                            <MenuItem onSelect={() => state.payload && onEditSubServer(state.payload)} className="dropdown-item gap-3">
+                                <Pencil size={13} /> Edit
+                            </MenuItem>
+                        )}
+                        {onDeleteSubServer && (
+                            <MenuItem onSelect={() => state.payload && onDeleteSubServer(state.payload)} className="dropdown-item dropdown-item-danger gap-3">
+                                <Trash2 size={13} /> Delete
+                            </MenuItem>
+                        )}
+                    </>
+                )}
+            </MenuContent>
         </div>
+        </Menu>
     );
 }

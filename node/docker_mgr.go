@@ -1276,10 +1276,11 @@ func (dm *DockerManager) PowerAction(uuid string, action string) error {
 		// same source RestartContainer reads it from.
 		var env []string
 		activeSub, extraPorts := "", ""
-		movedCopy := false
+		movedCopy, oldSeccomp := false, false
 		if info, ierr := dm.cli.ContainerInspect(dm.ctx, mcName); ierr == nil {
 			env = info.Config.Env
 			movedCopy = info.HostConfig != nil && dm.boundToMovedCopy(info.HostConfig.Binds, uuid)
+			oldSeccomp = !daemonNoSeccomp.Load() && (info.HostConfig == nil || !onTenantSeccomp(info.HostConfig.SecurityOpt))
 			extraPorts = containerLabel(info, extraPortsLabel)
 			if sub := strings.TrimPrefix(info.Config.WorkingDir, "/data/"); sub != "" && sub != info.Config.WorkingDir {
 				activeSub = sub
@@ -1293,6 +1294,12 @@ func (dm *DockerManager) PowerAction(uuid string, action string) error {
 		}
 		if movedCopy {
 			log.Printf("start %s: bound to a copy its storage key moved off, recreating", mcName)
+			return dm.RestartContainer(uuid)
+		}
+		// Created before the tenant seccomp profile; ReconcileSeccomp covers the
+		// running ones only, and a plain start keeps the profile of the create.
+		if oldSeccomp {
+			log.Printf("start %s: created without the tenant seccomp profile, recreating", mcName)
 			return dm.RestartContainer(uuid)
 		}
 		// After a host reboot every MC container is exited, so ReconcileRedisEnv

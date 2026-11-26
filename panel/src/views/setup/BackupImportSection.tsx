@@ -48,8 +48,8 @@ export default function BackupImportSection({
 
     return (
         <div className="space-y-3">
-            <div className="alert alert-info text-xs">
-                <Info size={13} className="text-(--accent-light) shrink-0 mt-0.5" />
+            <div className="srv-callout" data-tone="info">
+                <Info size={16} className="text-(--accent-light) shrink-0 mt-0.5" />
                 <p>
                     Restores a downloaded Dylaris backup into this sub-server. Archives made
                     from Dylaris 2026.09.07 onwards describe themselves, so the loader,
@@ -96,8 +96,8 @@ export default function BackupImportSection({
                     </div>
 
                     {!looksLikeAnArchive(file.name) && !fileTooLarge && (
-                        <div className="alert alert-warning text-xs">
-                            <AlertTriangle size={13} className="text-(--warning-light) shrink-0 mt-0.5" />
+                        <div className="srv-callout" data-tone="warning">
+                            <AlertTriangle size={16} className="text-(--warning-light) shrink-0 mt-0.5" />
                             <p>
                                 This does not look like a .tar.gz archive. The import will fail if it
                                 is not one.
@@ -106,8 +106,8 @@ export default function BackupImportSection({
                     )}
 
                     {fileTooLarge && (
-                        <div className="alert alert-warning text-xs">
-                            <AlertTriangle size={13} className="text-(--warning-light) shrink-0 mt-0.5" />
+                        <div className="srv-callout" data-tone="warning">
+                            <AlertTriangle size={16} className="text-(--warning-light) shrink-0 mt-0.5" />
                             <p>Archive exceeds the upload limit. Use SFTP for large files.</p>
                         </div>
                     )}

@@ -1,0 +1,25 @@
+/* Settings: people, tickets, features and platform pages (set-ppl-*). */
+
+/* Quiet table rows: hover fill, no borders. Used where columns of numbers must line up. */
+.set-ppl-row-table { transition: background 0.15s ease-out; }
+.set-ppl-row-table:hover { background: var(--base-03); }
+.set-ppl-row-table > td:first-child { border-radius: var(--radius-md) 0 0 var(--radius-md); }
+.set-ppl-row-table > td:last-child { border-radius: 0 var(--radius-md) var(--radius-md) 0; }
+@media (prefers-reduced-motion: reduce) {
+  .set-ppl-row-table { transition: none; }
+}
+
+/* Fixed (non-editable) audience label next to a module row's controls. */
+.set-ppl-audience {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 9999px;
+  background: var(--base-03);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--base-07);
+}
+.set-ppl-audience:focus-visible { outline: none; box-shadow: var(--focus-ring); }

@@ -4,7 +4,7 @@ import React, { useState, useEffect, useLayoutEffect, useRef, memo } from 'react
 import { Server, ServerStats, sendConsoleCommand } from '@/lib/api';
 import { API_URL } from '@/lib/api/core';
 import { subscribeEventSource, type StreamStatus, type Subscription } from '@/lib/sse';
-import { levelClass, type Level } from '@/lib/consoleLog';
+import type { Level } from '@/lib/consoleLog';
 import { appendLive, levelled, mergeOrdered, oldestStreamId, type ConsoleLine } from '@/lib/consoleLines';
 import { Power, Send, Cpu, MemoryStick, ArrowDown, RefreshCw } from 'lucide-react';
 import { parseStatsSample } from '@/lib/statsSample';
@@ -12,6 +12,9 @@ import { jvmHeapMB } from '@/lib/jvmHeap';
 import MemoryHelp from '@/components/MemoryHelp';
 import { SkeletonText } from '@/components/Skeleton';
 import { consoleClock, uses12h } from '@/lib/time';
+import Tooltip from '@/components/ui/Tooltip';
+import { Meter, MeterIndicator, MeterTrack } from '@ui-sdk/react/meter';
+import '@/styles/server-console.css';
 
 // Standard ANSI color codes (SGR 30-37, 40-47, 90-97). These are fixed by the
 // ANSI spec for terminal color rendering and are intentionally NOT mapped to
@@ -56,14 +59,38 @@ function parseAnsiLine(line: string): React.ReactNode {
   return parts;
 }
 
+// Quieter than consoleLog's levelClass: ordinary lines sit a step below full
+// white so warnings and errors are what stands out.
+const LEVEL_INK: Record<Level, string> = {
+  error: 'text-(--error-light)',
+  warn: 'text-(--warning-light)',
+  debug: 'text-(--base-06)',
+  info: 'text-(--base-08)',
+};
+
 // Memoised so a new line renders one row, not every row in a 5000-line buffer.
 const ConsoleRow = memo(function ConsoleRow({ text, level }: { text: string; level: Level }) {
   return (
-    <div className={`whitespace-pre-wrap break-all leading-5 ${levelClass(level)}`}>
+    <div className={`whitespace-pre-wrap break-all ${LEVEL_INK[level] ?? LEVEL_INK.info}`}>
       {parseAnsiLine(consoleClock(text, uses12h()))}
     </div>
   );
 });
+
+function ConsoleStat({ icon, label, value, pct }: { icon: React.ReactNode; label: string; value: string; pct: number }) {
+  return (
+    <div className="flex items-center gap-2 text-(--base-06)">
+      {icon}
+      <span className="srv-label">{label}</span>
+      <span className="srv-num text-[13px] text-(--base-09)">{value}</span>
+      <Meter value={pct} min={0} max={100} aria-label={`${label} usage`} className="hidden w-16 sm:block">
+        <MeterTrack className="srv-meter-track">
+          <MeterIndicator className="srv-meter-fill" data-tone={pct >= 90 ? 'error' : pct >= 75 ? 'warning' : undefined} />
+        </MeterTrack>
+      </Meter>
+    </div>
+  );
+}
 
 // Live lines are applied in batches: one render per line kept the browser
 // busy for as long as a server spammed its console.
@@ -396,71 +423,69 @@ export default function ConsoleView({ server }: ConsoleViewProps) {
   const isOffline = server.status === 'stopped' || server.status === 'offline' || server.status === 'pending_setup';
 
   return (
-    <div className="h-full flex flex-col card overflow-hidden">
-      {/* Stats bar, and whether the console stream is live */}
-      <div className="shrink-0 flex items-center gap-4 sm:gap-6 px-5 h-12 bg-(--base-01) border-b-2 border-(--base-03)">
+    <div className="srv-surface srv-console flex h-full flex-col overflow-hidden">
+      {/* Connection state on the left, live resource readings after it */}
+      <div className="flex min-h-12 shrink-0 flex-wrap items-center gap-x-6 gap-y-2 px-5 py-2">
+        <div className="flex items-center gap-2" role="status" aria-live="polite">
+          {streamStatus === 'live' ? (
+            <span className="flex items-center gap-2 text-xs font-medium text-(--base-08)"><span className="size-2 rounded-full bg-(--success)" />Live</span>
+          ) : streamStatus === 'disconnected' ? (
+            <>
+              <span className="flex items-center gap-2 text-xs font-medium text-(--error-light)"><span className="size-2 rounded-full bg-(--error)" />Disconnected</span>
+              <Tooltip content="Reopen the console stream">
+                <button type="button" onClick={() => streamRef.current?.reconnect()} className="btn btn-secondary btn-sm">
+                  <RefreshCw size={14} />
+                  Reconnect
+                </button>
+              </Tooltip>
+            </>
+          ) : (
+            <span className="flex items-center gap-2 text-xs font-medium text-(--warning-light)"><span className="size-2 rounded-full bg-(--warning) motion-safe:animate-pulse" />{streamStatus === 'connecting' ? 'Connecting...' : 'Reconnecting...'}</span>
+          )}
+        </div>
         {liveStats && (<>
+          <ConsoleStat
+            icon={<Cpu size={14} />}
+            label="CPU"
+            value={`${liveStats.cpu.toFixed(1)}%`}
+            pct={Math.min(100, Math.max(0, liveStats.cpu))}
+          />
           <div className="flex items-center gap-2">
-            <Cpu size={16} className="text-(--base-06)" />
-            <span className="mono-label">CPU</span>
-            <span className="text-sm font-semibold font-mono text-(--base-09)">{liveStats.cpu.toFixed(1)}%</span>
-            <div className="hidden sm:block w-20 h-2 bg-(--base-03) rounded-full overflow-hidden">
-              <div className="h-full bg-(--primary) rounded-full transition-all duration-500" style={{ width: `${Math.min(100, Math.max(0, liveStats.cpu))}%` }} />
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <MemoryStick size={16} className="text-(--base-06)" />
-            <span className="mono-label">{heapMb > 0 ? 'Heap' : 'RAM'}</span>
-            <span className="text-sm font-semibold font-mono text-(--base-09)">
-              {heapMb > 0 ? `${shortMB(heapMb)}/${shortMB(heapMaxMb)}` : `${shortMB(liveStats.memUsed)}/${shortMB(liveStats.memLimit)}`}
-            </span>
-            <div className="hidden sm:block w-20 h-2 bg-(--base-03) rounded-full overflow-hidden">
-              <div className="h-full bg-(--success) rounded-full transition-all duration-500" style={{ width: `${heapMb > 0 ? share(heapMb, heapMaxMb) : share(liveStats.memUsed, liveStats.memLimit)}%` }} />
-            </div>
+            <ConsoleStat
+              icon={<MemoryStick size={14} />}
+              label={heapMb > 0 ? 'Heap' : 'RAM'}
+              value={heapMb > 0 ? `${shortMB(heapMb)}/${shortMB(heapMaxMb)}` : `${shortMB(liveStats.memUsed)}/${shortMB(liveStats.memLimit)}`}
+              pct={heapMb > 0 ? share(heapMb, heapMaxMb) : share(liveStats.memUsed, liveStats.memLimit)}
+            />
             {heapMb > 0 && (
-              <span className="hidden md:inline text-xs font-mono text-(--base-06)">Process {shortMB(liveStats.memUsed)}/{shortMB(liveStats.memLimit)}</span>
+              <span className="srv-num hidden text-xs text-(--base-06) md:inline">Process {shortMB(liveStats.memUsed)}/{shortMB(liveStats.memLimit)}</span>
             )}
             <MemoryHelp bookedMb={server.memory} limitMb={Math.max(liveStats.memLimit, server.memory || 0)} />
           </div>
         </>)}
-        <div className="ml-auto flex items-center gap-2" role="status" aria-live="polite">
-          {streamStatus === 'live' ? (
-            <span className="badge badge-success"><span className="badge-dot bg-(--success)" />Live</span>
-          ) : streamStatus === 'disconnected' ? (
-            <>
-              <span className="badge badge-error"><span className="badge-dot bg-(--error)" />Disconnected</span>
-              <button type="button" onClick={() => streamRef.current?.reconnect()} className="btn btn-secondary btn-sm">
-                <RefreshCw size={13} />
-                Reconnect
-              </button>
-            </>
-          ) : (
-            <span className="badge badge-warning"><span className="badge-dot bg-(--warning)" />{streamStatus === 'connecting' ? 'Connecting...' : 'Reconnecting...'}</span>
-          )}
-        </div>
       </div>
       {/* Log output */}
-      <div className="flex-1 min-h-0 relative">
+      <div className="relative min-h-0 flex-1">
       {/* overflow-anchor off: a prepend is anchored by hand above, and the
           browser's own scroll anchoring would shift the view a second time. */}
-      <div ref={logRef} onScroll={onLogScroll} style={{ overflowAnchor: 'none' }} className="h-full overflow-y-auto p-4 font-mono text-sm bg-(--base-00)">
+      <div ref={logRef} onScroll={onLogScroll} style={{ overflowAnchor: 'none' }} className="srv-console-log h-full overflow-y-auto px-5 py-4 font-mono text-[13px] leading-[1.65]">
         {isOffline && lines.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full text-(--base-06)">
-            <Power size={48} className="mb-3 opacity-30" />
-            <p className="h-section text-(--base-07)">Server is offline</p>
-            <p className="text-sm mt-1 text-(--base-06)">Start the server to see console output.</p>
+          <div className="flex h-full flex-col items-center justify-center text-center">
+            <span className="mb-4 flex size-12 items-center justify-center rounded-full bg-(--base-02) text-(--base-06)"><Power size={22} /></span>
+            <p className="font-sans text-sm font-medium text-(--base-09)">Server is offline</p>
+            <p className="mt-1 font-sans text-sm text-(--base-06)">Start the server to see console output.</p>
           </div>
         ) : lines.length === 0 && !historySettled ? (
-          <div className="space-y-2 pt-1" aria-busy="true" aria-label="Loading console output">
+          <div className="space-y-2.5 pt-1" aria-busy="true" aria-label="Loading console output">
             {['w-3/4', 'w-1/2', 'w-5/6', 'w-2/3', 'w-1/3', 'w-3/5'].map((w, i) => <SkeletonText key={i} width={w} />)}
           </div>
         ) : lines.length === 0 ? (
-          <p className="text-(--base-06) italic animate-content-in">Waiting for server output...</p>
+          <p className="font-sans text-sm text-(--base-06) animate-content-in">Waiting for server output...</p>
         ) : (
           <>
             {/* One fixed-height row for every state, so its text changing never moves the lines below. */}
             {older !== 'unknown' && (
-              <p className="h-6 text-xs leading-5 text-(--base-06) italic" aria-live="polite">
+              <p className="h-6 font-sans text-xs leading-6 text-(--base-06)" aria-live="polite">
                 {older === 'loading' ? 'Loading older lines...' : older === 'start' ? (startTrimmed ? 'Start of retained history (last 5000 lines)' : 'Start of log') : ''}
               </p>
             )}
@@ -470,30 +495,28 @@ export default function ConsoleView({ server }: ConsoleViewProps) {
       </div>
       {!following && lines.length > 0 && (
         <button
-          type="button"
-          onClick={jumpToBottom}
-          className="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-(--base-02) border border-(--base-04) text-xs font-medium text-(--base-08) shadow-md hover:text-(--base-09) hover:border-(--accent-border) transition-colors"
-          title="Jump to the newest output"
-        >
-          <ArrowDown size={13} />
-          {heldCount > 0 ? `${heldCount.toLocaleString()} new ${heldCount === 1 ? 'line' : 'lines'}` : 'Latest output'}
-        </button>
+            type="button"
+            onClick={jumpToBottom}
+            className="absolute bottom-3 left-1/2 flex -translate-x-1/2 items-center gap-1.5 rounded-full bg-(--base-03) px-3 py-1.5 text-xs font-medium text-(--base-08) shadow-md transition-colors hover:bg-(--base-04) hover:text-(--base-09) focus-visible:outline-none focus-visible:shadow-(--focus-ring) active:bg-(--base-05)"
+          >
+            <ArrowDown size={14} />
+            {heldCount > 0 ? `${heldCount.toLocaleString()} new ${heldCount === 1 ? 'line' : 'lines'}` : 'Latest output'}
+          </button>
       )}
       </div>
 
       {/* Command input with autocomplete */}
-      <div className="shrink-0 relative">
+      <div className="relative shrink-0 p-3">
         {suggestions.length > 0 && (
-          <div className="dropdown-menu bottom-full left-0 right-0 rounded-b-none rounded-t-[--radius-xl] max-h-48 overflow-y-auto">
+          <div className="ui-popup absolute bottom-full left-3 right-3 mb-1 max-h-56 overflow-y-auto p-1.5" role="listbox" aria-label="Command suggestions">
             {suggestions.map((s, i) => (
               <button
                 key={s}
+                type="button"
+                role="option"
+                aria-selected={i === selectedSuggestion}
                 onClick={() => applySuggestion(s)}
-                className={`dropdown-item w-full font-mono text-sm ${
-                  i === selectedSuggestion
-                    ? 'bg-(--accent-ghost) text-(--accent-light)'
-                    : ''
-                }`}
+                className={`dropdown-item font-mono text-[13px] ${i === selectedSuggestion ? 'bg-(--accent-ghost) text-(--accent-light)' : ''}`}
               >
                 {s}
               </button>
@@ -501,34 +524,40 @@ export default function ConsoleView({ server }: ConsoleViewProps) {
           </div>
         )}
         {server.role === 'demo' ? (
-          <div className="border-t border-(--base-03) px-3 py-2.5 bg-(--base-02) text-center text-xs text-(--base-06) font-mono">
+          <div className="rounded-lg bg-(--base-01) px-4 py-2.5 text-center font-mono text-xs text-(--base-06)">
             Read-only demo &mdash; console input disabled
           </div>
         ) : (
-          <div className="border-t border-(--base-03) flex items-center bg-(--base-02)">
+          <>
             {sendError && (
-              <span className="px-3 py-2.5 text-xs text-(--error-light) font-mono shrink-0" role="alert">{sendError}</span>
+              <p className="mb-2 px-1 text-xs text-(--error-light)" role="alert">{sendError}</p>
             )}
-            <span className="px-3 py-2.5 text-(--accent-light) font-mono font-medium select-none">&gt;</span>
-            <input
-              ref={inputRef}
-              value={command}
-              onChange={e => setCommand(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="Enter command... (Tab for autocomplete)"
-              className="flex-1 py-2.5 bg-transparent outline-none text-sm text-(--base-09) placeholder:text-(--base-06) font-mono"
-              autoComplete="off"
-              spellCheck={false}
-            />
-            <button
-              onClick={handleSend}
-              disabled={!command.trim()}
-              className="px-4 py-2.5 text-(--accent-light) hover:bg-(--base-03) transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-              title="Send command"
-            >
-              <Send size={20} />
-            </button>
-          </div>
+            <div className="srv-console-input flex items-center rounded-lg bg-(--base-01)">
+              <span className="select-none pl-4 font-mono text-sm font-medium text-(--accent-light)" aria-hidden="true">&gt;</span>
+              <input
+                ref={inputRef}
+                value={command}
+                onChange={e => setCommand(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder="Enter command... (Tab for autocomplete)"
+                aria-label="Console command"
+                className="h-11 flex-1 bg-transparent px-3 font-mono text-[13px] text-(--base-09) outline-none placeholder:text-(--base-06)"
+                autoComplete="off"
+                spellCheck={false}
+              />
+              <Tooltip content="Send command">
+                <button
+                  type="button"
+                  onClick={handleSend}
+                  disabled={!command.trim()}
+                  aria-label="Send command"
+                  className="mr-1.5 flex size-8 items-center justify-center rounded-md text-(--accent-light) transition-colors hover:bg-(--base-03) focus-visible:outline-none focus-visible:shadow-(--focus-ring) active:bg-(--base-04) disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent"
+                >
+                  <Send size={16} />
+                </button>
+              </Tooltip>
+            </div>
+          </>
         )}
       </div>
     </div>

@@ -4,6 +4,16 @@
     "ignoreFiles": [
       "src/components/mods/ModDescription.tsx"
     ],
-    "ignoreValues": []
+    "ignoreValues": [
+      {
+        "rule": "layout-transition",
+        "value": "*",
+        "files": [
+          "src/app/globals.css"
+        ],
+        "createdAt": "2026-11-23T10:33:59.365Z",
+        "reason": "Claude: only .srv-meter-fill (6px meter bar, overflow hidden, updates every few seconds) animates width; layout cost negligible, scaleX would distort the rounded ends"
+      }
+    ]
   }
 }

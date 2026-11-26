@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { Plus, Check } from 'lucide-react';
 import Select, { type SelectOption } from '@/components/ui/Select';
+import Checkbox from '@/components/ui/Checkbox';
 import type { CatalogScope, Preset } from '@/lib/api/authzCatalog';
 import type { Server } from '@/lib/api';
 import { assignGrant, type Grant } from '@/lib/api/grants';
@@ -108,8 +109,8 @@ export default function AccessGrantForm({ mode, ownedServers, catalog, roles, pr
     };
 
     return (
-        <div className="card p-6 mb-4">
-            <h2 className="text-sm font-medium text-(--base-09) mb-4">{editing ? 'Edit grant' : 'New grant'}</h2>
+        <div className="srv-surface max-w-xl p-6">
+            <h2 className="mb-4 text-[15px] font-semibold text-(--base-09)">{editing ? 'Edit grant' : 'New grant'}</h2>
             <div className="space-y-4">
                 <div>
                     <label className="input-label">Friend&apos;s username</label>
@@ -136,15 +137,11 @@ export default function AccessGrantForm({ mode, ownedServers, catalog, roles, pr
                 </div>
 
                 {showInherit && (
-                    <label className="flex items-center gap-2 text-sm text-(--base-08) cursor-pointer">
-                        <input
-                            type="checkbox"
-                            className="checkbox"
-                            checked={inherit}
-                            onChange={e => setInherit(e.target.checked)}
-                        />
-                        Also apply to the servers behind this proxy
-                    </label>
+                    <Checkbox
+                        checked={inherit}
+                        onChange={setInherit}
+                        label="Also apply to the servers behind this proxy"
+                    />
                 )}
 
                 {mode === 'simple' ? (

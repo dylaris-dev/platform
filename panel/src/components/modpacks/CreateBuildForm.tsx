@@ -318,7 +318,7 @@ export default function CreateBuildForm({
                         />
                     </div>
                     {migrating && (
-                        <section className="card p-4 space-y-3 md:col-span-2">
+                        <section className="srv-surface p-4 space-y-3 md:col-span-2">
                             <h3 className="font-medium text-sm">
                                 Target availability: MC {minecraft} / {loader}
                             </h3>

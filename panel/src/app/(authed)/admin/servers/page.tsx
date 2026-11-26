@@ -1,7 +1,11 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { Search, RefreshCw, UserCheck, X, Copy, Check, Network, Box } from 'lucide-react';
+import { Search, RefreshCw, UserCheck, X, Copy, Check, Network, Box, Server, AlertTriangle } from 'lucide-react';
+import Segmented from '@/components/ui/Segmented';
+import Tooltip from '@/components/ui/Tooltip';
+import EmptyState from '@/components/ui/EmptyState';
+import { RowList, RowHead } from '@/components/ui/RowList';
 import { getAdminServers, getUsers, AdminServer, User } from '@/lib/api';
 import { StatusBadge } from '@/components/admin/StatusBadge';
 import { AssignOwnerModal } from '@/components/admin/AssignOwnerModal';
@@ -10,11 +14,11 @@ import { formatMB } from '@/lib/format';
 
 // memory and diskLimit both arrive in MB.
 function formatLimitMB(mb: number | undefined): string {
-    return mb && mb > 0 ? formatMB(mb) : '—';
+    return mb && mb > 0 ? formatMB(mb) : '-';
 }
 
 function formatRelativeDate(iso: string | undefined): string {
-    if (!iso) return '—';
+    if (!iso) return '-';
     const date = new Date(iso);
     const now = Date.now();
     const diffMs = now - date.getTime();
@@ -36,22 +40,25 @@ function CopyableUuid({ uuid }: { uuid: string }) {
         setTimeout(() => setCopied(false), 1200);
     };
     return (
-        <button
-            onClick={copy}
-            className="font-mono text-[11px] text-(--base-06) hover:text-(--base-09) inline-flex items-center gap-1 transition-colors"
-            title={uuid}
-        >
-            {uuid.split('-')[0]}…
-            {copied ? <Check size={11} className="text-(--success-light)" /> : <Copy size={11} className="opacity-50" />}
-        </button>
+        <Tooltip content={copied ? 'Copied' : `${uuid} (click to copy)`}>
+            <button
+                type="button"
+                onClick={copy}
+                className="srv-num inline-flex items-center gap-1 rounded text-[11px] text-(--base-06) transition-colors hover:text-(--base-09) focus-visible:outline-none focus-visible:[box-shadow:var(--focus-ring)]"
+                aria-label={`Copy UUID ${uuid}`}
+            >
+                {uuid.split('-')[0]}…
+                {copied ? <Check size={12} className="text-(--success-light)" /> : <Copy size={12} className="opacity-60" />}
+            </button>
+        </Tooltip>
     );
 }
 
 function TypeBadge({ type }: { type: 'game' | 'proxy' | undefined }) {
     const isProxy = type === 'proxy';
     return (
-        <span className={`badge ${isProxy ? 'badge-accent' : 'badge-neutral'} inline-flex items-center gap-1`}>
-            {isProxy ? <Network size={10} /> : <Box size={10} />}
+        <span className="inline-flex items-center gap-1.5 text-xs text-(--base-07)">
+            {isProxy ? <Network size={14} aria-hidden="true" /> : <Box size={14} aria-hidden="true" />}
             {isProxy ? 'Proxy' : 'Game'}
         </span>
     );
@@ -62,6 +69,7 @@ export default function AdminServersPage() {
     const [users, setUsers] = useState<User[]>([]);
     const [search, setSearch] = useState('');
     const [loading, setLoading] = useState(true);
+    const [loadFailed, setLoadFailed] = useState(false);
     const [assignTarget, setAssignTarget] = useState<AdminServer | null>(null);
     const [refreshKey, setRefreshKey] = useState(0);
     // Which machines a server sits on. A segmented filter rather than a second
@@ -76,8 +84,9 @@ export default function AdminServersPage() {
         Promise.all([getAdminServers(), getUsers()]).then(([sRes, uRes]) => {
             setServers(sRes.success ? (sRes.servers ?? []) : []);
             setUsers(uRes.success ? (uRes.users ?? []) : []);
+            setLoadFailed(!sRes.success);
             setLoading(false);
-        });
+        }).catch(() => { setLoadFailed(true); setLoading(false); });
     }, [refreshKey]);
 
     const filteredServers = useMemo(() => {
@@ -106,138 +115,127 @@ export default function AdminServersPage() {
     );
 
     return (
-        <div className="flex flex-col gap-4 h-full">
-            <div className="flex items-center gap-3">
-                <div className="relative flex-1 max-w-sm">
-                    <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-(--base-05)" />
+        <div className="flex flex-col gap-4">
+            <div className="flex flex-wrap items-center gap-3">
+                <div className="relative flex-1 min-w-48 max-w-sm">
+                    <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-(--base-06)" aria-hidden="true" />
                     <input
                         type="text"
                         placeholder="Search by name, UUID or owner..."
+                        aria-label="Search servers"
                         value={search}
                         onChange={e => setSearch(e.target.value)}
-                        className="input-field input-icon-left w-full"
+                        className="input-field input-icon-left input-icon-right w-full"
                     />
+                    {search && (
+                        <button
+                            type="button"
+                            onClick={() => setSearch('')}
+                            aria-label="Clear search"
+                            className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-(--base-06) hover:text-(--base-09) focus-visible:outline-none focus-visible:[box-shadow:var(--focus-ring)]"
+                        >
+                            <X size={14} />
+                        </button>
+                    )}
                 </div>
-                {search && (
-                    <button onClick={() => setSearch('')} className="text-(--base-05) hover:text-(--base-07) transition-colors">
-                        <X size={14} />
-                    </button>
-                )}
                 {/* Hidden until there is something to separate: on an install
                     with no external nodes this filter would only ever have one
                     populated option. */}
                 {externalCount > 0 && (
-                    <div className="flex bg-(--base-03) p-0.5 rounded-md shrink-0" role="group" aria-label="Filter by node kind">
-                        {([
-                            ['all', 'All'],
-                            ['platform', 'Cluster'],
-                            ['external', 'External'],
-                        ] as const).map(([id, label]) => (
-                            <button
-                                key={id}
-                                type="button"
-                                onClick={() => setKindFilter(id)}
-                                aria-pressed={kindFilter === id}
-                                className={`px-2.5 py-1 text-[11px] rounded-sm transition-colors ${
-                                    kindFilter === id
-                                        ? 'bg-(--accent) text-white'
-                                        : 'text-(--base-07) hover:text-(--base-09)'
-                                }`}
-                            >
-                                {label}
-                            </button>
-                        ))}
-                    </div>
+                    <Segmented
+                        ariaLabel="Filter by node kind"
+                        value={kindFilter}
+                        onChange={setKindFilter}
+                        options={[
+                            { id: 'all', label: 'All' },
+                            { id: 'platform', label: 'Cluster' },
+                            { id: 'external', label: 'External' },
+                        ]}
+                    />
                 )}
-                <span className="text-xs text-(--base-06) ml-auto">{filteredServers.length} server{filteredServers.length !== 1 ? 's' : ''}</span>
+                <span className="srv-num ml-auto text-xs text-(--base-06)">{filteredServers.length} server{filteredServers.length !== 1 ? 's' : ''}</span>
                 <button onClick={refresh} className="btn btn-secondary btn-sm">
-                    <RefreshCw size={13} />
+                    <RefreshCw size={14} />
                     Refresh
                 </button>
             </div>
 
-            <div className="flex-1 overflow-auto">
-                {loading ? (
-                    <SkeletonTable rows={8} cols={5} />
-                ) : filteredServers.length === 0 ? (
-                    <div className="text-center py-16 text-(--base-05) text-sm">No servers found</div>
-                ) : (
-                    <table className="w-full text-sm">
-                        <thead>
-                            <tr className="text-left border-b border-(--base-03)">
-                                <th className="pb-2 pr-4 mono-label font-normal">Name</th>
-                                <th className="pb-2 pr-4 mono-label font-normal">Owner</th>
-                                <th className="pb-2 pr-4 mono-label font-normal hidden md:table-cell">Type</th>
-                                <th className="pb-2 pr-4 mono-label font-normal hidden lg:table-cell">Node</th>
-                                <th className="pb-2 pr-4 mono-label font-normal hidden xl:table-cell">Created</th>
-                                <th className="pb-2 pr-4 mono-label font-normal hidden md:table-cell">Members</th>
-                                <th className="pb-2 pr-4 mono-label font-normal hidden lg:table-cell">Size</th>
-                                <th className="pb-2 pr-4 mono-label font-normal">Status</th>
-                                <th className="pb-2 mono-label font-normal">Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody className="divide-y divide-(--base-03)">
+            {loading ? (
+                <SkeletonTable rows={8} cols={5} />
+            ) : loadFailed ? (
+                <EmptyState
+                    tone="error"
+                    icon={<AlertTriangle size={20} />}
+                    title="Could not load servers"
+                    description="The server list did not load. Try again in a moment."
+                    action={<button type="button" onClick={refresh} className="btn btn-secondary btn-sm"><RefreshCw size={14} /> Retry</button>}
+                />
+            ) : filteredServers.length === 0 ? (
+                <EmptyState icon={<Server size={20} />} title="No servers found" description={search ? 'Nothing matches that search.' : undefined} />
+            ) : (
+                <div className="srv-surface overflow-x-auto">
+                    <div className="min-w-[44rem]">
+                        <RowList label="All servers">
+                            <RowHead>
+                                <span className="flex-1">Server</span>
+                                <span className="w-32">Owner</span>
+                                <span className="hidden w-20 md:block">Type</span>
+                                <span className="hidden w-32 lg:block">Node</span>
+                                <span className="hidden w-20 xl:block">Created</span>
+                                <span className="hidden w-16 md:block">Members</span>
+                                <span className="hidden w-24 lg:block">Memory / disk</span>
+                                <span className="w-24">Status</span>
+                                <span className="w-20" />
+                            </RowHead>
                             {filteredServers.map(s => (
-                                <tr key={s.id} className="hover:bg-(--base-02) transition-colors">
-                                    <td className="py-2.5 pr-4">
-                                        <div>
-                                            <p className="font-medium text-(--base-09)">{s.name}</p>
-                                            <div className="flex items-center gap-2 mt-0.5">
-                                                <CopyableUuid uuid={s.uuid} />
-                                                {s.activeSubServer && (
-                                                    <span className="text-[10px] text-(--base-05) font-mono">· {s.activeSubServer}</span>
-                                                )}
-                                            </div>
+                                <div key={s.id} role="listitem" className="app-row">
+                                    <div className="min-w-0 flex-1">
+                                        <p className="truncate text-sm font-medium text-(--base-09)">{s.name}</p>
+                                        <div className="mt-0.5 flex items-center gap-2">
+                                            <CopyableUuid uuid={s.uuid} />
+                                            {s.activeSubServer && (
+                                                <span className="srv-num text-[11px] text-(--base-06)">{s.activeSubServer}</span>
+                                            )}
                                         </div>
-                                    </td>
-                                    <td className="py-2.5 pr-4">
-                                        <span className="text-(--base-07)">{s.owner ?? <span className="text-(--base-05) italic">unassigned</span>}</span>
-                                    </td>
-                                    <td className="py-2.5 pr-4 hidden md:table-cell">
-                                        <TypeBadge type={s.serverType} />
-                                    </td>
-                                    <td className="py-2.5 pr-4 hidden lg:table-cell">
-                                        <span className="text-(--base-06) text-xs">{s.node}</span>
+                                    </div>
+                                    <span className="w-32 truncate text-sm text-(--base-07)">
+                                        {s.owner ?? <span className="text-(--base-06)">Unassigned</span>}
+                                    </span>
+                                    <span className="hidden w-20 md:block"><TypeBadge type={s.serverType} /></span>
+                                    <span className="hidden w-32 items-center gap-1.5 truncate text-xs text-(--base-07) lg:flex">
+                                        {s.node}
                                         {s.nodeKind === 'external' && (
-                                            <span
-                                                className="ml-1.5 px-1 py-0.5 rounded text-[10px] bg-(--base-03) text-(--base-07) align-middle"
-                                                title="Runs on your own hardware outside the swarm - gateway and beam only"
-                                            >
-                                                External
-                                            </span>
+                                            <Tooltip content="Runs on your own hardware outside the swarm: gateway and beam only">
+                                                <span className="srv-chip h-5 px-2 text-[11px]">External</span>
+                                            </Tooltip>
                                         )}
-                                    </td>
-                                    <td className="py-2.5 pr-4 hidden xl:table-cell">
-                                        <span className="text-(--base-06) text-xs tabular-nums" title={s.createdAt}>{formatRelativeDate(s.createdAt)}</span>
-                                    </td>
-                                    <td className="py-2.5 pr-4 hidden md:table-cell">
-                                        <span className="text-(--base-07) tabular-nums">{s.memberCount ?? 0}</span>
-                                    </td>
-                                    <td className="py-2.5 pr-4 hidden lg:table-cell">
-                                        <div className="text-xs text-(--base-07) tabular-nums leading-tight">
-                                            <div>{formatLimitMB(s.memory)}</div>
-                                            <div className="text-(--base-05)">{formatLimitMB(s.diskLimit)}</div>
-                                        </div>
-                                    </td>
-                                    <td className="py-2.5 pr-4">
-                                        <StatusBadge status={s.status} />
-                                    </td>
-                                    <td className="py-2.5">
+                                    </span>
+                                    <Tooltip content={s.createdAt || 'Unknown'}>
+                                        <span className="srv-num hidden w-20 text-xs text-(--base-06) xl:block">{formatRelativeDate(s.createdAt)}</span>
+                                    </Tooltip>
+                                    <span className="srv-num hidden w-16 text-sm text-(--base-07) md:block">{s.memberCount ?? 0}</span>
+                                    <span className="srv-num hidden w-24 text-xs leading-tight text-(--base-07) lg:block">
+                                        <span className="block">{formatLimitMB(s.memory)}</span>
+                                        <span className="block text-(--base-06)">{formatLimitMB(s.diskLimit)}</span>
+                                    </span>
+                                    <span className="w-24"><StatusBadge status={s.status} /></span>
+                                    <span className="flex w-20 justify-end">
                                         <button
+                                            type="button"
                                             onClick={() => setAssignTarget(s)}
-                                            className="flex items-center gap-1 text-[11px] text-(--accent-light) hover:bg-(--accent-ghost) px-2 py-1 rounded transition-colors"
-                                            title="Assign owner"
+                                            className="btn btn-ghost btn-sm"
+                                            aria-label={`Assign owner for ${s.name}`}
                                         >
-                                            <UserCheck size={12} />
+                                            <UserCheck size={14} />
                                             Assign
                                         </button>
-                                    </td>
-                                </tr>
+                                    </span>
+                                </div>
                             ))}
-                        </tbody>
-                    </table>
-                )}
-            </div>
+                        </RowList>
+                    </div>
+                </div>
+            )}
 
             {assignTarget && (
                 <AssignOwnerModal

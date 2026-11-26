@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import { Checkbox as SdkCheckbox } from '@ui-sdk/react/checkbox';
 
 /**
  * The panel's checkbox.
@@ -41,14 +42,13 @@ export default function Checkbox({
     id,
 }: CheckboxProps) {
     const input = (
-        <input
+        <SdkCheckbox
             id={id}
-            type="checkbox"
             className="checkbox"
             checked={checked}
+            onCheckedChange={c => onChange(c === true)}
             disabled={disabled}
             aria-label={label ? undefined : ariaLabel}
-            onChange={e => onChange(e.target.checked)}
         />
     );
 

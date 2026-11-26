@@ -20,7 +20,9 @@ import NodeConnectionBanner from '@/components/NodeConnectionBanner';
 import { ConfirmDialogRoot } from '@/components/ui/ConfirmDialog';
 import { ReauthDialogRoot } from '@/components/ui/ReauthDialog';
 import { ToastRoot } from '@/components/ui/Toast';
-import GuardedLink from '@/components/GuardedLink';
+import GuardedLink, { useGuardedNav } from '@/components/GuardedLink';
+import Menu, { type MenuEntry } from '@/components/ui/Menu';
+import EmptyState from '@/components/ui/EmptyState';
 import UploadManagerWidget from '@/components/UploadManagerWidget';
 import DownloadManagerWidget, { downloadStore } from '@/components/DownloadManagerWidget';
 import { DownloadTrackerContext } from '@dylaris/ui-filebrowser';
@@ -30,6 +32,7 @@ import LegalFooter from '@/components/LegalFooter';
 import { UnsavedChangesProvider } from '@/components/settings/UnsavedChanges';
 import { UploadManagerProvider, UploadManagerBridge } from '@/lib/uploadManager';
 import { ModInstallProvider } from '@/lib/modInstallManager';
+import Link from 'next/link';
 import { ChevronDown, UserCog, LogOut, Wrench, Key, KeyRound, Package, Store, ShieldCheck, CloudOff, HardDrive, MoreVertical, Clock } from 'lucide-react';
 import { loadTimePrefs } from '@/lib/time';
 import { Skeleton, SkeletonCircle, SkeletonText } from '@/components/Skeleton';
@@ -38,25 +41,19 @@ import { followSignOuts, markSessionSeen } from '@/lib/api/session';
 import { getProfile } from '@/lib/api/auth';
 import { isWails } from '@/lib/adapters/wailsBeamAdapter';
 import PlayerHead from '@/components/PlayerHead';
+import { Popover, PopoverContent, PopoverTrigger } from '@ui-sdk/react/popover';
 
 
 function AuthedShell({ children }: { children: React.ReactNode }) {
     const { user, ready, apiUnreachable, retryBoot, featureFlags, byonEnabled, routeOnlyEnabled, servers, refreshUser } = useAppData();
     const router = useRouter();
     const pathname = usePathname();
+    // The unsaved-changes dialog for the profile menu's links. A menu item
+    // cannot host a GuardedLink (the menu unmounts on select, taking the dialog
+    // with it), so the guard lives here and the items call into it.
+    const nav = useGuardedNav();
 
-    const [isProfileDropdownOpen, setIsProfileDropdownOpen] = useState(false);
     const [showProfilePopup, setShowProfilePopup] = useState(false);
-
-    // Click outside closes the dropdown
-    useEffect(() => {
-        const handleClickOutside = (e: MouseEvent) => {
-            const target = e.target as HTMLElement;
-            if (!target.closest('.profile-dropdown-container')) setIsProfileDropdownOpen(false);
-        };
-        document.addEventListener('click', handleClickOutside);
-        return () => document.removeEventListener('click', handleClickOutside);
-    }, []);
 
     // The popup shows the answer itself, field by field, and stays open: Core's
     // message says what happens next (a new address waits for its confirmation),
@@ -74,15 +71,13 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
     if (apiUnreachable) {
         return (
             <div className="flex h-screen items-center justify-center bg-(--base-00) px-6">
-                <div className="max-w-md text-center">
-                    <CloudOff size={32} className="mx-auto mb-4 text-(--base-06)" aria-hidden="true" />
-                    <h1 className="text-lg font-medium text-(--base-09) mb-2">Can&apos;t reach the API</h1>
-                    <p className="text-sm text-(--base-07) mb-6">
-                        Your session is still valid. The panel could not reach the Dylaris
-                        API, which usually means it is restarting or the network dropped.
-                    </p>
-                    <button onClick={retryBoot} className="btn btn-primary">Try again</button>
-                </div>
+                <EmptyState
+                    icon={<CloudOff size={20} />}
+                    title="Can't reach the API"
+                    description="Your session is still valid. The panel could not reach the Dylaris API, which usually means it is restarting or the network dropped."
+                    action={<button onClick={retryBoot} className="btn btn-primary">Try again</button>}
+                    className="max-w-md"
+                />
             </div>
         );
     }
@@ -91,8 +86,6 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
         return <AppShellSkeleton />;
     }
 
-    const settingsActive = pathname.startsWith('/settings');
-    const accessActive = pathname.startsWith('/access');
     // Owner-gating signal: there is no admin-level "owner" flag on the user
     // itself, so we derive it from server ownership (each owned server
     // carries role: 'owner') in addition to platform admins.
@@ -117,6 +110,45 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
     // and then showed a route-only tab its gate had closed.
     const canSeeMyInfra = byonEnabled || routeOnlyEnabled;
 
+    const avatar = (size: string) => (
+        <span className={`${size} rounded-full bg-(--accent-dim) flex items-center justify-center text-(--accent-light) font-semibold text-xs overflow-hidden shrink-0`}>
+            {user.minecraftUsername ? (
+                <PlayerHead name={user.minecraftUsername} fallback={user.username.charAt(0).toUpperCase()} className="w-full h-full object-cover" />
+            ) : (
+                user.username.charAt(0).toUpperCase()
+            )}
+        </span>
+    );
+
+    // Entries beside the bell: where each goes, and whether this user sees it.
+    const sections = [
+        // The label is hidden below xl, so the name comes from aria-label.
+        { show: canSeeMyInfra, href: '/nodes', label: 'My infrastructure', icon: <HardDrive size={16} />, active: pathname?.startsWith('/nodes') },
+        { show: canAccess, href: '/access', label: 'Access', icon: <ShieldCheck size={16} />, active: pathname.startsWith('/access') },
+        { show: user.isAdmin, href: '/settings', label: 'Settings', icon: <Wrench size={16} />, active: pathname.startsWith('/settings') },
+    ];
+
+    const accountLink = (href: string, label: string, icon: React.ReactNode): MenuEntry => ({
+        label,
+        icon,
+        render: <Link href={href} onClick={e => nav.intercept(e, href)} />,
+    });
+    const profileItems: MenuEntry[] = [
+        { label: 'Edit Profile', icon: <UserCog size={16} />, onSelect: () => setShowProfilePopup(true) },
+        accountLink("/account/time", 'Time & date', <Clock size={16} />),
+        accountLink("/account/api-keys", 'API Keys', <Key size={16} />),
+        accountLink("/account/ssh-keys", 'SSH keys', <KeyRound size={16} />),
+        accountLink("/account/modrinth", 'Modrinth', <Package size={16} />),
+        // Unconditional, like API Keys beside it: with own storage off the page
+        // still lists existing targets for removal and says why nothing new can
+        // be added.
+        accountLink("/account/storage", 'Storage', <HardDrive size={16} />),
+        // Connect-store entry only on the hosted build.
+        ...(featureFlags.store ? [accountLink("/account/store", 'Dylaris Store', <Store size={16} />)] : []),
+        { type: 'separator' },
+        { label: 'Logout', icon: <LogOut size={16} />, danger: true, onSelect: () => { logout(); router.push('/login'); } },
+    ];
+
     return (
         <SidebarCollapseProvider>
         <ModrinthLibraryProvider>
@@ -140,6 +172,7 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
                 dismiss timeouts from 2800ms to 4500ms, so the same action
                 reported differently depending on which screen ran it. */}
             <ToastRoot />
+            {nav.dialog}
             {/* Global maintenance banner. Renders nothing when off. */}
             <MaintenanceBanner />
             {/* Non-dismissible billing banner for past_due/suspended tenants. */}
@@ -165,141 +198,43 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
                     <NotificationsDropdown />
                     {/* NotificationsDropdown self-gates: admins see both system checks and inbox;
                         regular users see only their inbox. */}
-                    {canSeeMyInfra && (
+                    {sections.filter(x => x.show).map(x => (
                         <GuardedLink
-                            href="/nodes"
-                            // The label is hidden below xl, so the name has to come from here.
-                            aria-label="My infrastructure"
-                            title="My infrastructure"
-                            className={`flex items-center space-x-2 px-3 py-1.5 rounded-md transition-colors font-medium border mr-2 ${
-                                pathname?.startsWith('/nodes')
-                                    ? 'bg-(--accent-ghost) text-(--accent-light) border-(--accent-border)'
-                                    : 'text-(--base-07) hover:bg-(--base-04)/50 hover:text-(--base-09) border-transparent'
-                            }`}
+                            key={x.href}
+                            href={x.href}
+                            aria-label={x.label}
+                            title={x.label}
+                            aria-current={x.active ? 'page' : undefined}
+                            className="app-icon-btn"
                         >
-                            <HardDrive size={20} />
-                            <span className="text-sm hidden xl:block">My infrastructure</span>
+                            {x.icon}
+                            <span className="app-label hidden xl:block">{x.label}</span>
                         </GuardedLink>
-                    )}
-
-                    {canAccess && (
-                        <GuardedLink
-                            href="/access"
-                            aria-label="Access"
-                            title="Access"
-                            className={`flex items-center space-x-2 px-3 py-1.5 rounded-md transition-colors font-medium border mr-2 ${
-                                accessActive
-                                    ? 'bg-(--accent-ghost) text-(--accent-light) border-(--accent-border)'
-                                    : 'text-(--base-07) hover:bg-(--base-04)/50 hover:text-(--base-09) border-transparent'
-                            }`}
-                        >
-                            <ShieldCheck size={20} />
-                            <span className="text-sm hidden xl:block">Access</span>
-                        </GuardedLink>
-                    )}
-
-                    {user.isAdmin && (
-                        <GuardedLink
-                            href="/settings"
-                            aria-label="Settings"
-                            title="Settings"
-                            className={`flex items-center space-x-2 px-3 py-1.5 rounded-md transition-colors font-medium border mr-2 ${
-                                settingsActive
-                                    ? 'bg-(--accent-ghost) text-(--accent-light) border-(--accent-border)'
-                                    : 'text-(--base-07) hover:bg-(--base-04)/50 hover:text-(--base-09) border-transparent'
-                            }`}
-                        >
-                            <Wrench size={20} />
-                            <span className="text-sm hidden xl:block">Settings</span>
-                        </GuardedLink>
-                    )}
+                    ))}
 
                     {/* User Profile Dropdown */}
-                    <div className="relative profile-dropdown-container border-l border-(--base-03) pl-3">
-                        <button
-                            onClick={() => setIsProfileDropdownOpen(!isProfileDropdownOpen)}
-                            className={`flex items-center gap-2.5 pl-1.5 pr-2.5 py-1.5 rounded-md transition-colors border border-transparent ${isProfileDropdownOpen ? 'bg-(--base-03)' : 'hover:bg-(--base-03)'}`}
-                        >
-                            <div className="w-8 h-8 rounded-full bg-(--accent-dim) flex items-center justify-center text-(--accent-light) font-semibold text-sm overflow-hidden border border-(--base-04) shrink-0">
-                                {user.minecraftUsername ? (
-                                    <PlayerHead name={user.minecraftUsername} fallback={user.username.charAt(0).toUpperCase()} className="w-full h-full object-cover" />
-                                ) : (
-                                    user.username.charAt(0).toUpperCase()
-                                )}
-                            </div>
-                            <span className="font-medium hidden xl:block text-sm max-w-[120px] truncate text-(--base-09)">{user.username}</span>
-                            <ChevronDown size={18} className="text-(--base-06) transition-transform duration-200 shrink-0" style={{ transform: isProfileDropdownOpen ? 'rotate(180deg)' : 'rotate(0deg)' }} />
-                        </button>
-
-                        {isProfileDropdownOpen && (
-                            <div className="dropdown-menu right-0 mt-3 w-60 animate-fade-in origin-top-right">
-                                <div className="flex items-center gap-3 px-3 py-3 border-b border-(--base-03) mb-1.5">
-                                    <div className="w-9 h-9 rounded-full bg-(--accent-dim) flex items-center justify-center text-(--accent-light) font-semibold text-sm overflow-hidden border border-(--base-04) shrink-0">
-                                        {user.minecraftUsername ? (
-                                            <PlayerHead name={user.minecraftUsername} fallback={user.username.charAt(0).toUpperCase()} className="w-full h-full object-cover" />
-                                        ) : (
-                                            user.username.charAt(0).toUpperCase()
-                                        )}
-                                    </div>
-                                    <div className="min-w-0">
-                                        <div className="dropdown-label">Signed in as</div>
-                                        <div className="font-medium truncate text-(--base-09) leading-tight">{user.username}</div>
-                                        {user.isAdmin && (
-                                            <div className="mt-1"><span className="badge badge-accent">Admin</span></div>
-                                        )}
-                                    </div>
+                    <Menu
+                        align="end"
+                        className="w-60"
+                        heading={
+                            <div className="flex items-center gap-3 px-2.5 pb-2.5 pt-2">
+                                {avatar('size-9')}
+                                <div className="min-w-0">
+                                    <div className="srv-label">Signed in as</div>
+                                    <div className="truncate text-sm font-medium leading-tight text-(--base-09)">{user.username}</div>
+                                    {user.isAdmin && <span className="srv-chip mt-1 h-5 px-2 text-[11px]">Admin</span>}
                                 </div>
-                                <button onClick={() => { setIsProfileDropdownOpen(false); setShowProfilePopup(true); }} className="dropdown-item">
-                                    <UserCog size={20} className="mr-3" /> Edit Profile
-                                </button>
-                                <GuardedLink
-                                    href="/account/time"
-                                    className="dropdown-item"
-                                >
-                                    <Clock size={20} className="mr-3" /> Time &amp; date
-                                </GuardedLink>
-                                <GuardedLink
-                                    href="/account/api-keys"
-                                    className="dropdown-item"
-                                >
-                                    <Key size={20} className="mr-3" /> API Keys
-                                </GuardedLink>
-                                <GuardedLink
-                                    href="/account/ssh-keys"
-                                    className="dropdown-item"
-                                >
-                                    <KeyRound size={20} className="mr-3" /> SSH keys
-                                </GuardedLink>
-                                <GuardedLink
-                                    href="/account/modrinth"
-                                    className="dropdown-item"
-                                >
-                                    <Package size={20} className="mr-3" /> Modrinth
-                                </GuardedLink>
-                                {/* Unconditional, like API Keys beside it: with own
-                                    storage off the page still lists existing targets
-                                    for removal and says why nothing new can be added. */}
-                                <GuardedLink
-                                    href="/account/storage"
-                                    className="dropdown-item"
-                                >
-                                    <HardDrive size={20} className="mr-3" /> Storage
-                                </GuardedLink>
-                                {/* Connect-store entry only on the hosted build. */}
-                                {featureFlags.store && (
-                                    <GuardedLink
-                                        href="/account/store"
-                                        className="dropdown-item"
-                                    >
-                                        <Store size={20} className="mr-3" /> Dylaris Store
-                                    </GuardedLink>
-                                )}
-                                <button onClick={() => { setIsProfileDropdownOpen(false); logout(); router.push('/login'); }} className="dropdown-item text-(--error-light) hover:bg-(--error-ghost) mt-1">
-                                    <LogOut size={20} className="mr-3" /> Logout
-                                </button>
                             </div>
-                        )}
-                    </div>
+                        }
+                        trigger={
+                            <button type="button" aria-label="Account menu" className="app-icon-btn ml-1 gap-2 pl-1 pr-2">
+                                {avatar('size-7')}
+                                <span className="app-label hidden xl:block max-w-[120px] truncate text-(--base-09)">{user.username}</span>
+                                <ChevronDown size={14} className="text-(--base-06)" aria-hidden="true" />
+                            </button>
+                        }
+                        items={profileItems}
+                    />
                     </UtilityCluster>
                 </Navbar>
             </div>
@@ -308,7 +243,7 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
             <div className="flex flex-1 overflow-hidden relative">
                 {children}
             </div>
-            <LegalFooter className="shrink-0 border-t border-(--base-03) bg-(--base-01)" />
+            <LegalFooter className="shrink-0 bg-(--base-01)" />
 
             {showProfilePopup && (
                 <ProfilePopup
@@ -340,36 +275,23 @@ function UtilityCluster({ children }: { children: React.ReactNode }) {
     const { layout } = useLayout();
     const [open, setOpen] = useState(false);
 
-    useEffect(() => {
-        if (!open) return;
-        const close = (e: MouseEvent) => {
-            if (!(e.target as HTMLElement).closest('.utility-cluster')) setOpen(false);
-        };
-        document.addEventListener('mousedown', close);
-        return () => document.removeEventListener('mousedown', close);
-    }, [open]);
-
-    if (layout !== 'compact') return <>{children}</>;
+    if (layout !== 'compact') return <div className="flex items-center gap-1">{children}</div>;
 
     return (
-        <div className="relative utility-cluster">
-            <button
-                type="button"
-                onClick={() => setOpen(o => !o)}
-                aria-haspopup="menu"
-                aria-expanded={open}
+        <Popover open={open} onOpenChange={setOpen}>
+            <PopoverTrigger
+                render={<button type="button" />}
                 aria-label="Account and notifications"
                 title="Account and notifications"
-                className="p-1.5 rounded-md text-(--base-07) hover:bg-(--base-04)/50 hover:text-(--base-09) transition-colors"
+                className="app-icon-btn"
             >
-                <MoreVertical size={20} />
-            </button>
-            {open && (
-                <div className="absolute right-0 top-full mt-2 z-40 rounded-md border border-(--base-03) bg-(--base-01) shadow-lg p-3 flex flex-col items-stretch gap-2 min-w-56">
-                    {children}
-                </div>
-            )}
-        </div>
+                <MoreVertical size={16} />
+            </PopoverTrigger>
+            <PopoverContent side="bottom" align="end" sideOffset={8} aria-label="Account and notifications"
+                className="ui-popup app-cluster-popup z-40 p-2 flex flex-col items-stretch gap-1 min-w-56">
+                {children}
+            </PopoverContent>
+        </Popover>
     );
 }
 
@@ -383,36 +305,24 @@ function UtilityCluster({ children }: { children: React.ReactNode }) {
 // screen at rail width that is supposed to say which product this is. The icon
 // already exists - it is the favicon - so the narrow state now shows the same
 // mark the browser tab does.
-// Its divider has to land exactly on the sidebar's own edge, in BOTH states.
-//
-// Two things stopped it. The block took its width from a hard-coded class per
-// branch instead of the one the context publishes for exactly this - which is
-// how the two could disagree at all. And it sat INSIDE the navbar's px-6, so its
-// border fell 24px to the right of the sidebar edge underneath it, while the
-// sidebar starts at 0. The negative left margin cancels that padding; the
-// negative vertical margins plus self-stretch take the divider the full height
-// of the bar, which items-center otherwise crops to the height of the logo.
+// The block takes its width from the context the sidebar publishes, so the two
+// can never disagree; the negative left margin cancels the navbar's own
+// padding so the block starts at the window edge like the sidebar does.
 function SidebarBrand() {
     const { collapsed, width } = useSidebarCollapse();
     return (
-        <div
-            className={`${width} shrink-0 self-stretch -my-2.5 -ml-6 mr-6 flex items-center justify-center border-r border-(--base-03)`}
-        >
+        <div className={`${width} shrink-0 self-stretch -ml-6 mr-2 flex items-center justify-center`}>
             {collapsed ? (
-                <div className="p-1 rounded-md bg-(--accent-dim) border border-(--accent-border) inline-flex items-center">
-                    {/* A plain img rather than next/image: the panel is a static
-                        export, so there is no optimizer behind it, and the
-                        import already yields the hashed same-origin URL the CSP
-                        allows. */}
-                    <img src={brandMark.src} alt="Dylaris" width={22} height={22} className="block select-none" draggable={false} />
-                </div>
+                /* A plain img rather than next/image: the panel is a static
+                   export, so there is no optimizer behind it, and the
+                   import already yields the hashed same-origin URL the CSP
+                   allows. */
+                <img src={brandMark.src} alt="Dylaris" width={24} height={24} className="block select-none" draggable={false} />
             ) : (
-                <div className="px-3.5 py-1 rounded-md bg-(--accent-dim) border border-(--accent-border) inline-flex items-center">
-                    <h1 className="text-2xl font-logo tracking-widest select-none">
-                        <span className="text-(--accent-light)">D</span>
-                        <span className="text-(--base-09)">ylaris</span>
-                    </h1>
-                </div>
+                <h1 className="text-2xl font-logo tracking-widest select-none">
+                    <span className="text-(--accent-light)">D</span>
+                    <span className="text-(--base-09)">ylaris</span>
+                </h1>
             )}
         </div>
     );
@@ -532,7 +442,7 @@ function AppShellSkeleton() {
     return (
         <div className="flex flex-col h-screen bg-(--base-00) text-(--base-09) font-body overflow-hidden">
             {/* Navbar placeholder */}
-            <div className="shrink-0 h-14 border-b border-(--base-03) px-4 flex items-center justify-between">
+            <div className="shrink-0 h-14 bg-(--base-01) px-4 flex items-center justify-between">
                 <div className="flex items-center gap-3">
                     <SkeletonCircle size="h-8 w-8" />
                     <SkeletonText width="w-28" className="h-4" />
@@ -541,7 +451,7 @@ function AppShellSkeleton() {
                     <Skeleton className="h-7 w-20 rounded-md" />
                     <SkeletonCircle size="h-8 w-8" />
                     <SkeletonCircle size="h-8 w-8" />
-                    <div className="flex items-center gap-2 pl-3 border-l border-(--base-03)">
+                    <div className="flex items-center gap-2 pl-3">
                         <SkeletonCircle size="h-8 w-8" />
                         <SkeletonText width="w-20" className="h-3 hidden md:block" />
                     </div>
@@ -549,20 +459,20 @@ function AppShellSkeleton() {
             </div>
             {/* Body: sidebar + main area */}
             <div className="flex flex-1 overflow-hidden">
-                <aside className="w-60 shrink-0 border-r border-(--base-03) p-4 space-y-2">
+                <aside className="w-60 shrink-0 bg-(--base-01) p-4 space-y-2">
                     {Array.from({ length: 6 }).map((_, i) => (
                         <Skeleton key={i} className="h-9 w-full rounded-md" />
                     ))}
                 </aside>
-                <main className="flex-1 p-6 space-y-4">
+                <main className="flex-1 app-page space-y-4">
                     <SkeletonText width="w-48" className="h-5" />
                     <SkeletonText width="w-72" className="h-3" />
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-3 pt-2">
                         {Array.from({ length: 4 }).map((_, i) => (
-                            <Skeleton key={i} className="h-20 w-full rounded-(--radius-md)" />
+                            <Skeleton key={i} className="h-20 w-full rounded-(--radius-lg)" />
                         ))}
                     </div>
-                    <Skeleton className="h-64 w-full rounded-(--radius-md) mt-4" />
+                    <Skeleton className="h-64 w-full rounded-(--radius-lg) mt-4" />
                 </main>
             </div>
         </div>

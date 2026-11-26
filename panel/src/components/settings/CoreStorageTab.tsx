@@ -5,7 +5,6 @@ import { getCoreStorage, saveCoreStorage, testCoreStorage } from '@/lib/api/core
 import { canSaveCoreStorage, type CoreStorageConfig } from '@/lib/coreStorage';
 import { listStorageConnections, type StorageConnection } from '@/lib/api';
 import { CircleCheck, CircleAlert, HardDrive, Cloud, AlertTriangle, Loader2, Info } from 'lucide-react';
-import { SkeletonHeader, SkeletonCard, SkeletonFormRow } from '@/components/Skeleton';
 import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
 import { Badge } from '@/components/ui/Badge';
 import { systemEvents } from '@/lib/systemEvents';
@@ -17,6 +16,10 @@ import { toast } from '@/components/ui/Toast';
 import HelpTip from '@/components/ui/HelpTip';
 import { useConnectionTest, readConnTest } from '@/lib/connectionTest';
 import { TestConnectionButton, ConnectionTestNote } from '@/components/ui/ConnectionTest';
+import Select from '@/components/ui/Select';
+import Checkbox from '@/components/ui/Checkbox';
+import Callout from '@/components/server/Callout';
+import '@/styles/settings-storage.css';
 
 const BACKENDS = [
   { id: 'path', label: 'Filesystem Path', description: 'A local disk or an OS-level mount (NFS/SMB/WebDAV). Must be reachable by every Core.', icon: HardDrive },
@@ -186,13 +189,7 @@ export default function CoreStorageTab() {
   const set = <K extends keyof CoreStorageConfig>(key: K, value: CoreStorageConfig[K]) =>
     setSettings(prev => ({ ...prev, [key]: value }));
 
-  if (loading) return (
-    <div className="max-w-2xl space-y-6">
-      <SkeletonHeader />
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3"><SkeletonCard height="h-24" /><SkeletonCard height="h-24" /></div>
-      <SkeletonFormRow />
-    </div>
-  );
+  if (loading) return <SettingsPage title="Core file storage" icon={HardDrive} width="2xl" loading skeletonCards={2}>{null}</SettingsPage>;
 
   // The card owns the save control, but not this save: the fleet reachability
   // round below has a generation guard and a Retry that has to fire while the
@@ -248,24 +245,20 @@ export default function CoreStorageTab() {
                 key={b.id}
                 type="button"
                 onClick={() => set('backend', b.id)}
-                className={`card p-4 text-left transition-all relative focus:outline-none focus-visible:ring-2 focus-visible:ring-(--accent) ${
-                  active
-                    ? 'border-(--accent) ring-1 ring-(--accent)/40 bg-(--accent-ghost)'
-                    : 'border-(--base-03) hover:border-(--base-05)'
-                }`}
+                aria-pressed={active}
+                data-selected={active ? '' : undefined}
+                className="set-sto-option"
               >
-                <div className="flex items-start gap-3">
-                  <div className={`w-9 h-9 rounded-md flex items-center justify-center shrink-0 ${active ? 'bg-(--accent)/20 text-(--accent-light)' : 'bg-(--base-03) text-(--base-06)'}`}>
-                    <Icon size={18} />
-                  </div>
-                  <div className="min-w-0">
-                    <div className={`font-medium text-sm flex items-center gap-1.5 ${active ? 'text-(--accent-light)' : 'text-(--base-09)'}`}>
-                      {b.label}
-                      {active && <CircleCheck size={13} className="text-(--accent-light)" />}
-                    </div>
-                    <div className="text-xs text-(--base-06) mt-1">{b.description}</div>
-                  </div>
-                </div>
+                <span className={`flex size-9 shrink-0 items-center justify-center rounded-lg ${active ? 'bg-(--accent-ghost) text-(--accent-light)' : 'bg-(--base-04) text-(--base-06)'}`}>
+                  <Icon size={18} />
+                </span>
+                <span className="min-w-0">
+                  <span className={`flex items-center gap-1.5 text-sm font-medium ${active ? 'text-(--accent-light)' : 'text-(--base-09)'}`}>
+                    {b.label}
+                    {active && <CircleCheck size={13} className="text-(--accent-light)" />}
+                  </span>
+                  <span className="mt-1 block text-xs text-(--base-06)">{b.description}</span>
+                </span>
               </button>
             );
           })}
@@ -287,8 +280,7 @@ export default function CoreStorageTab() {
             />
           </div>
 
-          <div className="alert alert-warning text-xs">
-            <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+          <Callout tone="warning" icon={<AlertTriangle size={14} />} foldable title="Must be a mounted volume every Core can reach">
             <div className="min-w-0 space-y-2.5">
               <p>
                 Must be reachable by <strong>every</strong> Core, and must be a <strong>mounted volume</strong> - a plain
@@ -302,7 +294,7 @@ export default function CoreStorageTab() {
                 <p className="mb-1 text-(--base-07)">
                   Example <code className="font-mono text-[11px]">docker-stack.yml</code> volume mapping for this path:
                 </p>
-                <pre className="p-2.5 rounded-md bg-(--base-02) border border-(--base-04) font-mono text-[11px] leading-relaxed overflow-x-auto text-(--base-08)">{`services:
+                <pre className="p-2.5 rounded-md bg-(--base-02) font-mono text-[11px] leading-relaxed overflow-x-auto text-(--base-08)">{`services:
   core:
     volumes:
       - ${exampleStoragePath}:${exampleStoragePath}`}</pre>
@@ -312,19 +304,13 @@ export default function CoreStorageTab() {
                 </p>
               </div>
             </div>
-          </div>
+          </Callout>
 
-          <label className="flex items-start gap-2 cursor-pointer select-none group">
-            <input
-              type="checkbox"
-              checked={settings.pathConfirmed}
-              onChange={e => set('pathConfirmed', e.target.checked)}
-              className="checkbox mt-0.5"
-            />
-            <span className="text-xs text-(--base-08) group-hover:text-(--base-09)">
-              I confirm this path is shared across all Cores, or I run a single Core.
-            </span>
-          </label>
+          <Checkbox
+            checked={settings.pathConfirmed}
+            onChange={c => set('pathConfirmed', c)}
+            label="I confirm this path is shared across all Cores, or I run a single Core."
+          />
           {!settings.pathConfirmed && (
             <p className="text-xs text-(--error-light)">Required: Save is disabled until this is confirmed.</p>
           )}
@@ -336,15 +322,13 @@ export default function CoreStorageTab() {
         <div className="space-y-4">
           <div className="flex flex-col gap-[5px]">
             <label className="input-label" htmlFor="core-storage-connection">Storage connection</label>
-            <select
+            <Select
               id="core-storage-connection"
-              value={settings.connectionId ?? 0}
-              onChange={e => set('connectionId', Number(e.target.value))}
-              className="input-field w-full"
-            >
-              <option value={0}>&mdash; select a connection &mdash;</option>
-              {connections.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
+              ariaLabel="Storage connection"
+              value={String(settings.connectionId ?? 0)}
+              onChange={v => set('connectionId', Number(v))}
+              options={[{ value: '0', label: '— select a connection —' }, ...connections.map(c => ({ value: String(c.id), label: c.name }))]}
+            />
             <p className="text-xs text-(--base-06)">
               Buckets and credentials are defined once under Settings &rarr; Storage Connections and
               referenced here, so a rotation happens in one place instead of once per screen.
@@ -352,18 +336,16 @@ export default function CoreStorageTab() {
           </div>
 
           {usingConnection ? (
-            <div className="alert alert-info text-xs flex items-start gap-2">
-              <Info size={14} className="shrink-0 mt-0.5" />
-              <span>Credentials come from the selected connection. Manage or test it on the Storage Connections page.</span>
-            </div>
+            <Callout tone="info" icon={<Info size={14} />}>
+              Credentials come from the selected connection. Manage or test it on the Storage Connections page.
+            </Callout>
           ) : hasInlineS3 ? (
             /* An install configured before connections existed still has its own
                endpoint/bucket/key stored here. It keeps working untouched - the
                fields are just no longer editable from this screen, because two
                editable copies of one credential is exactly the state that made a
                rotation miss one of them. Recreate it as a connection to move it. */
-            <div className="alert alert-warning text-xs flex items-start gap-2">
-              <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+            <Callout tone="warning" icon={<AlertTriangle size={14} />}>
               <span>
                 This backend still carries its own inline credentials
                 (<span className="font-mono">{settings.s3Bucket || 'bucket'}</span>
@@ -371,16 +353,15 @@ export default function CoreStorageTab() {
                 It keeps working, but credentials are no longer edited here. Recreate it under
                 Settings &rarr; Storage Connections and select it above.
               </span>
-            </div>
+            </Callout>
           ) : (
-            <div className="alert alert-warning text-xs flex items-start gap-2">
-              <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+            <Callout tone="warning" icon={<AlertTriangle size={14} />}>
               <span>
                 {connections.length === 0
                   ? 'No storage connections exist yet. Create one under Settings → Storage Connections, then select it above.'
                   : 'Pick a connection above — S3 storage is not configured until you do.'}
               </span>
-            </div>
+            </Callout>
           )}
         </div>
       )}
@@ -389,23 +370,21 @@ export default function CoreStorageTab() {
           are persisted only once every online Core proves it can read and
           write the same shared storage. */}
       {reachActive && (
-        <div className="alert alert-info text-xs flex flex-col gap-2" role="status" aria-live="polite">
-          <div className="flex items-center gap-2">
-            <Loader2 size={14} className="animate-spin" />
-            <span className="font-mono text-[11px] tracking-[0.04em] text-(--base-09)">
-              {reach.confirmed}/{reach.total} cores can read and write this storage
-            </span>
-          </div>
+        <Callout tone="info" icon={<Loader2 size={14} className="animate-spin" />} role="status">
+          <span className="srv-num text-(--base-09)">
+            {reach.confirmed}/{reach.total} cores can read and write this storage
+          </span>
           {reach.phase === 'slow' && (
-            <span className="text-(--base-06)">
+            <span className="mt-1 block text-(--base-06)">
               Taking longer than usual (first setup or cross-region mounts can be slower).
             </span>
           )}
-        </div>
+        </Callout>
       )}
 
       {reach.phase === 'failed' && (
-        <div className="alert alert-error text-xs flex flex-col gap-3" role="alert">
+        <Callout tone="error" icon={<CircleAlert size={14} />} role="alert">
+          <div className="flex flex-col gap-3">
           <span className="text-(--base-09)">{reach.message}</span>
           {reach.results.length > 0 && (
             <ul className="flex flex-col gap-1.5">
@@ -439,16 +418,14 @@ export default function CoreStorageTab() {
           >
             Retry
           </button>
-        </div>
+          </div>
+        </Callout>
       )}
 
       <ConnectionTestNote result={test.result} />
 
       {testWarning && (
-        <div className="alert alert-warning text-xs flex items-start gap-2">
-          <CircleAlert size={14} className="shrink-0 mt-0.5" />
-          <span>{testWarning}</span>
-        </div>
+        <Callout tone="warning" icon={<CircleAlert size={14} />} role="alert">{testWarning}</Callout>
       )}
     </SettingsCard>
 

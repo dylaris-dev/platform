@@ -1,5 +1,6 @@
 "use client";
 
+import '@/styles/server-setup.css';
 import React, { useEffect, useState } from 'react';
 import { Package, Boxes, RefreshCw, AlertTriangle, Check } from 'lucide-react';
 import { listPacksOverview, listBuilds, type Pack, type PackBuild } from '@/lib/api/packs';
@@ -89,11 +90,11 @@ export default function PackPicker({ selection, onSelect }: PackPickerProps) {
     return (
         <div className="min-h-[220px] space-y-3">
             {selection ? (
-                <div className="card p-3 border-(--accent) bg-(--accent-ghost)/30 flex items-start gap-3">
+                <div className="srv-setup-selected">
                     <Check size={16} className="text-(--accent-light) shrink-0 mt-0.5" />
                     <div className="min-w-0 flex-1">
                         <div className="text-sm font-medium text-(--base-09)">{selection.packName}</div>
-                        <div className="text-xs text-(--base-06) font-mono mt-0.5">
+                        <div className="srv-num text-xs text-(--base-06) mt-0.5">
                             {selection.loader && <>{selection.loader} · </>}
                             {selection.mcVersion && <>MC {selection.mcVersion} · </>}
                             {selection.versionString}
@@ -115,7 +116,7 @@ export default function PackPicker({ selection, onSelect }: PackPickerProps) {
                     {loadingPacks ? (
                         <div className="space-y-1.5 max-h-[280px] overflow-y-auto">
                             {Array.from({ length: 3 }).map((_, i) => (
-                                <div key={i} className="card p-2 flex items-center gap-3">
+                                <div key={i} className="srv-setup-option">
                                     <Skeleton className="w-8 h-8 rounded-md shrink-0" />
                                     <div className="min-w-0 flex-1 space-y-1.5">
                                         <SkeletonText width="w-1/3" className="h-3" />
@@ -140,16 +141,16 @@ export default function PackPicker({ selection, onSelect }: PackPickerProps) {
                                     <button
                                         type="button"
                                         onClick={() => handleExpand(pack)}
-                                        className="w-full card p-2 flex items-center gap-3 text-left hover:border-(--accent-border)"
+                                        className="srv-setup-option"
                                     >
-                                        <div className="w-8 h-8 rounded-md bg-(--base-03) flex items-center justify-center shrink-0">
+                                        <div className="w-8 h-8 rounded-md bg-(--base-04) flex items-center justify-center shrink-0">
                                             <Package size={12} className="text-(--base-05)" />
                                         </div>
                                         <div className="min-w-0 flex-1">
                                             <div className="text-sm font-medium text-(--base-09) truncate">
                                                 {pack.internalName}
                                             </div>
-                                            <div className="text-[10px] font-mono text-(--base-06) truncate">
+                                            <div className="srv-num text-xs text-(--base-06) truncate">
                                                 /{pack.internalSlug}
                                             </div>
                                         </div>
@@ -174,12 +175,12 @@ export default function PackPicker({ selection, onSelect }: PackPickerProps) {
                                                         key={build.id}
                                                         type="button"
                                                         onClick={() => handlePickBuild(pack, build)}
-                                                        className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md border border-(--base-04) hover:border-(--accent-border) hover:bg-(--accent-ghost)/30 text-left"
+                                                        className="srv-setup-option py-1.5"
                                                     >
                                                         <Boxes size={11} className="text-(--accent-light) shrink-0" />
                                                         <div className="min-w-0 flex-1">
                                                             <div className="text-xs text-(--base-09)">{build.versionString}</div>
-                                                            <div className="text-[10px] font-mono text-(--base-06) truncate">
+                                                            <div className="srv-num text-xs text-(--base-06) truncate">
                                                                 {build.loader} · MC {build.minecraft} ·{' '}
                                                                 {build.modrinthPublished ? 'published' : 'draft'}
                                                             </div>

@@ -188,10 +188,9 @@ export default function Sidebar({ onNewServer }: SidebarProps) {
       <GuardedLink
         key={server.id}
         href={`/servers/${server.id}`}
-        className={`w-full flex items-center justify-between gap-2.5 ${isChild ? 'py-[7px] px-2.5' : 'py-[9px] px-3'} rounded-md transition-all group ${
-          isActive
-            ? 'bg-(--base-04) border border-(--accent-border)'
-            : 'bg-(--base-03) border border-(--base-03) hover:bg-(--base-04) hover:border-(--base-04)'
+        aria-current={isActive ? 'page' : undefined}
+        className={`w-full flex items-center justify-between gap-2.5 ${isChild ? 'py-[7px] px-2.5' : 'py-2 px-3'} rounded-md transition-colors group focus-visible:outline-none focus-visible:[box-shadow:var(--focus-ring)] ${
+          isActive ? 'bg-(--base-03)' : 'hover:bg-(--base-02)'
         }`}
       >
         <div className="min-w-0 flex-1">
@@ -203,7 +202,7 @@ export default function Sidebar({ onNewServer }: SidebarProps) {
               {server.activeSubServer}
             </div>
           )}
-          <div className="mono-label mt-0.5 flex items-center gap-1">
+          <div className="srv-label mt-0.5 flex items-center gap-1">
             <span>{roleLabel}</span>
           </div>
         </div>
@@ -234,13 +233,12 @@ export default function Sidebar({ onNewServer }: SidebarProps) {
       <div key={`proxy-${group.proxy.id}`} className="mb-1.5">
         <GuardedLink
           href={`/servers/${group.proxy.id}`}
-          className={`w-full flex items-center gap-2 py-[9px] px-3 rounded-md transition-all cursor-pointer group border-l-2 ${
-            isProxyActive
-              ? 'bg-(--base-04) border-l-(--accent) border border-(--accent-border)'
-              : 'bg-(--base-02) border-l-(--accent)/40 border border-(--base-03) hover:bg-(--base-03) hover:border-(--base-04)'
+          aria-current={isProxyActive ? 'page' : undefined}
+          className={`w-full flex items-center gap-2 py-2 px-3 rounded-md transition-colors cursor-pointer group focus-visible:outline-none focus-visible:[box-shadow:var(--focus-ring)] ${
+            isProxyActive ? 'bg-(--base-03)' : 'hover:bg-(--base-02)'
           }`}
         >
-          <Network size={15} className="text-(--accent-light) shrink-0" />
+          <Network size={14} className="text-(--base-06) shrink-0" />
           <div className="min-w-0 flex-1">
             <div className={`font-medium truncate text-sm transition-colors ${isProxyActive ? 'text-(--base-09)' : 'text-(--base-07) group-hover:text-(--base-09)'}`}>
               {group.proxy.name}
@@ -250,7 +248,7 @@ export default function Sidebar({ onNewServer }: SidebarProps) {
                 {group.proxy.activeSubServer}
               </div>
             )}
-            <div className="mono-label mt-0.5 flex items-center gap-1">
+            <div className="srv-label mt-0.5 flex items-center gap-1">
               <span>Proxy</span>
             </div>
           </div>
@@ -264,7 +262,9 @@ export default function Sidebar({ onNewServer }: SidebarProps) {
           <button
             type="button"
             onClick={(e) => toggleProxyCollapse(group.proxy.id, e)}
-            className="p-0.5 rounded-md hover:bg-(--base-04) transition-colors"
+            className="p-0.5 rounded-md hover:bg-(--base-03) transition-colors focus-visible:outline-none focus-visible:[box-shadow:var(--focus-ring)]"
+            aria-label={isCollapsed ? `Expand ${group.proxy.name}` : `Collapse ${group.proxy.name}`}
+            aria-expanded={!isCollapsed}
           >
             {isCollapsed
               ? <ChevronRight size={14} className="text-(--base-06)" />
@@ -274,7 +274,7 @@ export default function Sidebar({ onNewServer }: SidebarProps) {
         </GuardedLink>
 
         {!isCollapsed && group.children.length > 0 && (
-          <div className="ml-3 mt-1 pl-3 border-l border-(--base-04) space-y-1">
+          <div className="ml-3 mt-1 pl-3 border-l border-(--base-03) space-y-0.5">
             {group.children.map(child => renderServerItem(child, true))}
           </div>
         )}
@@ -296,11 +296,11 @@ export default function Sidebar({ onNewServer }: SidebarProps) {
       <>
         {proxyGroups.map(renderProxyGroup)}
         {hasProxies && standaloneServers.length > 0 && (
-          <div className="mono-label text-(--base-05) px-1 pt-2 pb-1">
+          <div className="srv-label px-1 pt-2 pb-1">
             Standalone
           </div>
         )}
-        <div className="space-y-1">
+        <div className="space-y-0.5">
           {standaloneServers.map(s => renderServerItem(s))}
         </div>
       </>
@@ -313,7 +313,7 @@ export default function Sidebar({ onNewServer }: SidebarProps) {
         type="button"
         onClick={() => setOpenSections(prev => ({ ...prev, [k]: !prev[k] }))}
         aria-expanded={isOpen(k)}
-        className="flex items-center gap-1 w-full input-label py-1.5 px-1 hover:text-(--base-08) transition-colors"
+        className="srv-label flex items-center gap-1 w-full py-1.5 px-1 hover:text-(--base-09) transition-colors focus-visible:outline-none focus-visible:[box-shadow:var(--focus-ring)] rounded-md"
       >
         <ChevronDown size={14} className="transition-transform" style={{ transform: isOpen(k) ? 'rotate(0deg)' : 'rotate(-90deg)' }} />
         {title}
@@ -341,7 +341,8 @@ export default function Sidebar({ onNewServer }: SidebarProps) {
       <div key={owner} className="mb-2">
         <button
           onClick={() => toggleUserCollapse(owner)}
-          className="flex items-center gap-1 w-full input-label py-1.5 px-1 hover:text-(--base-08) transition-colors"
+          className="srv-label flex items-center gap-1 w-full py-1.5 px-1 hover:text-(--base-09) transition-colors focus-visible:outline-none focus-visible:[box-shadow:var(--focus-ring)] rounded-md"
+          aria-expanded={!collapsedUsers.has(owner)}
         >
           <ChevronDown size={14} className="transition-transform" style={{ transform: collapsedUsers.has(owner) ? 'rotate(-90deg)' : 'rotate(0deg)' }} />
           {owner}
@@ -361,15 +362,15 @@ export default function Sidebar({ onNewServer }: SidebarProps) {
   // every width; a drawer would make it two, with a focus trap in between.
   if (collapsed) {
     return (
-      <aside className={`${width} bg-(--base-01) border-r border-(--base-03) flex flex-col h-full shrink-0 z-20`}>
-        <div className="shrink-0 flex items-center justify-center py-3 border-b border-(--base-03)">
+      <aside className={`${width} bg-(--base-01) flex flex-col h-full shrink-0 z-20`}>
+        <div className="shrink-0 flex items-center justify-center py-3">
           <button
             onClick={toggle}
             title="Expand the sidebar"
             aria-label="Expand the sidebar"
-            className="p-1.5 rounded-md text-(--base-06) hover:bg-(--base-03) hover:text-(--base-09) transition-colors"
+            className="app-icon-btn"
           >
-            <PanelLeftOpen size={18} />
+            <PanelLeftOpen size={16} />
           </button>
         </div>
         <div className="flex-1 overflow-y-auto hide-scrollbar py-2 flex flex-col items-center gap-1.5">
@@ -382,10 +383,9 @@ export default function Sidebar({ onNewServer }: SidebarProps) {
                 href={`/servers/${s.id}`}
                 title={s.name}
                 aria-label={s.name}
-                className={`relative w-9 h-9 rounded-md flex items-center justify-center transition-colors ${
-                  isActive
-                    ? 'bg-(--accent-ghost) text-(--accent-light) border border-(--accent-border)'
-                    : 'text-(--base-07) hover:bg-(--base-03) hover:text-(--base-09) border border-transparent'
+                aria-current={isActive ? 'page' : undefined}
+                className={`relative w-9 h-9 rounded-md flex items-center justify-center transition-colors focus-visible:outline-none focus-visible:[box-shadow:var(--focus-ring)] ${
+                  isActive ? 'bg-(--base-03) text-(--base-09)' : 'text-(--base-07) hover:bg-(--base-02) hover:text-(--base-09)'
                 }`}
               >
                 <span className="text-xs font-semibold uppercase">{s.name.slice(0, 2)}</span>
@@ -394,7 +394,7 @@ export default function Sidebar({ onNewServer }: SidebarProps) {
             );
           })}
         </div>
-        <div className="shrink-0 border-t border-(--base-03) py-2 flex justify-center">
+        <div className="shrink-0 py-2 flex justify-center">
           <CreateMenu onNewServer={onNewServer} compact />
         </div>
       </aside>
@@ -402,35 +402,37 @@ export default function Sidebar({ onNewServer }: SidebarProps) {
   }
 
   return (
-    <aside className={`${width} bg-(--base-01) border-r border-(--base-03) flex flex-col h-full shrink-0 z-20`}>
-      <div className="shrink-0 px-4 pt-4 pb-2 border-b border-(--base-03)">
+    <aside className={`${width} bg-(--base-01) flex flex-col h-full shrink-0 z-20`}>
+      <div className="shrink-0 px-4 pt-4 pb-2">
         <div className="flex items-center justify-between mb-2">
           {isAdmin ? (
             <button
               onClick={toggleAdminMode}
               aria-pressed={isAdminMode}
-              className={`btn text-xs px-2.5 py-1 ${isAdminMode ? 'btn-primary' : 'btn-secondary'}`}
+              className={`btn text-xs px-2.5 py-1 btn-secondary ${isAdminMode ? 'border-(--accent-border) text-(--accent-light)' : ''}`}
             >
               <ShieldCheck size={14} />
               Admin
             </button>
           ) : (
-            <span className="input-label">Servers</span>
+            <span className="srv-label">Servers</span>
           )}
           <div className="flex items-center gap-0.5">
             <button
               onClick={() => { setShowSearch(!showSearch); if (showSearch) setSearchQuery(''); }}
-              className={`p-1.5 rounded-md transition-colors ${showSearch ? 'bg-(--accent-ghost) text-(--accent-light)' : 'text-(--base-06) hover:bg-(--base-03) hover:text-(--base-09)'}`}
+              className="app-icon-btn"
+              aria-label={showSearch ? 'Close search' : 'Search servers'}
+              aria-pressed={showSearch}
             >
-              {showSearch ? <X size={18} /> : <Search size={18} />}
+              {showSearch ? <X size={16} /> : <Search size={16} />}
             </button>
             <button
               onClick={toggle}
               title="Collapse the sidebar"
               aria-label="Collapse the sidebar"
-              className="p-1.5 rounded-md text-(--base-06) hover:bg-(--base-03) hover:text-(--base-09) transition-colors"
+              className="app-icon-btn"
             >
-              <PanelLeftClose size={18} />
+              <PanelLeftClose size={16} />
             </button>
           </div>
         </div>
@@ -455,8 +457,8 @@ export default function Sidebar({ onNewServer }: SidebarProps) {
             access: everything in here is reachable only because they are an
             admin. */}
         {isAdminMode && (
-          <section aria-label="Admin access" className="mt-3 rounded-lg border border-(--accent-border) bg-(--accent-ghost) p-2">
-            <div className="flex items-center gap-1.5 input-label text-(--accent-light) px-1">
+          <section aria-label="Admin access" className="mt-3 rounded-lg bg-(--base-02) p-2">
+            <div className="srv-label flex items-center gap-1.5 px-1">
               <ShieldCheck size={13} />
               Admin access
             </div>
@@ -471,7 +473,7 @@ export default function Sidebar({ onNewServer }: SidebarProps) {
       {/* Was an unconditional "New Container" for every user, including ones
           with nowhere to deploy. CreateMenu decides what is offered and says why
           when something is not. */}
-      <div className="border-t border-(--base-03) p-2"><HelpTourButton topic="servers" compact={collapsed} /></div>
+      <div className="p-2"><HelpTourButton topic="servers" compact={collapsed} /></div>
       <CreateMenu onNewServer={onNewServer} />
     </aside>
   );

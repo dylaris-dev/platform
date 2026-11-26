@@ -8,10 +8,13 @@ import {
     MinusCircle,
     RefreshCw,
     Loader2,
+    Activity,
 } from 'lucide-react';
 import { getSystemHealth, type SystemHealth, type HealthStatus, type HealthComponent } from '@/lib/api';
 import { healthGuidance } from '@/lib/healthGuidance';
 import { fmtTime } from '@/lib/time';
+import SettingsPage from '@/components/settings/SettingsPage';
+import EmptyState from '@/components/ui/EmptyState';
 
 const POLL_INTERVAL_MS = 10_000;
 
@@ -41,7 +44,7 @@ function colorClasses(color: 'success' | 'warning' | 'error' | 'muted') {
         case 'error':
             return { text: 'text-(--error-light)', bg: 'bg-(--error-ghost)', border: 'border-(--error-border)' };
         default:
-            return { text: 'text-(--base-06)', bg: 'bg-transparent', border: 'border-(--base-04)' };
+            return { text: 'text-(--base-06)', bg: 'bg-(--base-03)', border: 'border-(--base-04)' };
     }
 }
 
@@ -50,7 +53,7 @@ function StatusPill({ status }: { status: HealthStatus }) {
     const c = colorClasses(meta.color);
     const Icon = meta.Icon;
     return (
-        <span className={`inline-flex items-center gap-1.5 rounded-(--radius-sm) border px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.08em] ${c.text} ${c.bg} ${c.border}`}>
+        <span className={`inline-flex h-5 items-center gap-1.5 rounded-full px-2 text-[11px] font-medium ${c.text} ${c.bg}`}>
             <Icon size={11} />
             {meta.label}
         </span>
@@ -63,12 +66,12 @@ function ComponentCard({ comp }: { comp: HealthComponent }) {
     const Icon = meta.Icon;
     const guidance = healthGuidance(comp.key, comp.cause);
     return (
-        <div className="rounded-(--radius-lg) border border-(--base-04) bg-(--base-01) p-4">
+        <div className="srv-surface p-5">
             <div className="flex items-start justify-between gap-3">
                 <div className="flex items-center gap-2.5 min-w-0">
                     <Icon size={18} className={`${c.text} shrink-0`} />
                     <div className="min-w-0">
-                        <div className="font-display text-sm font-semibold text-(--base-09) truncate">{comp.name}</div>
+                        <div className="truncate text-sm font-semibold text-(--base-09)">{comp.name}</div>
                         {comp.detail && (
                             <div className="font-mono text-xs text-(--base-06) mt-0.5">{comp.detail}</div>
                         )}
@@ -82,13 +85,13 @@ function ComponentCard({ comp }: { comp: HealthComponent }) {
                 guidance is the action, and an operator reading top to bottom
                 should hit the action first. */}
             {guidance && (
-                <div className="mt-3 rounded-(--radius-md) border border-(--base-04) bg-(--base-02) p-3">
+                <div className="srv-callout mt-3 !block" data-tone={guidance.selfHealing ? undefined : 'warning'}>
                     <div className="flex items-center gap-1.5">
-                        <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06)">
+                        <span className="srv-label">
                             What to do
                         </span>
                         {!guidance.selfHealing && (
-                            <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--warning-light)">
+                            <span className="text-xs font-medium text-(--warning-light)">
                                 needs you
                             </span>
                         )}
@@ -102,7 +105,7 @@ function ComponentCard({ comp }: { comp: HealthComponent }) {
             )}
 
             {comp.items && comp.items.length > 0 && (
-                <div className="mt-3 border-t border-(--base-03) pt-3 space-y-1.5">
+                <div className="mt-3 space-y-1.5 border-t border-(--base-03) pt-3">
                     {comp.items.map((item, i) => {
                         const im = STATUS_META[item.status] ?? STATUS_META.disabled;
                         const ic = colorClasses(im.color);
@@ -181,27 +184,25 @@ export default function StatusTab() {
 
     // First-load skeleton.
     if (loading && !health) {
-        return (
-            <div className="space-y-3 max-w-3xl">
-                <div className="h-16 rounded-(--radius-lg) bg-(--base-02) animate-pulse" />
-                {[0, 1, 2, 3, 4].map(i => (
-                    <div key={i} className="h-20 rounded-(--radius-lg) bg-(--base-02) animate-pulse" />
-                ))}
-            </div>
-        );
+        return <SettingsPage title="Status" loading skeletonCards={3} width="3xl">{null}</SettingsPage>;
     }
 
     if (error && !health) {
         return (
-            <div className="max-w-3xl">
-                <div className="rounded-(--radius-lg) border border-(--error-border) bg-(--error-ghost) p-4 text-(--error-light) text-sm">
-                    {error}
-                </div>
-                <button onClick={() => load(true)} className="btn btn-secondary text-xs mt-3 inline-flex items-center gap-1.5">
-                    <RefreshCw size={13} className={refreshing ? 'animate-spin' : ''} />
-                    Retry
-                </button>
-            </div>
+            <SettingsPage title="Status" icon={Activity} width="3xl">
+                <EmptyState
+                    tone="error"
+                    icon={<XCircle size={20} />}
+                    title="Status could not be loaded"
+                    description={error}
+                    action={
+                        <button onClick={() => load(true)} className="btn btn-secondary btn-sm inline-flex items-center gap-1.5">
+                            <RefreshCw size={13} className={refreshing ? 'animate-spin' : ''} />
+                            Retry
+                        </button>
+                    }
+                />
+            </SettingsPage>
         );
     }
 
@@ -215,32 +216,36 @@ export default function StatusTab() {
     })();
 
     return (
-        <div className="space-y-3 max-w-3xl">
-            {/* Overall banner */}
-            <div className={`flex items-center justify-between gap-3 rounded-(--radius-lg) border p-4 ${oc.bg} ${oc.border}`}>
-                <div className="flex items-center gap-3">
-                    <OIcon size={22} className={oc.text} />
-                    <div>
-                        <div className={`font-display text-base font-semibold ${oc.text}`}>{overall.label}</div>
-                        <div className="font-mono text-[11px] text-(--base-06) mt-0.5">Last checked {checked}</div>
-                    </div>
-                </div>
+        <SettingsPage
+            title="Status"
+            icon={Activity}
+            width="3xl"
+            description="Live health of every platform component. Refreshes every 10 seconds."
+            actions={
                 <button
                     onClick={() => load(true)}
                     disabled={refreshing}
-                    className="btn btn-secondary text-xs py-1.5 px-3 inline-flex items-center gap-1.5 disabled:opacity-40"
+                    className="btn btn-secondary btn-sm inline-flex items-center gap-1.5"
                 >
                     {refreshing ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
                     Refresh
                 </button>
+            }
+        >
+            {/* Overall banner */}
+            <div className={`flex items-center gap-3 rounded-xl p-4 ${oc.bg}`} role="status">
+                <OIcon size={22} className={oc.text} />
+                <div>
+                    <div className={`text-base font-semibold ${oc.text}`}>{overall.label}</div>
+                    <div className="mt-0.5 font-mono text-xs text-(--base-06)">Last checked {checked}</div>
+                </div>
             </div>
 
-            {/* Component cards */}
             <div className="space-y-3">
                 {health.components.map(comp => (
                     <ComponentCard key={comp.key} comp={comp} />
                 ))}
             </div>
-        </div>
+        </SettingsPage>
     );
 }

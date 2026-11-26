@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { CircleAlert } from 'lucide-react';
+import NumberField from '@/components/ui/NumberField';
 import Select from '@/components/ui/Select';
 import TimeZoneSelect from '@/components/ui/TimeZoneSelect';
 import { previewBackupSchedule } from '@/lib/api';
@@ -79,11 +80,8 @@ export default function BackupScheduleEditor({ schedule, timezone, onChange, idP
 
             {draft.kind === 'interval' && (
                 <div className="grid grid-cols-2 gap-3">
-                    <div className="form-group">
-                        <label className="input-label" htmlFor={`${idPrefix}-every`}>Every</label>
-                        <input id={`${idPrefix}-every`} type="number" min={1} max={365} value={draft.every}
-                            onChange={e => update({ every: Math.max(1, Math.floor(Number(e.target.value) || 1)) })} className="input-field text-right tabular-nums" />
-                    </div>
+                    <NumberField label="Every" min={1} max={365} value={draft.every}
+                        onChange={v => update({ every: Math.max(1, Math.floor(v || 1)) })} />
                     <div className="form-group">
                         <label className="input-label" htmlFor={`${idPrefix}-unit`}>Unit</label>
                         <Select id={`${idPrefix}-unit`} value={draft.unit} onChange={v => update({ unit: v as 'h' | 'd' })}
@@ -139,7 +137,7 @@ export default function BackupScheduleEditor({ schedule, timezone, onChange, idP
             )}
 
             {draft.kind !== 'manual' && preview && (
-                <div className={`rounded-md border border-(--base-04) bg-(--base-02) p-3 transition-opacity ${stale ? 'opacity-60' : ''}`} aria-live="polite">
+                <div className={`rounded-md bg-(--base-02) p-3 transition-opacity ${stale ? 'opacity-60' : ''}`} aria-live="polite">
                     {preview.valid ? (
                         <>
                             <div className="text-xs text-(--base-06) mb-1.5">Next runs, in your time</div>

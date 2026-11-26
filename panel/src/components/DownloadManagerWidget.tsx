@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
+import { Popover, PopoverContent, PopoverTrigger } from '@ui-sdk/react/popover';
 import { Download, X, CircleCheck, CircleAlert, CircleStop, Trash2, Loader2, FolderOpen } from 'lucide-react';
 import { toast } from '@/components/ui/Toast';
 import { ProgressRing } from '@/components/UploadManagerWidget';
@@ -40,8 +41,6 @@ function formatEta(seconds: number): string {
 export default function DownloadManagerWidget() {
     const entries = useDownloads();
     const [open, setOpen] = useState(false);
-    const wrapRef = useRef<HTMLDivElement>(null);
-    const buttonRef = useRef<HTMLButtonElement>(null);
 
     const active = entries.filter(e => e.state === 'running').length;
     const failed = entries.some(e => e.state === 'failed');
@@ -54,24 +53,6 @@ export default function DownloadManagerWidget() {
         if (prevActive === 0 && active > 0) setOpen(true);
     }
 
-    useEffect(() => {
-        if (!open) return;
-        const onClick = (e: MouseEvent) => {
-            if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
-        };
-        const onKey = (e: KeyboardEvent) => {
-            if (e.key !== 'Escape') return;
-            setOpen(false);
-            buttonRef.current?.focus();
-        };
-        document.addEventListener('click', onClick);
-        document.addEventListener('keydown', onKey);
-        return () => {
-            document.removeEventListener('click', onClick);
-            document.removeEventListener('keydown', onKey);
-        };
-    }, [open]);
-
     if (entries.length === 0) return null;
 
     const pct = aggregatePercent(entries);
@@ -79,24 +60,19 @@ export default function DownloadManagerWidget() {
         ? `${active} download${active !== 1 ? 's' : ''} running${pct !== null ? `, ${pct}%` : ''}`
         : failed ? 'Downloads finished, some failed' : 'Downloads finished';
     const tone = active > 0
-        ? 'bg-(--accent-ghost) text-(--accent-light) border-(--accent-border)'
+        ? 'text-(--accent-light)'
         : failed
-            ? 'bg-(--warning-ghost) text-(--warning-light) border-(--warning)/30'
-            : 'bg-(--success)/10 text-(--success-light) border-(--success)/20';
+            ? 'text-(--warning-light)'
+            : 'text-(--success-light)';
 
     return (
-        <div ref={wrapRef} className="relative mr-2">
-            <button
-                ref={buttonRef}
-                type="button"
-                onClick={() => setOpen(o => !o)}
+        <div className="relative">
+          <Popover open={open} onOpenChange={setOpen}>
+            <PopoverTrigger
+                render={<button type="button" />}
                 title={label}
                 aria-label={label}
-                aria-expanded={open}
-                aria-controls="download-manager-list"
-                className={`relative flex items-center justify-center w-9 h-9 rounded-md transition-colors border hover:brightness-110 active:brightness-95 ${
-                    open ? 'bg-(--base-03) border-(--base-04) text-(--base-09)' : tone
-                }`}
+                className={`app-icon-btn relative ${open ? '' : tone}`}
             >
                 {active === 0 ? (
                     <Download size={16} />
@@ -110,17 +86,13 @@ export default function DownloadManagerWidget() {
                         {active}
                     </span>
                 )}
-            </button>
+            </PopoverTrigger>
 
-            {open && (
-                <div
-                    id="download-manager-list"
-                    className="dropdown-menu right-0 mt-3 w-96 animate-fade-in origin-top-right"
-                    role="region"
-                    aria-label="Downloads"
-                >
-                    <div className="flex items-center justify-between px-4 py-2 border-b border-(--base-03)">
-                        <div className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06)">
+            {/* initialFocus none: it also opens by itself when a download starts, and must not steal focus. */}
+            <PopoverContent side="bottom" align="end" sideOffset={12} initialFocus="none" aria-label="Downloads" className="ui-popup w-96 max-w-[calc(100vw-1rem)]">
+                <div>
+                    <div className="flex items-center justify-between px-4 py-2.5">
+                        <div className="text-sm font-medium text-(--base-09)">
                             Downloads ({entries.length})
                         </div>
                         <div className="flex items-center gap-1">
@@ -137,7 +109,7 @@ export default function DownloadManagerWidget() {
                             )}
                             <button
                                 type="button"
-                                onClick={() => { setOpen(false); buttonRef.current?.focus(); }}
+                                onClick={() => setOpen(false)}
                                 className="text-(--base-06) hover:text-(--base-09) active:text-(--base-07) hover:bg-(--base-02) active:bg-(--base-03) focus-visible:outline-2 focus-visible:outline-(--accent) p-1.5 rounded-md transition-colors"
                                 aria-label="Close"
                             >
@@ -147,7 +119,8 @@ export default function DownloadManagerWidget() {
                     </div>
                     <DownloadList entries={entries} />
                 </div>
-            )}
+            </PopoverContent>
+          </Popover>
         </div>
     );
 }

@@ -25,18 +25,25 @@ interface GuardedLinkProps extends Omit<LinkProps, 'onClick'> {
     target?: string;
     rel?: string;
     'aria-label'?: string;
+    'aria-current'?: 'page' | undefined;
 }
 
-export default function GuardedLink({ children, ...props }: GuardedLinkProps) {
+/**
+ * The guard on its own, for links that cannot be a GuardedLink (a menu item
+ * renders its own element and the menu unmounts on select, which would take
+ * the dialog with it). Call `intercept` from the link's onClick and render
+ * `dialog` somewhere that stays mounted:
+ *   const nav = useGuardedNav();
+ *   <Link href={h} onClick={e => nav.intercept(e, h)} />  ...  {nav.dialog}
+ */
+export function useGuardedNav(replace?: boolean) {
     const registration = useUnsavedChangesState();
     const router = useRouter();
     const pathname = usePathname();
     const [pending, setPending] = useState<string | null>(null);
     const [saving, setSaving] = useState(false);
 
-    const hrefStr = typeof props.href === 'string' ? props.href : '';
-
-    const handleClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
+    const intercept = (e: React.MouseEvent, hrefStr: string) => {
         // Let the user open in a new tab / window — that's a fresh page
         // load, beforeunload covers it.
         if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
@@ -50,7 +57,7 @@ export default function GuardedLink({ children, ...props }: GuardedLinkProps) {
     };
 
     const navigate = (href: string) => {
-        if (props.replace) router.replace(href);
+        if (replace) router.replace(href);
         else router.push(href);
     };
 
@@ -87,19 +94,28 @@ export default function GuardedLink({ children, ...props }: GuardedLinkProps) {
         navigate(href);
     };
 
+    const dialog = pending !== null && registration ? (
+        <UnsavedDialog
+            onSave={handleSave}
+            onDiscard={handleDiscard}
+            onCancel={close}
+            saving={saving}
+        />
+    ) : null;
+
+    return { intercept, dialog };
+}
+
+export default function GuardedLink({ children, ...props }: GuardedLinkProps) {
+    const { intercept, dialog } = useGuardedNav(props.replace);
+    const hrefStr = typeof props.href === 'string' ? props.href : '';
+
     return (
         <>
-            <Link {...props} onClick={handleClick}>
+            <Link {...props} onClick={e => intercept(e, hrefStr)}>
                 {children}
             </Link>
-            {pending !== null && registration && (
-                <UnsavedDialog
-                    onSave={handleSave}
-                    onDiscard={handleDiscard}
-                    onCancel={close}
-                    saving={saving}
-                />
-            )}
+            {dialog}
         </>
     );
 }

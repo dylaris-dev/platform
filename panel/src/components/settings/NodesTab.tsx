@@ -36,14 +36,22 @@ import {
 import {
     Network, Server, Globe, Settings as SettingsIcon, Save,
     Pencil, X, AlertTriangle, Cpu, KeyRound, Copy, Cloud,
-    ShieldCheck, ShieldOff, Plus, Trash2, Ticket, RotateCcw, RefreshCw, Eye, EyeOff,
+    ShieldCheck, ShieldOff, MoreHorizontal, Plus, Trash2, Ticket, RotateCcw, RefreshCw, Eye, EyeOff,
 } from 'lucide-react';
 import HelpTip from '@/components/ui/HelpTip';
+import Menu from '@/components/ui/Menu';
+import Section from '@/components/ui/Section';
+import { RowList, Row } from '@/components/ui/RowList';
+import NumberField from '@/components/ui/NumberField';
+import EmptyState from '@/components/ui/EmptyState';
 import ExternalMachines from '@/components/settings/ExternalMachines';
 import ModalPanel from '@/components/ui/ModalPanel';
 import { ManagedLinkKit } from '@/components/infra/DeployKit';
 import NodeBackupThrottle from '@/components/settings/NodeBackupThrottle';
 import { NO_MEMORY_LIMIT_MESSAGE, NO_MEMORY_LIMIT_SHORT } from '@/lib/memoryLimit';
+import Switch from '@/components/ui/Switch';
+import { Slider, SliderControl, SliderIndicator, SliderThumb, SliderTrack } from '@ui-sdk/react/slider';
+import Tooltip from '@/components/ui/Tooltip';
 
 // Shape of GET /nodes/{id}/deploy-bundle — the secret-free node deploy ENV for
 // an already-enrolled node (see WarpTab's mint+reveal pattern). The Link's own
@@ -235,43 +243,40 @@ CORE_GRPC_ADDR=<core-host:25501>` : '';
             {/* Its keys are warp keys, and the managed gateway runs no warp here. */}
             {kind === 'external' && gatewayVisibility.warpTab && <ExternalMachines nodes={shownNodes} />}
 
-            <div>
-                <div className="flex items-start justify-between gap-3 mb-1">
-                    <h3 className="text-base font-display font-bold text-(--base-09)">
-                        {kind === 'external' ? 'External nodes' : 'Cluster nodes'}
-                    </h3>
-                    {shownNodes.length > 0 && (
-                        <button
-                            type="button"
-                            onClick={() => setRevealAddresses(v => !v)}
-                            aria-pressed={revealAddresses}
-                            className="text-xs text-(--base-06) hover:text-(--accent-light) inline-flex items-center gap-1 transition-colors shrink-0"
-                            title={revealAddresses
-                                ? 'Blur every address on this list again'
-                                : 'Show every address on this list. They blur again when the page is reloaded.'}
-                        >
-                            {revealAddresses ? <EyeOff size={12} /> : <Eye size={12} />}
-                            {revealAddresses ? 'Hide addresses' : 'Show addresses'}
-                        </button>
-                    )}
-                </div>
-                <p className="text-xs text-(--base-06) mb-4">
-                    {kind === 'external'
-                        ? 'Your own machines outside the swarm. They reach players through the gateway and beam only.'
-                        : 'The machines running inside your swarm.'}
-                </p>
+            <Section
+                title={kind === 'external' ? 'External nodes' : 'Cluster nodes'}
+                description={kind === 'external'
+                    ? 'Your own machines outside the swarm. They reach players through the gateway and beam only.'
+                    : 'The machines running inside your swarm.'}
+                actions={shownNodes.length > 0 ? (
+                    <button
+                        type="button"
+                        onClick={() => setRevealAddresses(v => !v)}
+                        aria-pressed={revealAddresses}
+                        className="btn btn-ghost btn-sm inline-flex items-center gap-1"
+                        title={revealAddresses
+                            ? 'Blur every address on this list again'
+                            : 'Show every address on this list. They blur again when the page is reloaded.'}
+                    >
+                        {revealAddresses ? <EyeOff size={12} /> : <Eye size={12} />}
+                        {revealAddresses ? 'Hide addresses' : 'Show addresses'}
+                    </button>
+                ) : undefined}
+            >
                 <div className="space-y-3">
                     {loadError && (
-                        <div className="p-3 border border-(--error) rounded-md text-(--error-light) text-sm">
+                        <div className="srv-callout" data-tone="error" role="alert">
                             {loadError} The list below may be out of date.
                         </div>
                     )}
                     {shownNodes.length === 0 && !loadError ? (
-                        <div className="text-center p-8 border border-dashed border-(--base-04) rounded-lg text-(--base-06) text-sm">
-                            {kind === 'external'
-                                ? 'No external nodes. A node joins this tab by starting with NODE_EXTERNAL=true.'
-                                : 'No nodes connected. Start a node!'}
-                        </div>
+                        <EmptyState
+                            icon={<Server size={20} />}
+                            title={kind === 'external' ? 'No external nodes' : 'No nodes connected'}
+                            description={kind === 'external'
+                                ? 'A node joins this tab by starting with NODE_EXTERNAL=true.'
+                                : 'Start a node and it shows up here.'}
+                        />
                     ) : (
                         shownNodes.map(node => (
                             <NodeCard
@@ -298,7 +303,7 @@ CORE_GRPC_ADDR=<core-host:25501>` : '';
                         ))
                     )}
                 </div>
-            </div>
+            </Section>
 
             {deleteTarget && (
                 <DeleteNodeModal
@@ -331,8 +336,15 @@ CORE_GRPC_ADDR=<core-host:25501>` : '';
                     <ModalPanel onClose={() => setRevealed(null)} className="modal-panel max-w-xl" onClick={e => e.stopPropagation()}>
                         <div className="modal-header"><h3 className="modal-title text-(--accent-light)">Setup values — {revealed.nodeId.slice(0, 8)}</h3></div>
                         <div className="modal-body space-y-3">
+                            <p className="text-xs text-(--base-06) leading-relaxed">
+                                This node&apos;s connection values again: its identity and the TLS fingerprint to pin.
+                                You need them when you rebuild the host, move the node to another machine, or lose the
+                                compose file. They contain no secret: the Link fetches its own credentials with the
+                                machine&apos;s warp key, and the cluster secret is never part of it. If the node&apos;s own
+                                secret is gone rather than mislaid, re-pairing is the way back, not this.
+                            </p>
                             <div className="space-y-1">
-                                <label className="mono-label">Node deploy ENV (secret-free)</label>
+                                <label className="srv-label">Node deploy ENV (secret-free)</label>
                                 <pre className="p-3 rounded-md bg-(--base-02) border border-(--base-04) font-mono text-xs whitespace-pre-wrap break-all">{nodeEnv}</pre>
                                 <button onClick={() => { navigator.clipboard.writeText(nodeEnv); showToast('Node deploy ENV copied.', true); }} className="btn btn-secondary btn-sm">
                                     <Copy size={12} /> Copy node ENV
@@ -533,7 +545,7 @@ function AddressChip({ addr, revealed, onToggle }: { addr: NodeAddress; revealed
             title={addr.title}
         >
             <Globe size={14} className="opacity-70 shrink-0" />
-            <span className="text-[10px] uppercase tracking-[0.06em] text-(--base-05)">{addr.label}</span>
+            <span className="text-[11px] font-medium text-(--base-06)">{addr.label}</span>
             <button
                 type="button"
                 onClick={() => {
@@ -671,7 +683,7 @@ function NodeCard({ node, gatewayRequired, isEditing, onEdit, onCancel, onSaved,
     };
 
     return (
-        <div className="card p-2.5 transition-colors hover:border-(--base-05)">
+        <div className="rounded-lg bg-(--base-03) p-2.5">
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-2.5">
                 <div className="flex items-center gap-3 min-w-0">
                     {(() => {
@@ -681,8 +693,8 @@ function NodeCard({ node, gatewayRequired, isEditing, onEdit, onCancel, onSaved,
                       const title = tier === 'ok' ? node.status : connLabel(tier, node.lastSeenAt);
                       return <div className={`status-dot shrink-0 ${dot}`} title={title}></div>;
                     })()}
-                    <div className="w-8 h-8 bg-(--accent-ghost) text-(--accent-light) rounded-md flex items-center justify-center border border-(--accent-border) shrink-0">
-                        <Server size={18} />
+                    <div className="w-8 h-8 bg-(--base-04) text-(--base-07) rounded-full flex items-center justify-center shrink-0">
+                        <Server size={16} />
                     </div>
                     <div className="flex flex-col min-w-0">
                         <div className="flex flex-col md:flex-row md:items-center gap-2 md:gap-3 min-w-0">
@@ -757,75 +769,17 @@ function NodeCard({ node, gatewayRequired, isEditing, onEdit, onCancel, onSaved,
                         <Pencil size={11} />
                         Placement
                     </button>
-                    {onOpenManagedLink && (
-                        <button
-                            type="button"
-                            onClick={onOpenManagedLink}
-                            className="focus-ring rounded text-xs text-(--base-06) hover:text-(--accent-light) inline-flex items-center gap-1 transition-colors"
-                            title="The link this node needs for the DYLARIS Managed Gateway"
-                        >
-                            <Cloud size={11} />
-                            Managed link
-                        </button>
-                    )}
-                    <span className="inline-flex items-center gap-1">
-                        <button
-                            onClick={onRevealDeployBundle}
-                            disabled={revealingDeployBundle}
-                            className="text-xs text-(--base-06) hover:text-(--accent-light) inline-flex items-center gap-1 transition-colors disabled:opacity-40"
-                        >
-                            <KeyRound size={11} />
-                            {revealingDeployBundle ? 'Loading…' : 'Show setup values'}
-                        </button>
-                        <HelpTip label="About the setup values">
-                            <p className="mb-2">
-                                Shows this node&apos;s connection values again: its identity and the TLS
-                                fingerprint to pin. They are the same ones the enrolment gave you.
-                            </p>
-                            <p className="mb-2">
-                                You need it when you rebuild the host, move the node to another
-                                machine, or lose the compose file - anything that means writing the
-                                node&apos;s environment out again. In day-to-day operation you never
-                                open it.
-                            </p>
-                            <p>
-                                It contains no secret: the Link fetches its own credentials with the
-                                machine&apos;s warp key, and the cluster secret is never part of it. If
-                                the node&apos;s own secret is gone rather than mislaid, re-pairing is
-                                the way back, not this.
-                            </p>
-                        </HelpTip>
-                    </span>
-                    <button
-                        onClick={onResetPairing}
-                        disabled={resettingPairing}
-                        className="text-xs text-(--base-06) hover:text-(--error-light) inline-flex items-center gap-1 transition-colors disabled:opacity-40"
-                        title="For a node that may be compromised: refuse its key and replace its secret, which restarts its game servers"
-                    >
-                        <RotateCcw size={11} />
-                        {resettingPairing ? 'Resetting…' : 'Reset pairing'}
-                    </button>
-                    <button
-                        onClick={onRollSecret}
-                        disabled={rollingSecret || !canRollKey(node.status)}
-                        className="text-xs text-(--base-06) hover:text-(--error-light) inline-flex items-center gap-1 transition-colors disabled:opacity-40"
-                        title={canRollKey(node.status)
-                            ? "Replace this node's key; it reconnects with a new one by itself, without restarting its game servers"
-                            : 'Roll key re-admits the node for 15 minutes; use it while the node is online, or use Reset pairing and admit it under Connection attempts'}
-                    >
-                        <RefreshCw size={11} />
-                        {rollingSecret ? 'Rolling…' : 'Roll key'}
-                    </button>
-                    {onOpenDeleteDialog && (
-                        <button
-                            onClick={onOpenDeleteDialog}
-                            className="text-xs text-(--base-06) hover:text-(--error-light) inline-flex items-center gap-1 transition-colors"
-                            title="Delete this node and everything on it"
-                        >
-                            <Trash2 size={11} />
-                            Delete
-                        </button>
-                    )}
+                    <Menu
+                        trigger={<button type="button" aria-label={`Actions for ${node.displayName || node.name || 'node'}`} className="app-icon-btn"><MoreHorizontal size={16} /></button>}
+                        items={[
+                            { label: revealingDeployBundle ? 'Loading…' : 'Show setup values', icon: <KeyRound size={14} />, onSelect: onRevealDeployBundle, disabled: revealingDeployBundle },
+                            ...(onOpenManagedLink ? [{ label: 'Managed link', icon: <Cloud size={14} />, onSelect: onOpenManagedLink }] : []),
+                            { type: 'separator' as const, id: 'sep-danger' },
+                            { label: resettingPairing ? 'Resetting…' : 'Reset pairing', icon: <RotateCcw size={14} />, onSelect: onResetPairing, disabled: resettingPairing, danger: true },
+                            { label: rollingSecret ? 'Rolling…' : canRollKey(node.status) ? 'Roll key' : 'Roll key (node must be online)', icon: <RefreshCw size={14} />, onSelect: onRollSecret, disabled: rollingSecret || !canRollKey(node.status), danger: true },
+                            ...(onOpenDeleteDialog ? [{ label: 'Delete node', icon: <Trash2 size={14} />, onSelect: onOpenDeleteDialog, danger: true }] : []),
+                        ]}
+                    />
                 </div>
             </div>
 
@@ -997,7 +951,7 @@ function NodeCpuPoolEditor({
         <div className="mt-3 pt-3 border-t border-(--base-03) space-y-3">
             <div className="flex items-center gap-2">
                 <Cpu size={13} className="text-(--base-06)" />
-                <span className="mono-label">Container CPU pool</span>
+                <span className="srv-label">Container CPU pool</span>
             </div>
 
             <div className="flex bg-(--base-03) p-0.5 rounded-md w-fit">
@@ -1076,7 +1030,7 @@ function NodeCpuPoolEditor({
 function Stat({ label, value }: { label: string; value: React.ReactNode }) {
     return (
         <div>
-            <div className="mono-label">{label}</div>
+            <div className="srv-label">{label}</div>
             <div className="text-sm text-(--base-09) leading-tight">{value}</div>
         </div>
     );
@@ -1223,7 +1177,7 @@ function PlacementPanel({ showToast }: { showToast: (msg: string, ok?: boolean) 
                 form={{ dirty, saving, save: handleSave, discard: () => { if (snapshotRef.current) setSettings(snapshotRef.current); } }}
             >
                 <div>
-                    <h3 className="mono-label mb-3">Overcommit Defaults</h3>
+                    <h3 className="srv-label mb-3">Overcommit Defaults</h3>
                     <p className="text-xs text-(--base-06) mb-4">
                         How much allocation is allowed relative to physical capacity.
                         <span className="font-mono"> 100%</span> = no overcommit, <span className="font-mono">200%</span> = double-book.
@@ -1299,7 +1253,7 @@ function PlacementPanel({ showToast }: { showToast: (msg: string, ok?: boolean) 
                 </div>
 
                 <div className="border-t border-(--base-03) pt-5">
-                    <h3 className="mono-label mb-3">Disk Buffer</h3>
+                    <h3 className="srv-label mb-3">Disk Buffer</h3>
                     <div className="flex flex-col gap-[5px]">
                         <label className="input-label">Disk Buffer</label>
                         <div className="relative w-32">
@@ -1346,30 +1300,8 @@ function PlacementPanel({ showToast }: { showToast: (msg: string, ok?: boolean) 
                     </div>
 
                     <div className="mt-5 flex gap-4">
-                        <div className="flex flex-col gap-[5px]">
-                            <label className="input-label">Warn at</label>
-                            <div className="relative w-28">
-                                <input
-                                    type="number" min={1} max={100}
-                                    value={settings.diskWarnPercent}
-                                    onChange={e => setSettings(s => ({ ...s, diskWarnPercent: Number(e.target.value) }))}
-                                    className="input-field input-mono w-full pr-8 text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                                />
-                                <span className="absolute right-3 top-[9px] text-(--base-06) font-mono text-sm pointer-events-none">%</span>
-                            </div>
-                        </div>
-                        <div className="flex flex-col gap-[5px]">
-                            <label className="input-label">Critical at</label>
-                            <div className="relative w-28">
-                                <input
-                                    type="number" min={1} max={100}
-                                    value={settings.diskCriticalPercent}
-                                    onChange={e => setSettings(s => ({ ...s, diskCriticalPercent: Number(e.target.value) }))}
-                                    className="input-field input-mono w-full pr-8 text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                                />
-                                <span className="absolute right-3 top-[9px] text-(--base-06) font-mono text-sm pointer-events-none">%</span>
-                            </div>
-                        </div>
+                        <NumberField className="w-28" label="Warn at (%)" min={1} max={100} step={1} value={settings.diskWarnPercent} onChange={v => setSettings(s => ({ ...s, diskWarnPercent: v }))} />
+                        <NumberField className="w-28" label="Critical at (%)" min={1} max={100} step={1} value={settings.diskCriticalPercent} onChange={v => setSettings(s => ({ ...s, diskCriticalPercent: v }))} />
                     </div>
                     <p className="mt-2 text-xs text-(--base-06)">
                         Measured on the <em>projected</em> fill: written plus still promised, over total.
@@ -1377,12 +1309,12 @@ function PlacementPanel({ showToast }: { showToast: (msg: string, ok?: boolean) 
                 </div>
 
                 <div className="border-t border-(--base-03) pt-5">
-                    <h3 className="mono-label mb-3">Default storage order</h3>
+                    <h3 className="srv-label mb-3">Default storage order</h3>
                     <FleetStorageOrder />
                 </div>
 
                 <div className="border-t border-(--base-03) pt-5">
-                    <h3 className="mono-label mb-3">Container RAM headroom</h3>
+                    <h3 className="srv-label mb-3">Container RAM headroom</h3>
                     <div className="flex flex-col gap-[5px]">
                         <label htmlFor="placement-ram-padding" className="input-label">Container RAM headroom (MB)</label>
                         <div className="relative w-32">
@@ -1413,7 +1345,7 @@ function PlacementPanel({ showToast }: { showToast: (msg: string, ok?: boolean) 
                 </div>
 
                 <div className="border-t border-(--base-03) pt-5">
-                    <h3 className="mono-label mb-3">Process Limit (anti fork-bomb)</h3>
+                    <h3 className="srv-label mb-3">Process Limit (anti fork-bomb)</h3>
                     <div className="flex flex-col gap-[5px]">
                         <label className="input-label">Max processes / threads per server</label>
                         <div className="relative w-32">
@@ -1432,7 +1364,7 @@ function PlacementPanel({ showToast }: { showToast: (msg: string, ok?: boolean) 
                 </div>
 
                 <div className="border-t border-(--base-03) pt-5">
-                    <h3 className="mono-label mb-3">Disk I/O Fair-Share</h3>
+                    <h3 className="srv-label mb-3">Disk I/O Fair-Share</h3>
                     <div className="flex flex-col gap-[5px]">
                         <label className="input-label">blkio weight for all MC containers (10-1000, 0 = off)</label>
                         <div className="relative w-32">
@@ -1452,7 +1384,7 @@ function PlacementPanel({ showToast }: { showToast: (msg: string, ok?: boolean) 
                 </div>
 
                 <div className="border-t border-(--base-03) pt-5">
-                    <h3 className="mono-label mb-3">Host-Port Allocation</h3>
+                    <h3 className="srv-label mb-3">Host-Port Allocation</h3>
                     <p className="text-xs text-(--base-06) mb-4">
                         How nodes pick a host port from their range when a server is created. Applies cluster-wide;
                         per-node port range stays in the node&apos;s <code className="font-mono bg-(--base-03) px-1.5 py-0.5 rounded text-(--base-08)">PORT_RANGE</code> env.
@@ -1460,14 +1392,13 @@ function PlacementPanel({ showToast }: { showToast: (msg: string, ok?: boolean) 
                     <div className="grid grid-cols-2 gap-4">
                         <div className="flex flex-col gap-[5px]">
                             <label className="input-label">Port Mode</label>
-                            <select
+                            <Select
+                                ariaLabel="Port Mode"
                                 value={settings.portMode}
-                                onChange={e => setSettings(s => ({ ...s, portMode: e.target.value as 'sequential' | 'random' }))}
-                                className="input-field w-44"
-                            >
-                                <option value="sequential">Sequential</option>
-                                <option value="random">Random</option>
-                            </select>
+                                onChange={v => setSettings(s => ({ ...s, portMode: v as 'sequential' | 'random' }))}
+                                className="w-44"
+                                options={[{ value: 'sequential', label: 'Sequential' }, { value: 'random', label: 'Random' }]}
+                            />
                             <p className="text-xs text-(--base-06)">
                                 Sequential = first-free port. Random = uniform over the range — useful when you want to obscure server adjacency.
                             </p>
@@ -1488,34 +1419,39 @@ function PlacementPanel({ showToast }: { showToast: (msg: string, ok?: boolean) 
                 </div>
 
                 <div className="border-t border-(--base-03) pt-5">
-                    <h3 className="mono-label mb-3">Auto Rebalance (Phase B)</h3>
+                    <h3 className="srv-label mb-3">Auto Rebalance (Phase B)</h3>
                     <div className="flex items-center justify-between">
                         <div>
                             <p className="text-sm text-(--base-09)">Migrate idle auto-move servers off overloaded nodes</p>
                             <p className="text-xs text-(--base-06)">Background worker checks node load every 60s. Migration logic ships in Phase B.</p>
                         </div>
-                        <button
-                            type="button"
-                            role="switch"
-                            aria-checked={settings.rebalanceEnabled}
-                            onClick={() => setSettings(s => ({ ...s, rebalanceEnabled: !s.rebalanceEnabled }))}
-                            className={`toggle-track ${settings.rebalanceEnabled ? 'toggle-track-on' : 'toggle-track-off'}`}
-                        >
-                            <span className={`toggle-knob ${settings.rebalanceEnabled ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
-                        </button>
+                        <Switch
+                            ariaLabel="Auto rebalance"
+                            checked={settings.rebalanceEnabled}
+                            onChange={c => setSettings(s => ({ ...s, rebalanceEnabled: c }))}
+                        />
                     </div>
                     {settings.rebalanceEnabled && (
                         <div className="flex flex-col gap-[5px] mt-3">
                             <label className="input-label">Overload Threshold</label>
                             <div className="flex items-center gap-3">
-                                <input
-                                    type="range"
+                                <Slider
+                                    className="flex-1"
                                     min={50}
                                     max={100}
                                     value={settings.rebalanceThreshold}
-                                    onChange={e => setSettings(s => ({ ...s, rebalanceThreshold: Number(e.target.value) }))}
-                                    className="flex-1"
-                                />
+                                    onValueChange={v => setSettings(s => ({ ...s, rebalanceThreshold: v as number }))}
+                                >
+                                    <SliderControl className="flex h-5 items-center touch-none cursor-pointer">
+                                        <SliderTrack className="relative h-1.5 w-full rounded-full bg-(--base-04)">
+                                            <SliderIndicator className="rounded-full bg-(--accent)" />
+                                            <SliderThumb
+                                                aria-label="Overload Threshold"
+                                                className="size-4 rounded-full bg-(--accent-light) border-2 border-(--base-00) has-focus-visible:[box-shadow:var(--focus-ring)] data-dragging:scale-110"
+                                            />
+                                        </SliderTrack>
+                                    </SliderControl>
+                                </Slider>
                                 <span className="font-mono text-sm text-(--base-09) w-12 text-right">{settings.rebalanceThreshold}%</span>
                             </div>
                             <p className="text-xs text-(--base-06)">A node is &quot;overloaded&quot; when its allocation exceeds this percentage of its overcommit-adjusted capacity.</p>
@@ -1555,8 +1491,8 @@ function NodeEnrollmentPanel({ showToast }: { showToast: (msg: string, ok?: bool
 // never showed up and an operator re-reading their Swarm labels for an hour.
 function HowNodesJoinCard() {
     return (
-        <div className="card border-(--accent-border) p-6 space-y-4">
-            <h3 className="text-base font-display font-bold text-(--accent-light) flex items-center gap-2">
+        <div className="srv-surface ring-1 ring-(--accent-border) p-6 space-y-4">
+            <h3 className="text-[15px] font-semibold text-(--base-09) flex items-center gap-2">
                 <Network size={18} /> How a machine becomes a node
             </h3>
 
@@ -1659,10 +1595,10 @@ function AdmissionCard({ showToast, onJoinMode }: { showToast: (msg: string, ok?
     if (loading) return <SkeletonCard />;
 
     return (
-        <div className="card p-6 space-y-5">
+        <div className="srv-surface p-6 space-y-5">
             <div className="flex items-center gap-2">
-                <ShieldCheck size={18} className="text-(--accent-light)" />
-                <h3 className="text-base font-display font-bold text-(--base-09)">Node Admission</h3>
+                <ShieldCheck size={18} className="text-(--base-06)" />
+                <h3 className="text-[15px] font-semibold text-(--base-09)">Node Admission</h3>
             </div>
             <p className="text-sm text-(--base-06)">
                 Gates a node&apos;s FIRST registration (network + join), before any auth. Known nodes always reconnect. Inert defaults: join <code className="font-mono text-xs">open</code>, IP <code className="font-mono text-xs">allow</code>.
@@ -1671,39 +1607,40 @@ function AdmissionCard({ showToast, onJoinMode }: { showToast: (msg: string, ok?
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1">
                     <label className="input-label">Join mode</label>
-                    <select value={joinMode} disabled={saving} onChange={e => save(e.target.value, ipMode)} className="input-field w-full text-sm">
-                        <option value="open">open — any new node may join</option>
-                        <option value="one-shot">one-shot — admit exactly one, then disable</option>
-                        <option value="disabled">disabled — reject all new nodes</option>
-                    </select>
+                    <Select ariaLabel="Join mode" value={joinMode} disabled={saving} onChange={v => save(v, ipMode)}
+                        options={[
+                            { value: 'open', label: 'open — any new node may join' },
+                            { value: 'one-shot', label: 'one-shot — admit exactly one, then disable' },
+                            { value: 'disabled', label: 'disabled — reject all new nodes' },
+                        ]} />
                 </div>
                 <div className="space-y-1">
                     <label className="input-label">IP mode</label>
-                    <select value={ipMode} disabled={saving} onChange={e => save(joinMode, e.target.value)} className="input-field w-full text-sm">
-                        <option value="allow">allow — CIDR list advisory (any IP)</option>
-                        <option value="deny">deny — only IPs inside a listed CIDR</option>
-                    </select>
+                    <Select ariaLabel="IP mode" value={ipMode} disabled={saving} onChange={v => save(joinMode, v)}
+                        options={[
+                            { value: 'allow', label: 'allow — CIDR list advisory (any IP)' },
+                            { value: 'deny', label: 'deny — only IPs inside a listed CIDR' },
+                        ]} />
                 </div>
             </div>
 
             <div className="space-y-2">
-                <label className="mono-label">Allowed CIDRs {ipMode === 'allow' && <span className="text-(--base-06) normal-case">(advisory while IP mode is allow)</span>}</label>
+                <label className="srv-label">Allowed CIDRs {ipMode === 'allow' && <span className="text-(--base-06) normal-case">(advisory while IP mode is allow)</span>}</label>
                 {cidrs.length === 0 ? (
-                    <div className="text-sm text-(--base-06)">No CIDRs configured.</div>
+                    <EmptyState bare icon={<ShieldCheck size={20} />} title="No CIDRs configured" />
                 ) : (
-                    <div className="space-y-2">
+                    <RowList label="Allowed CIDRs" className="rounded-lg bg-(--base-03)">
                         {cidrs.map(c => (
-                            <div key={c.id} className="flex items-center justify-between bg-(--base-02) border border-(--base-04) rounded-md px-3 py-2">
-                                <div className="flex items-center gap-3">
-                                    <code className="font-mono text-xs text-(--base-09)">{c.cidr}</code>
-                                    {c.label && <span className="text-xs text-(--base-06)">{c.label}</span>}
-                                </div>
-                                <button onClick={() => removeCidr(c.id)} disabled={cidrBusy} className="text-(--base-06) hover:text-(--error-light) transition-colors disabled:opacity-40" title="Remove CIDR">
+                            <Row
+                                key={c.id}
+                                title={<code className="font-mono text-xs">{c.cidr}</code>}
+                                meta={c.label || undefined}
+                                actions={<Tooltip content="Remove CIDR"><button onClick={() => removeCidr(c.id)} disabled={cidrBusy} className="app-icon-btn" aria-label="Remove CIDR">
                                     <Trash2 size={14} />
-                                </button>
-                            </div>
+                                </button></Tooltip>}
+                            />
                         ))}
-                    </div>
+                    </RowList>
                 )}
                 <div className="flex items-center gap-2 pt-1">
                     <input value={newCidr} onChange={e => setNewCidr(e.target.value)} placeholder="10.0.0.0/24" disabled={cidrBusy} className="input-field flex-1 font-mono text-sm disabled:opacity-40" />
@@ -1771,10 +1708,10 @@ function EnrollTokensSection({ showToast, joinMode }: { showToast: (msg: string,
     const fmt = (s?: string) => (s ? fmtDateTime(s) : '—');
 
     return (
-        <div className="card p-6 space-y-5">
+        <div className="srv-surface p-6 space-y-5">
             <div className="flex items-center gap-2">
-                <Ticket size={18} className="text-(--accent-light)" />
-                <h3 className="text-base font-display font-bold text-(--base-09)">Enroll tokens</h3>
+                <Ticket size={18} className="text-(--base-06)" />
+                <h3 className="text-[15px] font-semibold text-(--base-09)">Enroll tokens</h3>
             </div>
             <p className="text-sm text-(--base-06)">
                 Single-use tokens that authorize a NEW node&apos;s first pairing. Shown once at mint time; start the node with <code className="font-mono text-xs">NODE_ENROLL_TOKEN</code> set.
@@ -1806,10 +1743,7 @@ function EnrollTokensSection({ showToast, joinMode }: { showToast: (msg: string,
                     <label className="input-label">Label</label>
                     <input value={label} onChange={e => setLabel(e.target.value)} placeholder="e.g. home-pc" className="input-field w-full text-sm" />
                 </div>
-                <div className="w-28 space-y-1">
-                    <label className="input-label">Expires (days)</label>
-                    <input type="number" min={1} value={expiresDays} onChange={e => setExpiresDays(parseInt(e.target.value) || 7)} className="input-field w-full text-sm" />
-                </div>
+                <NumberField className="w-28" label="Expires (days)" min={1} step={1} value={expiresDays} onChange={v => setExpiresDays(Math.trunc(v) || 7)} />
                 <button onClick={mint} disabled={minting} className="btn btn-primary btn-sm shrink-0 disabled:opacity-40">
                     <Plus size={14} /> {minting ? 'Minting…' : 'Mint token'}
                 </button>
@@ -1817,23 +1751,20 @@ function EnrollTokensSection({ showToast, joinMode }: { showToast: (msg: string,
             </fieldset>
 
             {tokens.length === 0 ? (
-                <div className="text-sm text-(--base-06)">No enroll tokens.</div>
+                <EmptyState bare icon={<Ticket size={20} />} title="No enroll tokens" />
             ) : (
-                <div className="space-y-2">
+                <RowList label="Enroll tokens" className="rounded-lg bg-(--base-03)">
                     {tokens.map(t => (
-                        <div key={t.id} className="flex items-center justify-between bg-(--base-02) border border-(--base-04) rounded-md px-3 py-2">
-                            <div className="flex flex-col">
-                                <span className="text-sm text-(--base-09)">{t.label || <span className="text-(--base-06)">(no label)</span>}</span>
-                                <span className="text-xs text-(--base-06)">
-                                    created {fmt(t.createdAt)} · expires {fmt(t.expiresAt)} · {t.consumedAt ? `consumed ${fmt(t.consumedAt)}` : 'unused'}
-                                </span>
-                            </div>
-                            <button onClick={() => revoke(t.id)} className="text-(--base-06) hover:text-(--error-light) transition-colors" title="Revoke token">
+                        <Row
+                            key={t.id}
+                            title={t.label || <span className="text-(--base-06)">(no label)</span>}
+                            meta={`created ${fmt(t.createdAt)} · expires ${fmt(t.expiresAt)} · ${t.consumedAt ? `consumed ${fmt(t.consumedAt)}` : 'unused'}`}
+                            actions={<Tooltip content="Revoke token"><button onClick={() => revoke(t.id)} className="app-icon-btn" aria-label="Revoke token">
                                 <Trash2 size={14} />
-                            </button>
-                        </div>
+                            </button></Tooltip>}
+                        />
                     ))}
-                </div>
+                </RowList>
             )}
               </>
             )}
@@ -1845,7 +1776,7 @@ function EnrollTokensSection({ showToast, joinMode }: { showToast: (msg: string,
                         <div className="modal-body space-y-3">
                             <p className="text-sm text-(--base-07)">Shown once. Copy it now — it cannot be retrieved later.</p>
                             <div className="space-y-1">
-                                <label className="mono-label">NODE_ENROLL_TOKEN</label>
+                                <label className="srv-label">NODE_ENROLL_TOKEN</label>
                                 <pre className="p-3 rounded-md bg-(--base-02) border border-(--base-04) font-mono text-xs whitespace-pre-wrap break-all">{revealed.token}</pre>
                                 <button onClick={() => { navigator.clipboard.writeText(revealed.token); showToast('Enroll token copied.', true); }} className="btn btn-secondary btn-sm">
                                     <Copy size={12} /> Copy token

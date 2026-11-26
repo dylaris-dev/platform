@@ -2,6 +2,13 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ShieldAlert } from 'lucide-react';
+import {
+    AlertDialog,
+    AlertDialogBackdrop,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogTitle,
+} from '@ui-sdk/react/alert-dialog';
 import { ReauthFields, reauthReady } from '@/components/ReauthFields';
 
 /**
@@ -82,15 +89,14 @@ export function ReauthDialogRoot() {
         setCode('');
     }, []);
 
+    // Back to the control that asked: the SDK only restores focus to a trigger.
     useEffect(() => {
         if (!pending) return;
-        panelRef.current?.querySelector<HTMLInputElement>('input[type="password"]')?.focus();
-        const onKey = (e: KeyboardEvent) => {
-            if (e.key === 'Escape') close(null);
+        const opener = document.activeElement as HTMLElement | null;
+        return () => {
+            if (opener && document.contains(opener)) opener.focus();
         };
-        window.addEventListener('keydown', onKey);
-        return () => window.removeEventListener('keydown', onKey);
-    }, [pending, close]);
+    }, [pending]);
 
     if (!pending) return null;
 
@@ -100,25 +106,28 @@ export function ReauthDialogRoot() {
     };
 
     return (
-        <div className="modal-overlay animate-fade-in" onClick={() => close(null)}>
-            <div
+        <AlertDialog open onOpenChange={open => { if (!open) close(null); }}>
+            <AlertDialogBackdrop className="modal-overlay animate-fade-in" onClick={() => close(null)} />
+            <AlertDialogContent
                 ref={panelRef}
-                className="modal-panel max-w-sm"
-                role="alertdialog"
-                aria-modal="true"
-                aria-labelledby="reauth-dialog-title"
-                onClick={(e) => e.stopPropagation()}
+                className="modal-panel fixed inset-0 m-auto h-fit w-[calc(100%-2rem)] max-w-sm"
+                initialFocus={() => panelRef.current?.querySelector<HTMLInputElement>('input[type="password"]')}
                 onKeyDown={(e) => {
-                    if (e.key === 'Enter') submit();
+                    // preventDefault: focus returns to the opener as the dialog closes,
+                    // and the Enter's keypress would otherwise press that button again.
+                    if (e.key === 'Enter' && e.target instanceof HTMLInputElement) {
+                        e.preventDefault();
+                        submit();
+                    }
                 }}
             >
                 <div className="modal-header">
-                    <h3 id="reauth-dialog-title" className="modal-title flex items-center gap-2">
+                    <AlertDialogTitle className="modal-title flex items-center gap-2">
                         <ShieldAlert size={16} /> {pending.title}
-                    </h3>
+                    </AlertDialogTitle>
                 </div>
                 <div className="modal-body space-y-3">
-                    <p className="text-sm text-(--base-07)">{pending.message}</p>
+                    <AlertDialogDescription className="text-sm text-(--base-07)">{pending.message}</AlertDialogDescription>
                     <ReauthFields
                         twoFactorEnabled={pending.twoFactorEnabled}
                         password={password}
@@ -138,7 +147,7 @@ export function ReauthDialogRoot() {
                         {pending.confirmLabel ?? 'Confirm'}
                     </button>
                 </div>
-            </div>
-        </div>
+            </AlertDialogContent>
+        </AlertDialog>
     );
 }

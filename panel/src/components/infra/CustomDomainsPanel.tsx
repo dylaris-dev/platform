@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState } from 'react';
+import Callout from '@/components/server/Callout';
+import Tooltip from '@/components/ui/Tooltip';
 import { Globe, ShieldCheck, Clock, AlertTriangle, Check, Copy, Trash2 } from 'lucide-react';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import {
@@ -372,16 +374,15 @@ export function CustomDomainsPanel() {
   }
   if (loadError) {
     return (
-      <div className="flex items-start gap-2 rounded-md border border-(--warning)/30 bg-(--warning-ghost) p-4 text-xs text-(--warning-light)">
-        <AlertTriangle size={14} className="mt-0.5 shrink-0" />
-        <div className="flex-1">
-          <p className="text-(--base-09)">We could not load your own domains.</p>
-          <p className="mt-0.5">{loadError}</p>
-        </div>
-        <button type="button" onClick={load} className="btn btn-secondary btn-sm shrink-0">
-          Try again
-        </button>
-      </div>
+      <Callout
+        tone="warning"
+        icon={<AlertTriangle size={16} />}
+        title="We could not load your own domains."
+        role="alert"
+        actions={<button type="button" onClick={load} className="btn btn-secondary btn-sm">Try again</button>}
+      >
+        {loadError}
+      </Callout>
     );
   }
   // Hidden for an account that uses only our addresses on a platform with own
@@ -389,9 +390,9 @@ export function CustomDomainsPanel() {
   if (domains.length === 0 && !customEnabled) return null;
 
   return (
-    <div className="space-y-3 rounded-md border border-(--base-03) bg-(--base-01) p-4">
-      <div className="flex items-center gap-2 text-sm font-medium text-(--base-09)">
-        <Globe size={15} className="text-(--accent-light)" />
+    <div className="srv-surface space-y-4 p-5">
+      <div className="flex items-center gap-2 text-[15px] font-semibold text-(--base-09)">
+        <Globe size={16} className="text-(--base-06)" aria-hidden="true" />
         Your own domains
       </div>
 
@@ -454,7 +455,7 @@ export function CustomDomainsPanel() {
           // be told "already verified".
           const canCheck = d.state !== 'verified' || !!d.lapsesAt;
           return (
-            <li key={d.domain} className="rounded-md border border-(--base-03) bg-(--base-02) p-3">
+            <li key={d.domain} className="rounded-lg bg-(--base-03) p-4">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="font-mono text-xs text-(--base-09)">{d.domain}</span>
                 <span className={`inline-flex items-center gap-1 text-xs ${info.tone}`}>
@@ -464,16 +465,17 @@ export function CustomDomainsPanel() {
                   {info.title}
                 </span>
                 {left ? <span className="text-xs text-(--base-06)">{left}</span> : null}
-                <button
-                  type="button"
-                  onClick={() => remove(d.domain)}
-                  disabled={busy === d.domain}
-                  title="Remove"
-                  aria-label={`Remove ${d.domain}`}
-                  className="ml-auto p-1.5 text-(--base-06) hover:text-(--error-light) focus-visible:text-(--error-light) transition-colors disabled:opacity-40"
-                >
-                  <Trash2 size={14} />
-                </button>
+                <Tooltip content="Remove">
+                    <button
+                      type="button"
+                      onClick={() => remove(d.domain)}
+                      disabled={busy === d.domain}
+                      aria-label={`Remove ${d.domain}`}
+                      className="ml-auto p-1.5 text-(--base-06) hover:text-(--error-light) focus-visible:text-(--error-light) transition-colors disabled:opacity-40"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                </Tooltip>
               </div>
               <p className="mt-1 text-xs text-(--base-06)">{info.body}</p>
 
@@ -493,7 +495,7 @@ export function CustomDomainsPanel() {
                   <div className="flex flex-col gap-[5px]">
                     <label className="input-label">TXT record name</label>
                     <div className="flex items-center gap-2">
-                      <code className="input-mono flex-1 truncate rounded-md border border-(--base-03) bg-(--base-01) px-3 py-2 text-xs text-(--base-08)">
+                      <code className="input-mono flex-1 truncate rounded-md bg-(--base-01) px-3 py-2 text-xs text-(--base-08)">
                         {d.txtName}
                       </code>
                       <button type="button" onClick={() => copy(d.txtName!)} className="btn btn-secondary btn-sm">
@@ -504,7 +506,7 @@ export function CustomDomainsPanel() {
                   <div className="flex flex-col gap-[5px]">
                     <label className="input-label">TXT record value</label>
                     <div className="flex items-center gap-2">
-                      <code className="input-mono flex-1 truncate rounded-md border border-(--base-03) bg-(--base-01) px-3 py-2 text-xs text-(--base-08)">
+                      <code className="input-mono flex-1 truncate rounded-md bg-(--base-01) px-3 py-2 text-xs text-(--base-08)">
                         {d.txtValue}
                       </code>
                       <button type="button" onClick={() => copy(d.txtValue!)} className="btn btn-secondary btn-sm">
@@ -566,19 +568,20 @@ function RemoteClaim({
   const canCheck = records.some(r => r.state !== 'verified');
   const nameId = `own-domain-name-${d.domain}`;
   return (
-    <li className="rounded-md border border-(--base-03) bg-(--base-02) p-3">
+    <li className="rounded-lg bg-(--base-03) p-4">
       <div className="flex items-center gap-2">
         <span className="min-w-0 break-all font-mono text-xs text-(--base-09)">{d.domain}</span>
-        <button
-          type="button"
-          onClick={onRemove}
-          disabled={busy}
-          title="Remove"
-          aria-label={`Remove ${d.domain}`}
-          className="ml-auto shrink-0 p-1.5 text-(--base-06) hover:text-(--error-light) focus-visible:text-(--error-light) transition-colors disabled:opacity-40"
-        >
-          <Trash2 size={14} />
-        </button>
+        <Tooltip content="Remove">
+            <button
+              type="button"
+              onClick={onRemove}
+              disabled={busy}
+              aria-label={`Remove ${d.domain}`}
+              className="ml-auto shrink-0 p-1.5 text-(--base-06) hover:text-(--error-light) focus-visible:text-(--error-light) transition-colors disabled:opacity-40"
+            >
+              <Trash2 size={14} />
+            </button>
+        </Tooltip>
       </div>
       <p className={`mt-1 flex items-start gap-1 text-xs ${summary.usable ? 'text-(--success-light)' : 'text-(--warning)'}`}>
         {summary.usable && !records.some(r => r.state === 'lapsing')
@@ -599,12 +602,14 @@ function RemoteClaim({
         <div className="flex flex-col gap-[5px]">
           <span id={nameId} className="input-label">TXT record name (the same for both)</span>
           <div className="flex items-center gap-2">
-            <code aria-labelledby={nameId} title={name} className="input-mono min-w-0 flex-1 truncate rounded-md border border-(--base-03) bg-(--base-01) px-3 py-2 text-xs text-(--base-08)">
+            <code aria-labelledby={nameId} title={name} className="input-mono min-w-0 flex-1 truncate rounded-md bg-(--base-01) px-3 py-2 text-xs text-(--base-08)">
               {name}
             </code>
-            <button type="button" onClick={() => onCopy(name)} aria-label="Copy the TXT record name" title="Copy" className="btn btn-secondary btn-sm shrink-0">
-              {copied === name ? <Check size={12} /> : <Copy size={12} />}
-            </button>
+            <Tooltip content="Copy">
+                <button type="button" onClick={() => onCopy(name)} aria-label="Copy the TXT record name" className="btn btn-secondary btn-sm shrink-0">
+                  {copied === name ? <Check size={12} /> : <Copy size={12} />}
+                </button>
+            </Tooltip>
           </div>
         </div>
 
@@ -612,7 +617,7 @@ function RemoteClaim({
           const badge = PROOF_BADGE[r.state];
           const valueId = `own-domain-${r.purpose}-${d.domain}`;
           return (
-            <section key={r.purpose} aria-label={`${r.label} record`} className="space-y-2 rounded-md border border-(--base-03) bg-(--base-01) p-3">
+            <section key={r.purpose} aria-label={`${r.label} record`} className="space-y-2 rounded-md bg-(--base-01) p-3">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-xs font-medium text-(--base-09)">{r.label}</span>
                 <span className={`badge ${badge.cls}`}>{badge.label}</span>
@@ -629,12 +634,14 @@ function RemoteClaim({
                 <div className="flex flex-col gap-[5px]">
                   <span id={valueId} className="input-label">TXT record value</span>
                   <div className="flex items-center gap-2">
-                    <code aria-labelledby={valueId} title={r.value} className="input-mono min-w-0 flex-1 truncate rounded-md border border-(--base-03) bg-(--base-02) px-3 py-2 text-xs text-(--base-08)">
+                    <code aria-labelledby={valueId} title={r.value} className="input-mono min-w-0 flex-1 truncate rounded-md bg-(--base-02) px-3 py-2 text-xs text-(--base-08)">
                       {r.value}
                     </code>
-                    <button type="button" onClick={() => onCopy(r.value)} aria-label={r.purpose === 'platform' ? 'Copy the TXT value for this platform' : 'Copy the TXT value for the gateway provider'} title="Copy" className="btn btn-secondary btn-sm shrink-0">
-                      {copied === r.value ? <Check size={12} /> : <Copy size={12} />}
-                    </button>
+                    <Tooltip content="Copy">
+                        <button type="button" onClick={() => onCopy(r.value)} aria-label={r.purpose === 'platform' ? 'Copy the TXT value for this platform' : 'Copy the TXT value for the gateway provider'} className="btn btn-secondary btn-sm shrink-0">
+                          {copied === r.value ? <Check size={12} /> : <Copy size={12} />}
+                        </button>
+                    </Tooltip>
                   </div>
                 </div>
               ) : r.purpose === 'platform' && r.state !== 'verified' ? (

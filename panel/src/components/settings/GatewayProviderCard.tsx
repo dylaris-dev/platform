@@ -77,7 +77,7 @@ function AccountSummary({ account }: { account: ProviderAccount }) {
         <dl className="grid grid-cols-2 sm:grid-cols-4 gap-2">
             {rows.map(([k, v]) => (
                 <div key={k} className="p-3 rounded-md bg-(--base-02) min-w-0">
-                    <dt className="mono-label">{k}</dt>
+                    <dt className="srv-label">{k}</dt>
                     <dd className="text-sm text-(--base-09) mt-1 truncate" title={v}>{v}</dd>
                 </div>
             ))}

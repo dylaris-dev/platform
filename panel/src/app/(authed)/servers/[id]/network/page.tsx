@@ -17,8 +17,8 @@ export default function ServerNetworkPage() {
     if (!server) return null;
     const access = domainAccess(server);
     return (
-        <div className="space-y-6">
-            {routingMode !== 'gateway' && access.read && (<div className="max-w-3xl mx-auto"><ServerDomainsCard key={server.id} serverId={String(server.id)} canWrite={access.write} /></div>)}
+        <div className="flex flex-col gap-6">
+            {routingMode !== 'gateway' && access.read && (<ServerDomainsCard key={server.id} serverId={String(server.id)} canWrite={access.write} />)}
             <NetworkView
                 server={server}
                 allServers={servers}

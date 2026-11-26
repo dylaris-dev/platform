@@ -3,11 +3,21 @@
 import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { ArrowLeft, LifeBuoy, Loader2, CircleAlert } from 'lucide-react';
+import { ArrowLeft, Loader2, CircleAlert } from 'lucide-react';
 import { listTicketCategories, createTicket, TicketCategory, TicketPriority } from '@/lib/api/tickets';
 import { useAppData } from '@/lib/AppDataContext';
 import TicketsDisabledBanner from '@/components/tickets/TicketsDisabledBanner';
+import PageHeader from '@/components/ui/PageHeader';
+import Select, { type SelectOption } from '@/components/ui/Select';
 import { getNodes, getLinkRoutes } from '@/lib/api';
+import '@/styles/tickets.css';
+
+const PRIORITY_OPTIONS: SelectOption[] = [
+    { value: 'low', label: 'Low' },
+    { value: 'normal', label: 'Normal' },
+    { value: 'high', label: 'High' },
+    { value: 'urgent', label: 'Urgent' },
+];
 
 export default function NewTicketPage() {
     const router = useRouter();
@@ -56,8 +66,6 @@ export default function NewTicketPage() {
         return () => { cancelled = true; };
     }, [featureFlags.tickets, gatewayEnabled, gatewayVisibility.tenancy]);
 
-    if (!featureFlags.tickets) return <TicketsDisabledBanner />;
-
     const selectedCategory = categories.find(c => c.id === categoryId);
     const requiresServer = !!selectedCategory?.requiresServer;
 
@@ -68,6 +76,8 @@ export default function NewTicketPage() {
             setPriority(selectedCategory.defaultPriority);
         }
     }, [selectedCategory]);
+
+    if (!featureFlags.tickets) return <TicketsDisabledBanner />;
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -114,171 +124,139 @@ export default function NewTicketPage() {
         }
     };
 
-    return (
-        <main className="flex-1 flex flex-col overflow-y-auto p-6">
-            <div className="max-w-2xl mx-auto w-full">
-                <Link href="/tickets" className="inline-flex items-center gap-1.5 text-xs text-(--base-06) hover:text-(--accent-light) mb-3">
-                    <ArrowLeft size={12} /> Back to tickets
-                </Link>
-                <h1 className="h-page flex items-center gap-2 mb-2">
-                    <LifeBuoy size={22} className="text-(--accent-light)" />
-                    New ticket
-                </h1>
-                <p className="text-sm text-(--base-06) mb-6">
-                    Pick a category, say which of your services it concerns, and describe what&apos;s going on.
-                </p>
+    // Deliberately first and always available: someone with nothing yet, or a
+    // question about billing, still has to be able to file a ticket. The
+    // group (server / machine / address) travels as the option badge.
+    const subjectOptions: SelectOption[] = [
+        { value: '', label: 'Nothing specific - a general question' },
+        ...servers.map(sv => ({ value: `server:${sv.uuid}`, label: sv.name, badge: 'server' })),
+        ...ownNodes.map(n => ({ value: `node:${n.id}`, label: n.label, badge: 'machine' })),
+        ...ownRoutes.map(d => ({ value: `route:${d}`, label: d, badge: 'address' })),
+    ];
 
-                {error && (
-                    <div className="alert alert-error mb-4 flex items-center gap-2">
-                        <CircleAlert size={14} className="shrink-0" />
-                        <span>{error}</span>
+    return (
+        <div className="mx-auto w-full max-w-2xl space-y-6">
+            <Link href="/tickets" className="tk-link-btn text-(--base-06)">
+                <ArrowLeft size={12} /> Back to tickets
+            </Link>
+            <PageHeader
+                title="New ticket"
+                description="Pick a category, say which of your services it concerns, and describe what's going on."
+            />
+
+            {error && (
+                <div className="srv-callout" data-tone="error" role="alert">
+                    <CircleAlert size={14} className="mt-0.5 shrink-0 text-(--error-light)" />
+                    <span>{error}</span>
+                </div>
+            )}
+
+            <form onSubmit={handleSubmit} className="srv-surface space-y-5 p-6">
+                <div className="tk-field">
+                    <label className="input-label" htmlFor="ticket-category">Category</label>
+                    <Select
+                        id="ticket-category"
+                        value={categoryId === '' ? '' : String(categoryId)}
+                        onChange={v => setCategoryId(v ? Number(v) : '')}
+                        options={categories.map(c => ({ value: String(c.id), label: c.name }))}
+                        placeholder="Pick a category"
+                        ariaLabel="Category"
+                        disabled={loading || submitting}
+                    />
+                    {selectedCategory?.description && <p className="tk-hint">{selectedCategory.description}</p>}
+                </div>
+
+                <div className="tk-field">
+                    <label className="input-label" htmlFor="ticket-subject">What is this about?</label>
+                    <Select
+                        id="ticket-subject"
+                        value={subject}
+                        onChange={setSubject}
+                        options={subjectOptions}
+                        ariaLabel="What is this about?"
+                        disabled={submitting}
+                    />
+                    <p className="tk-hint">
+                        Optional, and it saves a round trip: support sees straight away which of your
+                        services the ticket is about.
+                    </p>
+                </div>
+
+                {requiresServer && (
+                    <div className="tk-field">
+                        <label className="input-label" htmlFor="ticket-server">Server</label>
+                        <Select
+                            id="ticket-server"
+                            value={serverUuid}
+                            onChange={setServerUuid}
+                            options={servers.map(s => ({ value: s.uuid, label: `${s.name} (${s.uuid.slice(0, 8)})` }))}
+                            placeholder="Pick a server"
+                            ariaLabel="Server"
+                            disabled={submitting}
+                        />
+                        {servers.length === 0 && (
+                            <p className="text-xs text-(--warning-light)">
+                                You don&apos;t have any servers yet. Pick a different category, or create a server first.
+                            </p>
+                        )}
                     </div>
                 )}
 
-                <form onSubmit={handleSubmit} className="space-y-4">
-                    <div className="flex flex-col gap-[5px]">
-                        <label className="input-label">Category</label>
-                        <select
-                            value={categoryId}
-                            onChange={e => setCategoryId(e.target.value ? Number(e.target.value) : '')}
-                            disabled={loading || submitting}
-                            required
-                            className="input-field w-full"
-                        >
-                            <option value="">— Pick a category —</option>
-                            {categories.map(c => (
-                                <option key={c.id} value={c.id}>{c.name}</option>
-                            ))}
-                        </select>
-                        {selectedCategory?.description && (
-                            <p className="text-xs text-(--base-06) leading-snug mt-1">{selectedCategory.description}</p>
-                        )}
-                    </div>
+                <div className="tk-field">
+                    <label className="input-label" htmlFor="ticket-title">Title</label>
+                    <input
+                        id="ticket-title"
+                        type="text"
+                        value={title}
+                        onChange={e => setTitle(e.target.value)}
+                        placeholder="Short summary of the issue"
+                        maxLength={200}
+                        minLength={3}
+                        required
+                        disabled={submitting}
+                        className="input-field w-full"
+                    />
+                </div>
 
-                    <div className="flex flex-col gap-[5px]">
-                        <label className="input-label" htmlFor="ticket-subject">What is this about?</label>
-                        <select
-                            id="ticket-subject"
-                            value={subject}
-                            onChange={e => setSubject(e.target.value)}
+                <div className="tk-field">
+                    <label className="input-label" htmlFor="ticket-body">Description</label>
+                    <textarea
+                        id="ticket-body"
+                        value={firstMessage}
+                        onChange={e => setFirstMessage(e.target.value)}
+                        placeholder="Describe what's going on. Include any error messages, what you tried, and what you expected."
+                        rows={8}
+                        maxLength={10000}
+                        required
+                        disabled={submitting}
+                        className="input-field w-full"
+                    />
+                    <p className="tk-hint srv-num">{firstMessage.length} / 10000</p>
+                </div>
+
+                {selectedCategory && (
+                    <div className="tk-field">
+                        <label className="input-label" htmlFor="ticket-priority">Priority</label>
+                        <Select
+                            id="ticket-priority"
+                            value={priority}
+                            onChange={v => setPriority(v as TicketPriority)}
+                            options={PRIORITY_OPTIONS}
+                            ariaLabel="Priority"
                             disabled={submitting}
-                            className="input-field w-full"
-                        >
-                            {/* Deliberately first and always available: someone
-                                with nothing yet, or a question about billing,
-                                still has to be able to file a ticket. */}
-                            <option value="">Nothing specific — a general question</option>
-                            {servers.length > 0 && (
-                                <optgroup label="Servers">
-                                    {servers.map(sv => (
-                                        <option key={sv.uuid} value={`server:${sv.uuid}`}>{sv.name}</option>
-                                    ))}
-                                </optgroup>
-                            )}
-                            {ownNodes.length > 0 && (
-                                <optgroup label="My machines">
-                                    {ownNodes.map(n => (
-                                        <option key={n.id} value={`node:${n.id}`}>{n.label}</option>
-                                    ))}
-                                </optgroup>
-                            )}
-                            {ownRoutes.length > 0 && (
-                                <optgroup label="Protected addresses">
-                                    {ownRoutes.map(d => (
-                                        <option key={d} value={`route:${d}`}>{d}</option>
-                                    ))}
-                                </optgroup>
-                            )}
-                        </select>
-                        <p className="text-xs text-(--base-06) leading-snug">
-                            Optional, and it saves a round trip: support sees straight away which of your
-                            services the ticket is about.
-                        </p>
-                    </div>
-
-                    {requiresServer && (
-                        <div className="flex flex-col gap-[5px]">
-                            <label className="input-label">Server</label>
-                            <select
-                                value={serverUuid}
-                                onChange={e => setServerUuid(e.target.value)}
-                                disabled={submitting}
-                                required
-                                className="input-field w-full"
-                            >
-                                <option value="">— Pick a server —</option>
-                                {servers.map(s => (
-                                    <option key={s.uuid} value={s.uuid}>{s.name} ({s.uuid.slice(0, 8)})</option>
-                                ))}
-                            </select>
-                            {servers.length === 0 && (
-                                <p className="text-xs text-(--warning-light)">
-                                    You don&apos;t have any servers yet. Pick a different category, or create a server first.
-                                </p>
-                            )}
-                        </div>
-                    )}
-
-                    <div className="flex flex-col gap-[5px]">
-                        <label className="input-label">Title</label>
-                        <input
-                            type="text"
-                            value={title}
-                            onChange={e => setTitle(e.target.value)}
-                            placeholder="Short summary of the issue"
-                            maxLength={200}
-                            minLength={3}
-                            required
-                            disabled={submitting}
-                            className="input-field w-full"
+                            className="w-full sm:w-48"
                         />
                     </div>
+                )}
 
-                    <div className="flex flex-col gap-[5px]">
-                        <label className="input-label">Description</label>
-                        <textarea
-                            value={firstMessage}
-                            onChange={e => setFirstMessage(e.target.value)}
-                            placeholder="Describe what's going on. Include any error messages, what you tried, and what you expected."
-                            rows={8}
-                            maxLength={10000}
-                            required
-                            disabled={submitting}
-                            className="input-field w-full"
-                        />
-                        <p className="text-xs text-(--base-06)">{firstMessage.length} / 10000</p>
-                    </div>
-
-                    {selectedCategory && (
-                        <div className="flex flex-col gap-[5px]">
-                            <label className="input-label">Priority</label>
-                            <select
-                                value={priority}
-                                onChange={e => setPriority(e.target.value as TicketPriority)}
-                                disabled={submitting}
-                                className="input-field w-full sm:w-48"
-                            >
-                                <option value="low">Low</option>
-                                <option value="normal">Normal</option>
-                                <option value="high">High</option>
-                                <option value="urgent">Urgent</option>
-                            </select>
-                        </div>
-                    )}
-
-                    <div className="flex justify-end gap-2 pt-2">
-                        <Link href="/tickets" className="btn btn-secondary">Cancel</Link>
-                        <button
-                            type="submit"
-                            disabled={submitting}
-                            className="btn btn-primary inline-flex items-center gap-2 disabled:opacity-40"
-                        >
-                            {submitting && <Loader2 size={14} className="animate-spin" />}
-                            Submit ticket
-                        </button>
-                    </div>
-                </form>
-            </div>
-        </main>
+                <div className="flex justify-end gap-2 pt-1">
+                    <Link href="/tickets" className="btn btn-secondary">Cancel</Link>
+                    <button type="submit" disabled={submitting} className="btn btn-primary disabled:opacity-40">
+                        {submitting && <Loader2 size={14} className="animate-spin" />}
+                        Submit ticket
+                    </button>
+                </div>
+            </form>
+        </div>
     );
 }

@@ -4,7 +4,7 @@ import { getServerSettings, saveServerSettings, ServerLimitSettings } from '@/li
 import { Server } from 'lucide-react';
 import { useSettingsForm } from '@/lib/useSettingsForm';
 import SettingsPage from '@/components/settings/SettingsPage';
-import SettingsCard, { SettingsRow } from '@/components/settings/SettingsCard';
+import SettingsCard, { SettingsGroup, SettingsRow } from '@/components/settings/SettingsCard';
 import { LimitField, LimitHelp } from '@/components/settings/LimitField';
 
 const DEFAULTS: ServerLimitSettings = { maxSubServers: 3, maxScheduledTasks: 25 };
@@ -32,7 +32,8 @@ export default function ServersTab() {
             width="2xl"
             loading={form.loading}
         >
-            <SettingsCard title="Sub-servers" form={form}>
+            <SettingsCard title="Limits" description="Checked when a sub-server or task is created; lowering a cap never removes anything." form={form}>
+                <SettingsGroup title="Sub-servers" first>
                 <SettingsRow
                     label="Max sub-servers per server"
                     htmlFor="max-sub-servers"
@@ -58,8 +59,8 @@ export default function ServersTab() {
                         unit="per server"
                     />
                 </SettingsRow>
-            </SettingsCard>
-            <SettingsCard title="Scheduled tasks" form={form}>
+                </SettingsGroup>
+                <SettingsGroup title="Scheduled tasks">
                 <SettingsRow
                     label="Max scheduled tasks per server"
                     htmlFor="max-scheduled-tasks"
@@ -86,6 +87,7 @@ export default function ServersTab() {
                         unit="per server"
                     />
                 </SettingsRow>
+                </SettingsGroup>
             </SettingsCard>
         </SettingsPage>
     );

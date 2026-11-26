@@ -7,6 +7,7 @@ import {
     type ShareLevel, type TemplateShare,
 } from '@/lib/api/templates';
 import { SkeletonList } from '@/components/Skeleton';
+import Select from '@/components/ui/Select';
 import { toast } from '@/components/ui/Toast';
 import { useBusy } from '@/lib/useBusy';
 
@@ -96,7 +97,7 @@ function ShareManager({
     };
 
     return (
-        <section className="card p-4 space-y-3" aria-labelledby={`${idPrefix}-shares-title`}>
+        <section className="srv-surface p-4 space-y-3" aria-labelledby={`${idPrefix}-shares-title`}>
             <div>
                 <h2 id={`${idPrefix}-shares-title`} className="text-sm font-medium text-(--base-09) flex items-center gap-2">
                     <Users size={14} className="text-(--accent-light)" /> {title}
@@ -119,14 +120,14 @@ function ShareManager({
                 </div>
                 <div>
                     <label htmlFor={`${idPrefix}-share-level`} className="input-label">Access</label>
-                    <select
+                    <Select
                         id={`${idPrefix}-share-level`}
-                        className="input-field"
                         value={level}
-                        onChange={(e) => setLevel(e.target.value as ShareLevel)}
-                    >
-                        {LEVELS.map((l) => <option key={l.value} value={l.value}>{l.label}</option>)}
-                    </select>
+                        onChange={(v) => setLevel(v as ShareLevel)}
+                        options={LEVELS}
+                        ariaLabel="Access"
+                        className="w-72"
+                    />
                 </div>
                 <button type="submit" className="btn btn-primary btn-sm disabled:opacity-40" disabled={adding}>
                     <UserPlus size={13} /> Share
@@ -141,9 +142,9 @@ function ShareManager({
             ) : shares.length === 0 ? (
                 <p className="text-xs text-(--base-06)">Not shared with anyone yet.</p>
             ) : (
-                <ul className="divide-y divide-(--base-03)">
+                <ul className="space-y-0.5">
                     {shares.map((s) => (
-                        <li key={s.userId} className="flex items-center gap-3 py-2">
+                        <li key={s.userId} className="app-row">
                             <span className="text-sm text-(--base-09) flex-1 truncate">{s.username}</span>
                             <span className="text-xs text-(--base-06)">{s.level === 'edit' ? 'Can edit' : 'Can use'}</span>
                             <button

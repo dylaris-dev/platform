@@ -2,11 +2,12 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import React from 'react';
 import { Server, Network, Activity, RefreshCw, Globe, Users } from 'lucide-react';
+import PageHeader from '@/components/ui/PageHeader';
 import { SkeletonStatGrid, SkeletonCard, SkeletonText } from '@/components/Skeleton';
 import { attentionCount } from '@/lib/serviceErrors';
 import { isKind } from '@/lib/nodeKind';
-import { StatCard } from './InfraCards';
 import { useInfra } from './context';
 import { useAppData } from '@/lib/AppDataContext';
 
@@ -75,15 +76,8 @@ export default function InfrastructureShell({ children }: { children: React.Reac
 
     if (infra.loading) {
         return (
-            <div className="h-full flex flex-col gap-4 overflow-y-auto">
-                <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                        <div className="w-9 h-9 rounded-md bg-(--base-03) flex items-center justify-center">
-                            <Server size={18} className="text-(--accent-light)" />
-                        </div>
-                        <h1 className="h-page">Infrastructure</h1>
-                    </div>
-                </div>
+            <div className="h-full flex flex-col gap-6 overflow-y-auto">
+                <PageHeader title="Infrastructure" description="Nodes, gateway and the players on them." />
                 <SkeletonStatGrid tiles={2} />
                 <SkeletonText width="w-40" className="h-4" />
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -94,36 +88,34 @@ export default function InfrastructureShell({ children }: { children: React.Reac
     }
 
     return (
-        <div className="h-full flex flex-col gap-4 overflow-y-auto">
-            <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-md bg-(--base-03) flex items-center justify-center">
-                        <Server size={18} className="text-(--accent-light)" />
-                    </div>
-                    <h1 className="h-page">Infrastructure</h1>
-                </div>
-                <button
-                    onClick={() => infra.refresh(true)}
-                    disabled={infra.refreshing}
-                    className="btn btn-secondary btn-sm"
-                >
-                    <RefreshCw size={14} className={infra.refreshing ? 'animate-spin' : ''} />
-                    Refresh
-                </button>
-            </div>
+        <div className="h-full flex flex-col gap-6 overflow-y-auto pb-6">
+            <PageHeader
+                title="Infrastructure"
+                description="Nodes, gateway and the players on them."
+                actions={
+                    <button
+                        onClick={() => infra.refresh(true)}
+                        disabled={infra.refreshing}
+                        className="btn btn-secondary btn-sm"
+                    >
+                        <RefreshCw size={14} className={infra.refreshing ? 'animate-spin' : ''} />
+                        Refresh
+                    </button>
+                }
+            />
 
             <div className={`grid gap-3 ${infra.gatewayDeployed ? 'grid-cols-2 md:grid-cols-5' : 'grid-cols-2 md:grid-cols-3'}`}>
-                <StatCard label="Nodes" value={infra.nodes.length} icon={<Network size={16} />} />
-                <StatCard label="Online" value={onlineNodes} sub={`/ ${infra.nodes.length}`} icon={<Activity size={16} />} />
-                {infra.gatewayDeployed && <StatCard label="Edges" value={infra.edges.length} icon={<Server size={16} />} />}
-                {infra.gatewayDeployed && <StatCard label="Routes" value={infra.routeCount} icon={<Globe size={16} />} />}
+                <Tile label="Nodes" value={infra.nodes.length} icon={<Network size={14} />} />
+                <Tile label="Online" value={onlineNodes} sub={`/ ${infra.nodes.length}`} icon={<Activity size={14} />} />
+                {infra.gatewayDeployed && <Tile label="Edges" value={infra.edges.length} icon={<Server size={14} />} />}
+                {infra.gatewayDeployed && <Tile label="Routes" value={infra.routeCount} icon={<Globe size={14} />} />}
                 {/* From each server's own list ping, not the edges: an edge stream is
                     also every server-list ping and resume leftover, which is how
                     this card used to count players that were not there. */}
-                <StatCard label="Players online" value={infra.playersOnline ?? '-'} icon={<Users size={16} />} />
+                <Tile label="Players online" value={infra.playersOnline ?? '-'} icon={<Users size={14} />} />
             </div>
 
-            <nav aria-label="Infrastructure sections" className="flex items-center gap-0.5 bg-(--base-02) border border-(--base-03) rounded-lg p-1 w-fit">
+            <nav aria-label="Infrastructure sections" className="flex items-center gap-0.5 overflow-x-auto shrink-0">
                 {tabs.filter(t => t.visible).map(t => {
                     const href = `${BASE}/${t.slug}`;
                     const active = pathname === href;
@@ -132,15 +124,11 @@ export default function InfrastructureShell({ children }: { children: React.Reac
                             key={t.slug}
                             href={href}
                             aria-current={active ? 'page' : undefined}
-                            className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-sm font-medium transition-all ${
-                                active ? 'bg-(--accent) text-white shadow-sm' : 'text-(--base-07) hover:text-(--base-09)'
-                            }`}
+                            className="srv-nav-link"
                         >
                             {t.label}
                             {typeof t.count === 'number' && (
-                                <span className={`text-[10px] font-mono tabular-nums px-1.5 py-0.5 rounded-full ${
-                                    active ? 'bg-white/20 text-white' : 'bg-(--base-03) text-(--base-06)'
-                                }`}>
+                                <span className="srv-num text-[11px] px-1.5 py-0.5 rounded-full bg-(--base-03) text-(--base-06)">
                                     {t.count}
                                 </span>
                             )}
@@ -150,6 +138,19 @@ export default function InfrastructureShell({ children }: { children: React.Reac
             </nav>
 
             {children}
+        </div>
+    );
+}
+
+/** A quiet summary tile: label, then the number. */
+function Tile({ label, value, sub, icon }: { label: string; value: string | number; sub?: string; icon: React.ReactNode }) {
+    return (
+        <div className="srv-surface p-4 flex flex-col gap-2">
+            <span className="srv-label flex items-center gap-1.5"><span className="text-(--base-06)" aria-hidden="true">{icon}</span>{label}</span>
+            <div className="flex items-baseline gap-1.5">
+                <span className="srv-num text-2xl font-medium text-(--base-09) leading-none">{value}</span>
+                {sub && <span className="srv-num text-sm text-(--base-06)">{sub}</span>}
+            </div>
         </div>
     );
 }

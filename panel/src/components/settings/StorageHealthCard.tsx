@@ -8,6 +8,8 @@ import { Badge } from '@/components/ui/Badge';
 import { SkeletonCard } from '@/components/Skeleton';
 import { systemEvents } from '@/lib/systemEvents';
 import { fmtDateTime } from '@/lib/time';
+import Callout from '@/components/server/Callout';
+import Section from '@/components/ui/Section';
 
 /**
  * Fleet storage health. A Core that fails its boot or periodic self-check
@@ -50,20 +52,14 @@ export default function StorageHealthCard() {
 
     if (error) {
         return (
-            <div className="alert alert-warning text-xs" role="alert">
-                {error}
-            </div>
+            <Callout tone="warning" icon={<TriangleAlert size={14} />} role="alert">{error}</Callout>
         );
     }
 
     return (
-        <section className="flex flex-col gap-3">
-            <h3 className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06)">
-                Fleet storage health
-            </h3>
-
+        <Section title="Fleet storage health" description="Whether every Core can read and write the shared storage.">
             {faults.length === 0 ? (
-                <div className="flex items-center gap-2 text-xs text-(--base-07)" role="status">
+                <div className="srv-surface flex items-center gap-2 px-5 py-4 text-[13px] text-(--base-07)" role="status">
                     <CircleCheck size={14} className="text-(--success-light)" />
                     <span>{fleetHealthySummary(online.length)}</span>
                 </div>
@@ -71,7 +67,7 @@ export default function StorageHealthCard() {
                 <div role="alert">
                     <ul className="flex flex-col gap-3">
                         {faults.map(f => (
-                            <li key={f.coreId} className="alert alert-error text-xs flex flex-col gap-1.5">
+                            <li key={f.coreId} className="srv-callout flex-col gap-1.5" data-tone="error">
                                 <div className="flex items-center gap-2">
                                     <TriangleAlert size={14} />
                                     <Badge variant="warning">{statusLabel(f.status)}</Badge>
@@ -95,6 +91,6 @@ export default function StorageHealthCard() {
                     </ul>
                 </div>
             )}
-        </section>
+        </Section>
     );
 }

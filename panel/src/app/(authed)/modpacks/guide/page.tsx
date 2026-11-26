@@ -1,20 +1,15 @@
 'use client';
 import Link from 'next/link';
 import styles from '@/components/modpacks/workspace.module.css';
+import PageHeader from '@/components/ui/PageHeader';
 export default function PackGuide() {
     return (
         <div className={styles.scroll}>
-            <article className="max-w-4xl mx-auto space-y-6">
-                <header>
-                    <p className="mono-label text-(--accent-light)">Modpack authoring</p>
-                    <h1 className="text-2xl font-display font-semibold mt-2">
-                        From the first pack to a playable build
-                    </h1>
-                    <p className="text-sm text-(--base-06) mt-3">
-                        A pack is the project. A build pins Minecraft, loader, mods and config files. Create a new draft
-                        for changes; keep published releases reproducible.
-                    </p>
-                </header>
+            <article className="max-w-3xl mx-auto space-y-6">
+                <PageHeader
+                    title="From the first pack to a playable build"
+                    description="A pack is the project. A build pins Minecraft, loader, mods and config files. Create a new draft for changes; keep published releases reproducible."
+                />
                 {[
                     [
                         '1. Create or join a pack',
@@ -57,8 +52,8 @@ export default function PackGuide() {
                         'The operator chooses Settings > Modpacks: local paths, a named S3-compatible connection, or Core storage. Linked mods are stored as pinned references until rendering. Uploaded files/configs and rendered server archives use that storage provider. Draft downloads do not publish or freeze a build. A database backup alone does not back up object storage.',
                     ],
                 ].map(([title, body]) => (
-                    <section key={title} className="card p-5">
-                        <h2 className="font-medium text-base">{title}</h2>
+                    <section key={title} className="srv-surface p-5">
+                        <h2 className="text-[15px] font-semibold text-(--base-09)">{title}</h2>
                         <p className="text-sm text-(--base-07) leading-relaxed mt-2">{body}</p>
                     </section>
                 ))}

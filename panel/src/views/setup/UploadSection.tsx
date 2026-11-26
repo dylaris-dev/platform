@@ -3,6 +3,7 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { FileArchive, Folder, X, AlertTriangle, Upload } from 'lucide-react';
 import { getSftpCredentials, SftpCredentials, getUserLimits } from '@/lib/api';
+import Menu from '@/components/ui/Menu';
 import { SkeletonText } from '@/components/Skeleton';
 
 declare const JSZip: any;
@@ -32,10 +33,8 @@ export default function UploadSection({
 }: UploadSectionProps) {
     const uploadInputRef = useRef<HTMLInputElement>(null);
     const folderInputRef = useRef<HTMLInputElement>(null);
-    const dropZoneRef = useRef<HTMLDivElement>(null);
 
     const [uploadLimit, setUploadLimit] = useState<number>(0);
-    const [showPicker, setShowPicker] = useState(false);
     const [dragging, setDragging] = useState(false);
 
     // SFTP
@@ -78,18 +77,6 @@ export default function UploadSection({
         onFileTooLarge?.(fileTooLarge);
     }, [fileTooLarge]);
 
-    // Close picker on outside click
-    useEffect(() => {
-        if (!showPicker) return;
-        const handler = (e: MouseEvent) => {
-            if (dropZoneRef.current && !dropZoneRef.current.contains(e.target as Node)) {
-                setShowPicker(false);
-            }
-        };
-        document.addEventListener('mousedown', handler);
-        return () => document.removeEventListener('mousedown', handler);
-    }, [showPicker]);
-
     const handleZipSelect = (file: File) => {
         onStructureChange('direct');
         onFileChange(file);
@@ -127,8 +114,8 @@ export default function UploadSection({
     return (
         <div className="space-y-3">
             {/* SFTP Banner */}
-            <div className="flex items-center gap-3 px-3 py-2 bg-(--base-02) rounded-md border border-(--base-03)">
-                <span className="mono-label shrink-0">SFTP</span>
+            <div className="flex items-center gap-3 px-3 py-2 bg-(--base-03) rounded-md">
+                <span className="srv-label shrink-0">SFTP</span>
                 {sftp === null ? (
                     <SkeletonText width="w-40" className="h-3" />
                 ) : sftp.creds ? (
@@ -153,7 +140,7 @@ export default function UploadSection({
             <div className="flex gap-3">
                 {/* Left: Structures */}
                 <div className="w-[155px] shrink-0 space-y-2.5">
-                    <p className="input-label">Structures</p>
+                    <p className="srv-label">Structures</p>
                     <div className="space-y-2">
                         <div>
                             <p className="text-[10px] text-(--base-07) mb-0.5">.zip (root)</p>
@@ -183,45 +170,34 @@ export default function UploadSection({
                 </div>
 
                 {/* Right: Drop Zone / File Display */}
-                <div className="flex-1 min-w-0 flex flex-col gap-2" ref={dropZoneRef}>
+                <div className="flex-1 min-w-0 flex flex-col gap-2">
                     {!uploadFile ? (
                         <div className="relative flex-1">
-                            <div
-                                onClick={() => setShowPicker(p => !p)}
-                                onDragOver={e => { e.preventDefault(); setDragging(true); }}
-                                onDragLeave={() => setDragging(false)}
-                                onDrop={handleDrop}
-                                className={`flex-1 min-h-[140px] border-2 border-dashed rounded-lg flex flex-col items-center justify-center gap-2 cursor-pointer transition-all ${
-                                    dragging
-                                        ? 'border-(--accent) bg-(--accent-ghost)'
-                                        : 'border-(--base-04) hover:border-(--accent) hover:bg-(--accent-ghost)/50'
-                                }`}
-                            >
-                                <Upload size={22} className="text-(--base-06)" />
-                                <p className="text-sm text-(--base-07)">Drop files or click to select</p>
-                            </div>
-
-                            {/* Picker Popup */}
-                            {showPicker && (
-                                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-10 bg-(--base-02) border border-(--base-04) rounded-md shadow-lg overflow-hidden">
+                            <Menu
+                                align="center"
+                                className="min-w-40"
+                                trigger={
                                     <button
                                         type="button"
-                                        onClick={() => { setShowPicker(false); uploadInputRef.current?.click(); }}
-                                        className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-(--base-08) hover:bg-(--base-04) transition-colors"
+                                        aria-label="Choose what to upload"
+                                        onDragOver={e => { e.preventDefault(); setDragging(true); }}
+                                        onDragLeave={() => setDragging(false)}
+                                        onDrop={handleDrop}
+                                        className={`w-full flex-1 min-h-[140px] border-2 border-dashed rounded-lg flex flex-col items-center justify-center gap-2 cursor-pointer transition-all ${
+                                            dragging
+                                                ? 'border-(--accent) bg-(--accent-ghost)'
+                                                : 'border-(--base-04) hover:border-(--accent) hover:bg-(--accent-ghost)/50'
+                                        }`}
                                     >
-                                        <FileArchive size={15} className="text-(--accent-light)" />
-                                        ZIP file
+                                        <Upload size={22} className="text-(--base-06)" />
+                                        <span className="text-sm text-(--base-07)">Drop files or click to select</span>
                                     </button>
-                                    <button
-                                        type="button"
-                                        onClick={() => { setShowPicker(false); folderInputRef.current?.click(); }}
-                                        className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-(--base-08) hover:bg-(--base-04) transition-colors border-t border-(--base-03)"
-                                    >
-                                        <Folder size={15} className="text-(--primary-light)" />
-                                        Folder
-                                    </button>
-                                </div>
-                            )}
+                                }
+                                items={[
+                                    { label: 'ZIP file', icon: <FileArchive size={15} className="text-(--accent-light)" />, onSelect: () => uploadInputRef.current?.click() },
+                                    { label: 'Folder', icon: <Folder size={15} className="text-(--primary-light)" />, onSelect: () => folderInputRef.current?.click() },
+                                ]}
+                            />
                         </div>
                     ) : (
                         <div className="space-y-2">
@@ -245,8 +221,8 @@ export default function UploadSection({
                             </div>
 
                             {fileTooLarge && (
-                                <div className="alert alert-warning text-xs">
-                                    <AlertTriangle size={13} className="text-(--warning-light) shrink-0 mt-0.5" />
+                                <div className="srv-callout" data-tone="warning">
+                                    <AlertTriangle size={16} className="text-(--warning-light) shrink-0 mt-0.5" />
                                     <p>
                                         File exceeds limit. Use SFTP to upload large files.
                                     </p>

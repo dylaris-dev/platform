@@ -1,29 +1,28 @@
 "use client";
 
 import React from 'react';
-import { Server as ServerIcon, PlusCircle } from 'lucide-react';
+import { Server as ServerIcon } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
+import PageHeader from '@/components/ui/PageHeader';
+import EmptyState from '@/components/ui/EmptyState';
 
 export default function ServersIndexPage() {
     const { servers } = useAppData();
+    const none = servers.length === 0;
 
     return (
-        <div className="flex-1 flex flex-col items-center justify-center text-(--base-06) p-6 animate-content-in">
-            <ServerIcon size={64} className="mb-4 opacity-40" />
-            <p className="h-section text-(--base-07) mb-2">
-                {servers.length === 0 ? 'No servers yet' : 'No server selected'}
-            </p>
-            <p className="text-sm text-(--base-06) max-w-md text-center mb-6">
-                {servers.length === 0
-                    ? 'Create your first server to get started.'
+        <div className="app-page flex-1 overflow-y-auto space-y-6 animate-content-in">
+            <PageHeader
+                title="Servers"
+                description={none ? 'Everything you run shows up here and in the sidebar.' : `${servers.length} ${servers.length === 1 ? 'server' : 'servers'}. Pick one in the sidebar to manage it.`}
+            />
+            <EmptyState
+                icon={<ServerIcon size={20} />}
+                title={none ? 'No servers yet' : 'No server selected'}
+                description={none
+                    ? 'Open "Create" at the bottom of the sidebar to see what you can set up.'
                     : 'Pick a server from the sidebar on the left to manage it.'}
-            </p>
-            {servers.length === 0 && (
-                <p className="text-xs text-(--base-05) italic flex items-center gap-1.5">
-                    <PlusCircle size={12} />
-                    Open &ldquo;Create&rdquo; at the bottom of the sidebar to see what you can set up.
-                </p>
-            )}
+            />
         </div>
     );
 }

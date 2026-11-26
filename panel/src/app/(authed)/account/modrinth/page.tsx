@@ -9,6 +9,8 @@ import {
 import { useAppData } from '@/lib/AppDataContext';
 import { SkeletonCard, SkeletonHeader } from '@/components/Skeleton';
 import { toast } from '@/components/ui/Toast';
+import PageHeader from '@/components/ui/PageHeader';
+import Callout from '@/components/server/Callout';
 import { fmtDateTime } from '@/lib/time';
 
 // Modrinth account integration. Lets the user attach a Personal
@@ -74,38 +76,30 @@ export default function ModrinthIntegrationPage() {
     };
 
     return (
-        <main className="flex-1 overflow-y-auto p-6 max-w-3xl">
-            <header className="flex items-center gap-3 mb-4">
-                <Package size={20} className="text-(--accent-light)" />
-                <h1 className="text-base font-display font-semibold text-(--base-09)">Modrinth Integration</h1>
-            </header>
+        <main className="flex-1 overflow-y-auto app-page space-y-6">
+            <PageHeader
+                icon={<Package size={16} />}
+                title="Modrinth Integration"
+                description="Attach a Personal Access Token to publish modpacks to your Modrinth account."
+            />
 
             {modpacksDisabled && (
-                <div className="card p-4 mb-4 text-xs flex items-start gap-2">
-                    <AlertTriangle size={14} className="text-(--warning-light) shrink-0 mt-0.5" />
-                    <div>
-                        <p className="text-(--base-08)">Modpacks are turned off on this platform.</p>
-                        <p className="mt-1 text-(--base-06)">
-                            A Modrinth token is only used to publish packs you author here, so it
-                            cannot be connected or changed right now. An admin can re-enable
-                            modpacks under Settings &rarr; Features.
-                        </p>
-                    </div>
-                </div>
+                <Callout tone="warning" icon={<AlertTriangle size={16} />} title="Modpacks are turned off on this platform.">
+                    A Modrinth token is only used to publish packs you author here, so it
+                    cannot be connected or changed right now. An admin can re-enable
+                    modpacks under Settings &rarr; Features.
+                </Callout>
             )}
 
-            <div className="card p-4 mb-4 text-xs text-(--base-07) flex items-start gap-2">
-                <Key size={14} className="text-(--accent-light) shrink-0 mt-0.5" />
-                <div>
-                    Required to publish modpacks you author in Dylaris to your Modrinth account.
-                    Generate a Personal Access Token in your Modrinth settings, paste it below.
-                    Token is stored encrypted (AES-256-GCM) and validated against Modrinth&apos;s API
-                    once on save — never returned by any read endpoint.
-                    It also decides which packs you see: a pack is yours to work on when you are in
-                    its Modrinth team, with the rights the team gives you. Without PROJECT_READ and
-                    ORGANIZATION_READ, Modrinth hides your team rights and your packs turn read only.
-                </div>
-            </div>
+            <Callout tone="info" icon={<Key size={16} />} foldable title="What the Modrinth token is for">
+                Required to publish modpacks you author in Dylaris to your Modrinth account.
+                Generate a Personal Access Token in your Modrinth settings, paste it below.
+                Token is stored encrypted (AES-256-GCM) and validated against Modrinth&apos;s API
+                once on save — never returned by any read endpoint.
+                It also decides which packs you see: a pack is yours to work on when you are in
+                its Modrinth team, with the rights the team gives you. Without PROJECT_READ and
+                ORGANIZATION_READ, Modrinth hides your team rights and your packs turn read only.
+            </Callout>
 
             {loading ? (
                 <div className="space-y-3">
@@ -113,7 +107,7 @@ export default function ModrinthIntegrationPage() {
                     <SkeletonCard height="h-32" />
                 </div>
             ) : status?.connected ? (
-                <section className="card p-5 space-y-4">
+                <section className="srv-surface p-5 space-y-5 max-w-3xl">
                     <header className="flex items-start gap-3">
                         <CircleCheck size={18} className="text-(--success-light) shrink-0 mt-0.5" />
                         <div className="min-w-0 flex-1">
@@ -133,9 +127,9 @@ export default function ModrinthIntegrationPage() {
                     </header>
                 </section>
             ) : (
-                <section className="card p-5 space-y-4">
+                <section className="srv-surface p-5 space-y-5 max-w-3xl">
                     <header className="flex items-start gap-3">
-                        <div className="w-9 h-9 rounded-md bg-(--accent-ghost) flex items-center justify-center shrink-0">
+                        <div className="size-9 rounded-lg bg-(--accent-ghost) flex items-center justify-center shrink-0">
                             <Key size={16} className="text-(--accent-light)" />
                         </div>
                         <div className="min-w-0 flex-1">
@@ -152,10 +146,10 @@ export default function ModrinthIntegrationPage() {
                     </header>
 
                     <div>
-                        <label className="input-label">Required scopes</label>
+                        <span className="srv-label block">Required scopes</span>
                         <div className="flex flex-wrap gap-1.5 mt-1">
                             {REQUIRED_SCOPES.map(s => (
-                                <code key={s} className="mono-label bg-(--base-03) px-1.5 py-0.5 rounded-sm text-(--base-07)">
+                                <code key={s} className="srv-chip h-6 px-2 font-mono text-[11px]">
                                     {s}
                                 </code>
                             ))}
@@ -163,9 +157,10 @@ export default function ModrinthIntegrationPage() {
                     </div>
 
                     <div>
-                        <label className="input-label">Personal Access Token</label>
+                        <label className="srv-label mb-1.5 block" htmlFor="modrinth-pat">Personal Access Token</label>
                         <div className="flex items-center gap-2">
                             <input
+                                id="modrinth-pat"
                                 type={showToken ? 'text' : 'password'}
                                 value={token}
                                 onChange={e => setToken(e.target.value)}
@@ -174,7 +169,7 @@ export default function ModrinthIntegrationPage() {
                                 autoComplete="off"
                                 spellCheck={false}
                             />
-                            <button onClick={() => setShowToken(v => !v)} type="button" className="btn btn-secondary btn-sm">
+                            <button onClick={() => setShowToken(v => !v)} type="button" aria-label={showToken ? 'Hide token' : 'Show token'} aria-pressed={showToken} className="btn btn-secondary btn-sm">
                                 {showToken ? <EyeOff size={12} /> : <Eye size={12} />}
                             </button>
                         </div>

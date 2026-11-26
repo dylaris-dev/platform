@@ -54,7 +54,7 @@ export default function DataBudgetCard() {
     };
 
     return (
-        <section className="card p-5" aria-labelledby="data-budget-title">
+        <section className="srv-surface p-5" aria-labelledby="data-budget-title">
             <div className="flex items-start gap-2.5 mb-4">
                 <HardDriveUpload size={16} className="text-(--base-06) mt-0.5 shrink-0" />
                 <div className="min-w-0">

@@ -39,19 +39,19 @@ export default function MaintenanceBanner() {
     const countdown = state.expectedEnd ? formatCountdown(state.expectedEnd) : '';
 
     return (
-        <div className="w-full bg-(--warning-ghost) border-b border-(--warning)/30 text-(--warning-light) px-4 py-2.5">
-            <div className="max-w-7xl mx-auto flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
+        <div className="app-banner shrink-0" data-tone="warning">
+            <div className="flex w-full flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
                 <div className="flex items-start gap-2 min-w-0 flex-1">
                     <Wrench size={16} className="shrink-0 mt-0.5" />
                     <div className="min-w-0">
                         <p className="text-sm font-medium">{state.title || 'Maintenance in progress'}</p>
                         {state.message && (
-                            <p className="text-xs text-(--base-08) mt-0.5">{state.message}</p>
+                            <p className="text-xs text-(--base-07) mt-0.5">{state.message}</p>
                         )}
                     </div>
                 </div>
                 {countdown && (
-                    <div className="flex items-center gap-1.5 text-xs font-mono shrink-0 sm:ml-auto">
+                    <div className="srv-num flex items-center gap-1.5 text-xs shrink-0 sm:ml-auto">
                         <Clock size={12} />
                         <span>{countdown}</span>
                     </div>

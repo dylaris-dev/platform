@@ -82,7 +82,7 @@ export default function DeleteNodeModal({
                 </div>
 
                 <div className="modal-body space-y-4">
-                    <div className="rounded-md bg-(--error)/10 border border-(--error)/30 p-3">
+                    <div className="rounded-lg bg-(--error-ghost) p-3">
                         <p className="text-sm text-(--error-light)">
                             This permanently deletes node <strong>&quot;{node.name}&quot;</strong>
                             {count > 0 && (
@@ -95,8 +95,8 @@ export default function DeleteNodeModal({
                         <p className="text-xs text-(--base-06)">Checking what is on this node...</p>
                     ) : count > 0 && (
                         <div>
-                            <p className="mono-label mb-2">Servers on this node</p>
-                            <div className="rounded-md border border-(--base-03) divide-y divide-(--base-03) max-h-40 overflow-y-auto">
+                            <p className="srv-label mb-2">Servers on this node</p>
+                            <div className="rounded-lg bg-(--base-02) p-1 max-h-40 overflow-y-auto">
                                 {servers.map(srv => (
                                     <div key={srv.id} className="px-3 py-2 flex items-center justify-between gap-2">
                                         <div className="min-w-0">
@@ -111,7 +111,7 @@ export default function DeleteNodeModal({
                     )}
 
                     <div>
-                        <label className="mono-label block mb-1.5" htmlFor="delete-node-confirm">
+                        <label className="srv-label block mb-1.5" htmlFor="delete-node-confirm">
                             Type &quot;{node.name}&quot; to confirm
                         </label>
                         <input

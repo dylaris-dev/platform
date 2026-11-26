@@ -1,5 +1,6 @@
 "use client";
 
+import Select from '@/components/ui/Select';
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { getRegistrationStatus, register } from '@/lib/api/registration';
@@ -91,8 +92,8 @@ export default function RegisterPage() {
 
     if (enabled === null) {
         return (
-            <div className="min-h-screen flex items-center justify-center p-4 bg-(--background)">
-                <div className="card w-full max-w-md p-8 space-y-4">
+            <div className="app-auth">
+                <div className="app-auth-card space-y-4">
                     <SkeletonHeader />
                     <SkeletonFormRow />
                     <SkeletonFormRow />
@@ -105,8 +106,8 @@ export default function RegisterPage() {
 
     if (enabled === false) {
         return (
-            <div className="min-h-screen flex items-center justify-center p-4 bg-(--background)">
-                <div className="card w-full max-w-md p-8 text-center space-y-4">
+            <div className="app-auth">
+                <div className="app-auth-card text-center space-y-4">
                     <h1 className="font-display text-xl">Registration disabled</h1>
                     <p className="text-sm text-(--base-06)">
                         This Dylaris instance does not accept self-registration. Ask an administrator to create an account for you.
@@ -121,8 +122,8 @@ export default function RegisterPage() {
 
     if (success) {
         return (
-            <div className="min-h-screen flex items-center justify-center p-4 bg-(--background)">
-                <div className="card w-full max-w-md p-8 text-center space-y-4">
+            <div className="app-auth">
+                <div className="app-auth-card text-center space-y-4">
                     <MailCheck size={32} className="mx-auto text-(--success-light)" />
                     <h1 className="font-display text-xl">Account created</h1>
                     {success.verifySent ? (
@@ -141,8 +142,8 @@ export default function RegisterPage() {
     }
 
     return (
-        <div className="min-h-screen flex items-center justify-center p-4 bg-(--background)">
-            <div className="card w-full max-w-md p-8">
+        <div className="app-auth">
+            <div className="app-auth-card">
                 <h1 className="text-4xl text-center mb-2 font-logo tracking-widest select-none">
                     <span className="text-(--accent-light)">D</span>
                     <span className="text-(--base-09)">ylaris</span>
@@ -155,7 +156,7 @@ export default function RegisterPage() {
 
                 <form onSubmit={handleSubmit} className="space-y-4">
                     <div className="flex flex-col gap-[5px]">
-                        <label className="input-label">Username</label>
+                        <label className="srv-label">Username</label>
                         <input
                             required
                             type="text"
@@ -169,7 +170,7 @@ export default function RegisterPage() {
                         />
                     </div>
                     <div className="flex flex-col gap-[5px]">
-                        <label className="input-label">Email</label>
+                        <label className="srv-label">Email</label>
                         <input
                             required
                             type="email"
@@ -184,7 +185,7 @@ export default function RegisterPage() {
                         )}
                     </div>
                     <div className="flex flex-col gap-[5px]">
-                        <label className="input-label">Password</label>
+                        <label className="srv-label">Password</label>
                         <input
                             required
                             type="password"
@@ -198,7 +199,7 @@ export default function RegisterPage() {
                         <p className="text-xs text-(--base-06)">At least {minLength} characters.</p>
                     </div>
                     <div className="flex flex-col gap-[5px]">
-                        <label className="input-label">Confirm password</label>
+                        <label className="srv-label">Confirm password</label>
                         <input
                             required
                             type="password"
@@ -224,20 +225,18 @@ export default function RegisterPage() {
                                 const options = securityQuestionsPool.filter(p => !otherPicks.includes(p));
                                 return (
                                     <div key={idx} className="space-y-1.5">
-                                        <select
+                                        <Select
                                             value={qa.question}
-                                            onChange={e => {
+                                            onChange={v => {
                                                 const next = [...securityAnswers];
-                                                next[idx] = { ...next[idx], question: e.target.value };
+                                                next[idx] = { ...next[idx], question: v };
                                                 setSecurityAnswers(next);
                                             }}
-                                            className="input-field w-full"
+                                            options={options.map(q => ({ value: q, label: q }))}
+                                            placeholder={`— Pick question #${idx + 1} —`}
+                                            ariaLabel={`Security question ${idx + 1}`}
                                             disabled={submitting}
-                                            required
-                                        >
-                                            <option value="">— Pick question #{idx + 1} —</option>
-                                            {options.map(q => <option key={q} value={q}>{q}</option>)}
-                                        </select>
+                                        />
                                         <input
                                             type="text"
                                             value={qa.answer}

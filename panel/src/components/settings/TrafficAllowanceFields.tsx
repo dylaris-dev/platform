@@ -2,6 +2,7 @@
 
 import { LimitField, LimitHelp } from '@/components/settings/LimitField';
 import HelpTip from '@/components/ui/HelpTip';
+import Checkbox from '@/components/ui/Checkbox';
 
 /**
  * One scope's answer for one (region, kind).
@@ -45,21 +46,17 @@ export default function TrafficAllowanceFields({
 }) {
     return (
         <div className="space-y-3">
-            <label className="checkbox-row text-xs text-(--base-07)">
-                <input
-                    type="checkbox"
-                    className="checkbox"
-                    checked={value.set}
-                    onChange={e => onChange({ set: e.target.checked })}
-                />
-                Set an allowance here
-            </label>
+            <Checkbox
+                checked={value.set}
+                onChange={c => onChange({ set: c })}
+                label="Set an allowance here"
+            />
             {!value.set ? (
                 <p className="text-xs text-(--base-06)">{unsetNote}</p>
             ) : (
                 <div className="flex flex-wrap items-center gap-6">
                     <div className="flex items-center gap-3">
-                        <span className="mono-label text-(--base-06) w-28 flex items-center gap-1.5">
+                        <span className="srv-label w-28 flex items-center gap-1.5">
                             Included
                             <HelpTip label="About the included allowance">
                                 <p className="mb-2">
@@ -76,7 +73,7 @@ export default function TrafficAllowanceFields({
                         />
                     </div>
                     <div className="flex items-center gap-3">
-                        <span className="mono-label text-(--base-06) w-28 flex items-center gap-1.5">
+                        <span className="srv-label w-28 flex items-center gap-1.5">
                             May buy
                             <HelpTip label="About the purchase ceiling">
                                 <p className="mb-2">

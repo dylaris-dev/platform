@@ -6,7 +6,7 @@ import { getSystemFeaturesAdmin, updateSystemFeatures, FeatureFlagsAdminPayload 
 import { getTabProxySettings, setTabProxySettings, type TabProxySettings } from '@/lib/api/tabProxySettings';
 import { getCoreStorage } from '@/lib/api/coreStorage';
 import { canSaveCoreStorage } from '@/lib/coreStorage';
-import { Network, Globe, AlertTriangle, Server, ChevronDown, ChevronRight, KeyRound, FolderOpen, LayoutTemplate } from 'lucide-react';
+import { Network, Globe, AlertTriangle, ShieldCheck, Server, ChevronDown, ChevronRight, KeyRound, FolderOpen, LayoutTemplate } from 'lucide-react';
 import { listStorageConnections, type StorageConnection } from '@/lib/api';
 import { LimitField } from '@/components/settings/LimitField';
 import { limitFromSetting, limitToSetting } from '@/lib/templates';
@@ -14,7 +14,6 @@ import GuardedTabs from '@/components/settings/GuardedTabs';
 import type { TabItem } from '@/components/ui/Tabs';
 import { useTabParam } from '@/lib/useTabParam';
 import { getCatalog, type CatalogScope } from '@/lib/api/authzCatalog';
-import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
 import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
 import SettingsPage from '@/components/settings/SettingsPage';
 import SettingsCard, { SettingsGroup } from '@/components/settings/SettingsCard';
@@ -28,6 +27,8 @@ import Checkbox from '@/components/ui/Checkbox';
 import { useAppData } from '@/lib/AppDataContext';
 import { toast } from '@/components/ui/Toast';
 import HelpTip from '@/components/ui/HelpTip';
+import Select from '@/components/ui/Select';
+import Callout from '@/components/server/Callout';
 
 type FeatureTab = 'subsystems' | 'infrastructure' | 'apikeys' | 'tabs';
 
@@ -318,11 +319,7 @@ export default function FeaturesTab() {
     };
 
     if (loading) return (
-        <div className="max-w-2xl space-y-6">
-            <SkeletonHeader />
-            <SkeletonCard height="h-20" />
-            <SkeletonCard height="h-20" />
-        </div>
+        <SettingsPage title="Features" loading skeletonCards={2} width="3xl">{null}</SettingsPage>
     );
 
     // A card per save, and now a tab per subject. The page used to be four cards
@@ -345,10 +342,15 @@ export default function FeaturesTab() {
     ];
 
     return (
-        <div className="flex flex-col h-full min-h-0">
+        <SettingsPage
+            title="Features"
+            icon={Server}
+            width="3xl"
+            description="Switch platform subsystems on and off and tune what they expose. Each card saves on its own."
+        >
             <GuardedTabs items={TABS} active={tab} onChange={setTab} ariaLabel="Feature groups" />
 
-            <div className="flex-1 overflow-y-auto pt-5">
+            <div>
                 <div className="space-y-6 max-w-3xl">
                     {tab === 'subsystems' && (
                         <SettingsCard title="Subsystems" icon={Server} form={platformSubsetForm(SUBSYSTEM_KEYS)}>
@@ -520,15 +522,14 @@ export default function FeaturesTab() {
                 <SettingsGroup title="Content and access">
                     <div className="flex flex-col gap-[5px]">
                         <label className="input-label" htmlFor="tpl-policy">What a template may hold</label>
-                        <select
+                        <Select
                             id="tpl-policy"
+                            ariaLabel="What a template may hold"
                             value={platformFlags.templatesContentPolicy ?? 'no-jars'}
-                            onChange={e => editPlatformFlag('templatesContentPolicy', e.target.value)}
-                            className="input-field w-full sm:w-1/2"
-                        >
-                            <option value="no-jars">No jars</option>
-                            <option value="uploads">Uploads</option>
-                        </select>
+                            onChange={v => editPlatformFlag('templatesContentPolicy', v)}
+                            className="w-full sm:w-1/2"
+                            options={[{ value: 'no-jars', label: 'No jars' }, { value: 'uploads', label: 'Uploads' }]}
+                        />
                         <p className="text-xs text-(--base-06)">
                             {(platformFlags.templatesContentPolicy ?? 'no-jars') === 'no-jars'
                                 ? 'No jars: every .jar is left out, so a template carries configs and worlds and the software is installed fresh.'
@@ -551,19 +552,21 @@ export default function FeaturesTab() {
                 <SettingsGroup title="Storage">
                     <div className="flex flex-col gap-[5px]">
                         <label className="input-label" htmlFor="tpl-storage">Where new templates are stored</label>
-                        <select
+                        <Select
                             id="tpl-storage"
-                            value={platformFlags.templatesStorageConnectionId ?? 0}
-                            onChange={e => editPlatformFlag('templatesStorageConnectionId', Number(e.target.value))}
-                            className="input-field w-full sm:w-1/2"
-                        >
-                            <option value={0}>Core storage</option>
-                            {connections.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                            {/* A stored id missing from the list (deleted, or the list failed) must not read as Core storage. */}
-                            {(platformFlags.templatesStorageConnectionId ?? 0) > 0 && !connections.some(c => c.id === platformFlags.templatesStorageConnectionId) && (
-                                <option value={platformFlags.templatesStorageConnectionId}>Connection #{platformFlags.templatesStorageConnectionId}</option>
-                            )}
-                        </select>
+                            ariaLabel="Where new templates are stored"
+                            value={String(platformFlags.templatesStorageConnectionId ?? 0)}
+                            onChange={v => editPlatformFlag('templatesStorageConnectionId', Number(v))}
+                            className="w-full sm:w-1/2"
+                            options={[
+                                { value: '0', label: 'Core storage' },
+                                ...connections.map(c => ({ value: String(c.id), label: c.name })),
+                                // A stored id missing from the list (deleted, or the list failed) must not read as Core storage.
+                                ...((platformFlags.templatesStorageConnectionId ?? 0) > 0 && !connections.some(c => c.id === platformFlags.templatesStorageConnectionId)
+                                    ? [{ value: String(platformFlags.templatesStorageConnectionId), label: `Connection #${platformFlags.templatesStorageConnectionId}` }]
+                                    : []),
+                            ]}
+                        />
                         <p className="text-xs text-(--base-06)">
                             Connections are defined under Settings, Storage connections.
                         </p>
@@ -764,17 +767,12 @@ export default function FeaturesTab() {
                                                 <div className="text-xs text-(--base-07) mb-1">{cat.category}</div>
                                                 <div className="flex flex-wrap gap-x-4 gap-y-1.5">
                                                     {cat.capabilities.map(c => (
-                                                        <label key={c.id} className="flex items-center gap-2 text-xs text-(--base-08) cursor-pointer">
-                                                            <input
-                                                                type="checkbox"
-                            className="checkbox"
-                                                                checked={allowedKeyCaps.has(c.id)}
-                                                                
-                                                                onChange={() => toggleKeyCap(c.id)}
-                                                            />
-                                                            <span>{c.label}</span>
-                                                            <code className="font-mono text-(--base-06)">{c.id}</code>
-                                                        </label>
+                                                        <Checkbox
+                                                            key={c.id}
+                                                            checked={allowedKeyCaps.has(c.id)}
+                                                            onChange={() => toggleKeyCap(c.id)}
+                                                            label={<>{c.label} <code className="font-mono text-(--base-06)">{c.id}</code></>}
+                                                        />
                                                     ))}
                                                 </div>
                                             </div>
@@ -814,44 +812,28 @@ export default function FeaturesTab() {
                     proxied content still runs on the panel's own origin and the
                     original warning applies. */}
                 {coreInfo?.tabProxyAvailable ? (
-                    <p className="flex items-start gap-1.5 text-xs text-(--success-light)">
-                        <AlertTriangle size={12} className="mt-0.5 shrink-0" />
-                        <span>
-                            Each proxied tab is served on its own host, so a container&apos;s
-                            scripts run on an origin that is not the panel&apos;s and cannot read a
-                            viewer&apos;s session. Public share links are safe to enable here.
-                        </span>
-                    </p>
+                    <Callout tone="info" icon={<ShieldCheck size={15} />}>
+                        Each proxied tab is served on its own host, so a container&apos;s
+                        scripts run on an origin that is not the panel&apos;s and cannot read a
+                        viewer&apos;s session. Public share links are safe to enable here.
+                    </Callout>
                 ) : (
-                    <p className="flex items-start gap-1.5 text-xs text-(--warning-light)">
-                        <AlertTriangle size={12} className="mt-0.5 shrink-0" />
-                        <span>
-                            Proxied tabs are unavailable: Core has no
-                            <code className="mx-1">TAB_PROXY_HOST_SUFFIX</code>
-                            set, so there is no host to serve a container on. Point a wildcard
-                            record and certificate at Core and set it, then proxied tabs and share
-                            links start working. Direct tabs are unaffected.
-                        </span>
-                    </p>
+                    <Callout tone="warning" icon={<AlertTriangle size={15} />}>
+                        Proxied tabs are unavailable: Core has no
+                        <code className="mx-1">TAB_PROXY_HOST_SUFFIX</code>
+                        set, so there is no host to serve a container on. Point a wildcard
+                        record and certificate at Core and set it, then proxied tabs and share
+                        links start working. Direct tabs are unaffected.
+                    </Callout>
                 )}
                 </SettingsGroup>
                 <SettingsGroup title="Who sees the Custom Tabs page">
-                    <div className="flex bg-(--base-03) p-0.5 rounded-md w-fit">
-                        {(['all', 'admin'] as const).map(a => (
-                            <button
-                                key={a}
-                                type="button"
-                                onClick={() => setTabProxy({ ...tabProxy, audience: a })}
-                                className={`px-3 py-1 text-xs rounded-sm transition-colors ${
-                                    tabProxy.audience === a
-                                        ? 'bg-(--accent) text-white'
-                                        : 'text-(--base-07) hover:text-(--base-09)'
-                                }`}
-                            >
-                                {a === 'all' ? 'Everyone' : 'Admins only'}
-                            </button>
-                        ))}
-                    </div>
+                    <Segmented
+                        ariaLabel="Who sees the Custom Tabs page"
+                        value={tabProxy.audience === 'admin' ? 'admin' : 'all'}
+                        onChange={a => setTabProxy({ ...tabProxy, audience: a })}
+                        options={[{ id: 'all', label: 'Everyone' }, { id: 'admin', label: 'Admins only' }]}
+                    />
                     <p className="text-xs text-(--base-06)">
                         Controls the Custom Tabs entry in the navigation bar. It is set here
                         rather than under Settings &rarr; Modules, because that row follows this
@@ -860,7 +842,7 @@ export default function FeaturesTab() {
                     </p>
                 </SettingsGroup>
                 <SettingsGroup title="Per-user limits">
-                    <div className="grid grid-cols-3 gap-3">
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                         <div className="flex flex-col gap-[5px]">
                             <label className="input-label" htmlFor="tabproxy-max-per-server">Proxied tabs per server</label>
                             <input
@@ -900,6 +882,6 @@ export default function FeaturesTab() {
                     )}
                 </div>
             </div>
-        </div>
+        </SettingsPage>
     );
 }

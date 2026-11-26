@@ -2,6 +2,11 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 import { KeyRound, Plus, Trash2, AlertTriangle, Shield, X } from 'lucide-react';
+import PageHeader from '@/components/ui/PageHeader';
+import Section from '@/components/ui/Section';
+import EmptyState from '@/components/ui/EmptyState';
+import { RowList, Row } from '@/components/ui/RowList';
+import Callout from '@/components/server/Callout';
 import { useAppData } from '@/lib/AppDataContext';
 import { listSSHKeys, addSSHKey, deleteSSHKey, type SSHKey } from '@/lib/api/sshKeys';
 import { SkeletonList } from '@/components/Skeleton';
@@ -88,59 +93,68 @@ export default function SshKeysPage() {
     if (!user) return null;
 
     return (
-        <main className="flex-1 overflow-y-auto p-6 max-w-4xl">
-            <header className="flex items-center gap-3 mb-4">
-                <KeyRound size={20} className="text-(--accent-light)" />
-                <h1 className="text-base font-display font-semibold text-(--base-09)">SSH Keys</h1>
-                <div className="ml-auto">
+        <main className="flex-1 overflow-y-auto app-page space-y-6">
+            <PageHeader
+                icon={<KeyRound size={16} />}
+                title="SSH Keys"
+                description="Public keys that sign you in to SFTP."
+                actions={
                     <button onClick={() => setAdding(true)} className="btn btn-primary btn-sm">
-                        <Plus size={12} />
+                        <Plus size={14} />
                         Add SSH key
                     </button>
-                </div>
-            </header>
+                }
+            />
 
-            <div className="card p-4 mb-4 text-xs text-(--base-07) flex items-start gap-2">
-                <Shield size={14} className="text-(--accent-light) shrink-0 mt-0.5" />
-                <p>
-                    SSH keys sign you in to SFTP. Accounts with two-factor authentication must use a key;
-                    the password alone is not accepted over SFTP.
-                </p>
-            </div>
+            <Callout tone="info" icon={<Shield size={16} />}>
+                SSH keys sign you in to SFTP. Accounts with two-factor authentication must use a key;
+                the password alone is not accepted over SFTP.
+            </Callout>
 
-            {loading ? (
-                <SkeletonList rows={3} />
-            ) : loadError ? (
-                <div className="card p-4 text-xs flex items-start gap-2">
-                    <AlertTriangle size={14} className="text-(--error-light) shrink-0 mt-0.5" />
-                    <p className="flex-1 text-(--base-08)">{loadError}</p>
-                    <button onClick={() => { setLoading(true); refresh(); }} className="btn btn-secondary btn-sm shrink-0">Retry</button>
-                </div>
-            ) : keys.length === 0 ? (
-                <div className="card p-8 flex flex-col items-center text-center gap-2">
-                    <KeyRound size={28} className="text-(--base-05)" />
-                    <p className="text-sm text-(--base-07)">No SSH keys yet.</p>
-                </div>
-            ) : (
-                <div className="space-y-2">
-                    {keys.map(k => (
-                        <article key={k.id} className="card p-3 flex items-start gap-3">
-                            <KeyRound size={16} className="text-(--accent-light)" />
-                            <div className="min-w-0 flex-1">
-                                <div className="font-medium text-sm text-(--base-09)">{k.name}</div>
-                                <div className="mt-1 text-xs text-(--base-06) font-mono break-all">{k.fingerprint}</div>
-                                <div className="text-xs text-(--base-06) mt-0.5">
-                                    Added: <span className="text-(--base-08)">{fmtDateTime(k.createdAt)}</span>
-                                </div>
-                            </div>
-                            <button onClick={() => setDeleting(k)} className="btn btn-secondary btn-sm shrink-0">
-                                <Trash2 size={12} className="text-(--error-light)" />
-                                Remove
-                            </button>
-                        </article>
-                    ))}
-                </div>
-            )}
+            <Section title="Your keys">
+                {loading ? (
+                    <SkeletonList rows={3} />
+                ) : loadError ? (
+                    <EmptyState
+                        tone="error"
+                        icon={<AlertTriangle size={20} />}
+                        title="Could not load SSH keys"
+                        description={loadError}
+                        action={<button onClick={() => { setLoading(true); refresh(); }} className="btn btn-secondary btn-sm">Retry</button>}
+                    />
+                ) : keys.length === 0 ? (
+                    <EmptyState
+                        icon={<KeyRound size={20} />}
+                        title="No SSH keys yet"
+                        description="Add a public key to sign in to SFTP without a password."
+                        action={<button onClick={() => setAdding(true)} className="btn btn-primary btn-sm"><Plus size={14} />Add SSH key</button>}
+                    />
+                ) : (
+                    <div className="srv-surface">
+                        <RowList label="SSH keys">
+                            {keys.map(k => (
+                                <Row
+                                    key={k.id}
+                                    leading={<KeyRound size={16} className="text-(--accent-light)" />}
+                                    title={k.name}
+                                    meta={
+                                        <span className="block space-y-0.5 whitespace-normal">
+                                            <span className="block font-mono break-all">{k.fingerprint}</span>
+                                            <span className="block">Added: <span className="text-(--base-08)">{fmtDateTime(k.createdAt)}</span></span>
+                                        </span>
+                                    }
+                                    actions={
+                                        <button onClick={() => setDeleting(k)} aria-label={`Remove ${k.name}`} className="btn btn-secondary btn-sm shrink-0">
+                                            <Trash2 size={14} className="text-(--error-light)" />
+                                            Remove
+                                        </button>
+                                    }
+                                />
+                            ))}
+                        </RowList>
+                    </div>
+                )}
+            </Section>
 
             {/* Add modal */}
             {adding && (

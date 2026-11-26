@@ -7,6 +7,7 @@ import { createBeamAdapter, isWails, syncSessionWithWails, connectWailsToServer,
 import { useDevMode, devLog } from '@/lib/devLog';
 import DebugLogPanel from '@/components/DebugLogPanel';
 import { toast } from '@/components/ui/Toast';
+import '@/styles/server-files.css';
 
 interface FileBrowserViewProps {
   currentServerPath: string;
@@ -53,7 +54,7 @@ const FileBrowserView: React.FC<FileBrowserViewProps> = ({ currentServerPath, se
   }, [serverUuid]);
 
   return (
-    <div className="flex flex-col gap-3 h-full overflow-hidden">
+    <div className="srv-files flex flex-col gap-3 h-full overflow-hidden">
       {/* The scroll lives here: the outer box clips (so the debug log below
           stays pinned), and nothing inside FileBrowser scrolls, so a folder
           taller than the window was cut off with no way to reach the rest. */}

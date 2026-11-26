@@ -2,10 +2,12 @@
 
 import React, { Suspense, useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { AlertTriangle, RefreshCw } from 'lucide-react';
+import { AlertTriangle, RefreshCw, Server } from 'lucide-react';
 import { getNodes, Node } from '@/lib/api';
 import { DiskAnalysisPanel } from '@/components/admin/DiskAnalysisPanel';
 import { SkeletonHeader, SkeletonCard } from '@/components/Skeleton';
+import EmptyState from '@/components/ui/EmptyState';
+import Callout from '@/components/server/Callout';
 
 function AdminDiskInner() {
     const searchParams = useSearchParams();
@@ -13,6 +15,7 @@ function AdminDiskInner() {
 
     const [nodes, setNodes] = useState<Node[]>([]);
     const [loading, setLoading] = useState(true);
+    const [loadFailed, setLoadFailed] = useState(false);
     const [autoExpandNodeId, setAutoExpandNodeId] = useState<number | null>(
         focusNodeId ? Number(focusNodeId) : null,
     );
@@ -24,30 +27,41 @@ function AdminDiskInner() {
         setLoading(true);
         getNodes().then(res => {
             setNodes(res.success ? (res.nodes ?? []) : []);
+            setLoadFailed(!res.success);
             setLoading(false);
-        });
+        }).catch(() => { setLoadFailed(true); setLoading(false); });
     }, [refreshKey]);
 
     return (
-        <div className="flex flex-col gap-3 h-full">
-            <div className="flex items-start justify-between gap-2">
-                <p className="text-sm text-(--base-06)">
+        <div className="flex flex-col gap-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+                <p className="max-w-2xl text-[13px] text-(--base-06)">
                     Compare UUID folders on each node's disk against database records. Click a node to run the analysis.
                 </p>
                 <button onClick={refresh} className="btn btn-secondary btn-sm shrink-0">
-                    <RefreshCw size={13} />
+                    <RefreshCw size={14} />
                     Refresh
                 </button>
             </div>
-            <div className="alert alert-warning text-(--warning) text-xs">
-                <AlertTriangle size={13} className="shrink-0 mt-0.5" />
-                <span>Deleting orphaned folders or DB entries is permanent. Verify before deleting.</span>
-            </div>
-            <div className="space-y-2 pb-4 overflow-auto">
+            <Callout tone="warning" icon={<AlertTriangle size={16} />}>
+                Deleting orphaned folders or DB entries is permanent. Verify before deleting.
+            </Callout>
+            <div className="space-y-3 pb-4">
                 {loading ? (
-                    <p className="text-sm text-(--base-05) text-center py-8">Loading nodes…</p>
+                    <div className="space-y-3" aria-busy="true">
+                        <SkeletonCard height="h-16" />
+                        <SkeletonCard height="h-16" />
+                    </div>
+                ) : loadFailed ? (
+                    <EmptyState
+                        tone="error"
+                        icon={<AlertTriangle size={20} />}
+                        title="Could not load nodes"
+                        description="The node list did not load, so there is nothing to analyse."
+                        action={<button type="button" onClick={refresh} className="btn btn-secondary btn-sm"><RefreshCw size={14} /> Retry</button>}
+                    />
                 ) : nodes.length === 0 ? (
-                    <p className="text-sm text-(--base-05) text-center py-8">No nodes registered</p>
+                    <EmptyState icon={<Server size={20} />} title="No nodes registered" />
                 ) : (
                     nodes.map(n => (
                         <DiskAnalysisPanel

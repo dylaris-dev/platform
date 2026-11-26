@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { ShieldCheck, Plus, Pencil, Trash2 } from 'lucide-react';
+import { ShieldCheck, Shield, Plus, Pencil, Trash2 } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
 import {
     getPermissionsMode, getCatalog, getPresets,
@@ -16,6 +16,10 @@ import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import AccessGrantForm from '@/components/access/AccessGrantForm';
 import { modeLabel, describeGrantAccess, fullAccessCaps, canEditInMode, isProxyScope } from '@/lib/access/accessMode';
 import { toast } from '@/components/ui/Toast';
+import PageHeader from '@/components/ui/PageHeader';
+import EmptyState from '@/components/ui/EmptyState';
+import { RowList, Row } from '@/components/ui/RowList';
+import '@/styles/tickets.css';
 
 // Owner-facing delegation UI, master-detail layout. Behavior branches on the
 // account's permissions_mode:
@@ -106,167 +110,118 @@ export default function AccessPage() {
 
     if (mode === null) {
         return (
-            <main className="flex-1 overflow-y-auto p-6 max-w-4xl">
-                <h1 className="h-page mb-6">Access</h1>
+            <div className="space-y-6">
+                <PageHeader title="Access" description="Invite friends to help run your servers." />
                 <SkeletonList rows={4} />
-            </main>
+            </div>
         );
     }
 
     const fullCaps = fullAccessCaps(presets);
+    const openInvite = () => setPanel({ kind: 'form', editing: null });
 
     return (
-        <main className="flex-1 overflow-y-auto p-6">
-            <div className="flex items-center gap-3 mb-6">
-                <h1 className="h-page">Access</h1>
-                <span className="mono-label bg-(--base-03) text-(--base-07) px-1.5 py-0.5 rounded-sm">
-                    {modeLabel(mode)}
-                </span>
-                {user?.isAdmin ? (
-                    <Link
-                        href="/settings/roles"
-                        className="mono-label text-(--base-05) hover:text-(--accent-light) focus-visible:text-(--accent-light) outline-none transition-colors"
-                    >
-                        Managed in Settings -&gt; Roles
-                    </Link>
-                ) : (
-                    <span className="mono-label text-(--base-05)">Managed in Settings -&gt; Roles</span>
-                )}
-            </div>
+        <div className="space-y-6">
+            <PageHeader
+                title="Access"
+                description={<>
+                    <span className="tk-pill mr-2">{modeLabel(mode)}</span>
+                    {user?.isAdmin ? (
+                        <Link href="/settings/roles" className="text-(--accent-light) hover:underline focus-visible:outline-none focus-visible:[box-shadow:var(--focus-ring)]">Managed in Settings -&gt; Roles</Link>
+                    ) : (
+                        <span>Managed in Settings -&gt; Roles</span>
+                    )}
+                </>}
+                actions={mode !== 'off' ? <button type="button" onClick={openInvite} className="btn btn-primary"><Plus size={14} /> Invite</button> : undefined}
+            />
 
-            {featureFlags.modpacks && <section className="card p-4 mb-6 max-w-4xl">
-                <h2 className="text-sm font-medium text-(--base-09)">Modpack access</h2>
-                <p className="text-xs text-(--base-06) mt-1">Who may work on a modpack is its Modrinth team: invite people and set their rights on modrinth.com. They see the pack here once they connect their own Modrinth token. These rights are separate from server access below.</p>
-            </section>}
-
-            {mode === 'off' && (
-                <div className="card p-8 flex flex-col items-center text-center gap-2 max-w-4xl">
-                    <ShieldCheck size={28} className="text-(--base-05)" />
-                    <p className="text-sm text-(--base-07)">
-                        Delegation is off. Only you and panel staff can act on your servers. An admin can enable it in Settings -&gt; Roles.
-                    </p>
+            {featureFlags.modpacks && (
+                <div className="srv-callout" data-tone="info">
+                    <div>
+                        <p className="font-medium text-(--base-09)">Modpack access</p>
+                        <p className="mt-1 text-(--base-07)">Who may work on a modpack is its Modrinth team: invite people and set their rights on modrinth.com. They see the pack here once they connect their own Modrinth token. These rights are separate from server access below.</p>
+                    </div>
                 </div>
             )}
 
+            {mode === 'off' && (
+                <EmptyState
+                    icon={<ShieldCheck size={20} />}
+                    title="Delegation is off"
+                    description="Only you and panel staff can act on your servers. An admin can enable it in Settings -> Roles."
+                />
+            )}
+
             {mode !== 'off' && (
-                <div className="flex gap-6">
-                    <nav className="w-52 shrink-0 border-r border-(--base-03) pr-3 flex flex-col gap-7">
-                        <div className="flex flex-col gap-1">
-                            <div className="flex items-center justify-between px-3">
-                                <span className="mono-label">Invited</span>
-                                <button
-                                    onClick={() => setPanel({ kind: 'form', editing: null })}
-                                    className="flex items-center gap-1 text-xs text-(--accent-light) hover:text-(--base-09)"
-                                    aria-label="Invite"
-                                >
-                                    <Plus size={14} />
-                                    Invite
-                                </button>
-                            </div>
-
-                            {grantsLoading ? (
-                                <div className="px-3">
-                                    <SkeletonList rows={3} />
-                                </div>
-                            ) : grants.length === 0 ? (
-                                <p className="px-3 text-xs text-(--base-06)">No one invited yet.</p>
-                            ) : (
-                                grants.map(g => {
-                                    const isActive = panel.kind === 'detail' && sameGrant(panel.grant, g.username, g.serverId);
-                                    return (
-                                        <button
-                                            key={`${g.username}:${g.serverId ?? 'account'}`}
-                                            onClick={() => setPanel({ kind: 'detail', grant: g })}
-                                            className={`px-3 py-2 rounded-r-md text-left border-l-[3px] transition-colors ${
-                                                isActive
-                                                    ? 'border-(--accent) bg-(--accent)/10 text-(--accent-light)'
-                                                    : 'border-transparent text-(--base-07) hover:text-(--base-09) hover:bg-(--base-03)'
-                                            }`}
-                                        >
-                                            <div className="text-sm font-medium truncate">{g.username}</div>
-                                            <div className="mono-label text-(--base-06) truncate">
-                                                {g.accountWide ? 'Account-wide' : g.serverName} &middot; {describeGrantAccess(g, fullCaps)}
-                                            </div>
-                                        </button>
-                                    );
-                                })
-                            )}
-                        </div>
-
+                <div className="tk-split items-start">
+                    <nav aria-label="Invited users" className="srv-surface">
+                        <div className="srv-label px-4 pb-1 pt-4">Invited</div>
+                        {grantsLoading ? (
+                            <div className="px-4 pb-4"><SkeletonList rows={3} /></div>
+                        ) : grants.length === 0 ? (
+                            <p className="px-4 pb-4 text-[13px] text-(--base-06)">No one invited yet.</p>
+                        ) : (
+                            <RowList label="Invited users">
+                                {grants.map(g => (
+                                    <Row
+                                        key={`${g.username}:${g.serverId ?? 'account'}`}
+                                        onClick={() => setPanel({ kind: 'detail', grant: g })}
+                                        active={panel.kind === 'detail' && sameGrant(panel.grant, g.username, g.serverId)}
+                                        title={g.username}
+                                        meta={<>{g.accountWide ? 'Account-wide' : g.serverName} &middot; {describeGrantAccess(g, fullCaps)}</>}
+                                    />
+                                ))}
+                            </RowList>
+                        )}
                         {mode === 'advanced' && (
-                            <div className="flex flex-col gap-1">
-                                <span className="mono-label px-3">Manage</span>
-                                <button
-                                    onClick={() => setPanel({ kind: 'roles' })}
-                                    className={`px-3 py-2 rounded-r-md text-left text-sm font-medium border-l-[3px] transition-colors ${
-                                        panel.kind === 'roles'
-                                            ? 'border-(--accent) bg-(--accent)/10 text-(--accent-light)'
-                                            : 'border-transparent text-(--base-07) hover:text-(--base-09) hover:bg-(--base-03)'
-                                    }`}
-                                >
-                                    Roles
-                                </button>
-                            </div>
+                            <>
+                                <div className="srv-label px-4 pb-1 pt-3">Manage</div>
+                                <RowList label="Manage">
+                                    <Row
+                                        onClick={() => setPanel({ kind: 'roles' })}
+                                        active={panel.kind === 'roles'}
+                                        leading={<Shield size={14} />}
+                                        title="Roles"
+                                    />
+                                </RowList>
+                            </>
                         )}
                     </nav>
 
-                    <div className="flex-1 min-w-0">
+                    <div className="min-w-0">
                         {panel.kind === 'empty' && (
-                            <div className="card p-8 flex flex-col items-center text-center gap-3">
-                                <ShieldCheck size={28} className="text-(--base-05)" />
-                                <p className="text-sm text-(--base-07)">
-                                    Select an invited user on the left, or invite a new one.
-                                </p>
-                                <button
-                                    onClick={() => setPanel({ kind: 'form', editing: null })}
-                                    className="btn btn-primary btn-sm"
-                                >
-                                    <Plus size={14} />
-                                    Invite a friend
-                                </button>
-                            </div>
+                            <EmptyState
+                                icon={<ShieldCheck size={20} />}
+                                title="Select an invited user"
+                                description="Pick someone from the list, or invite a new person."
+                                action={<button type="button" onClick={openInvite} className="btn btn-primary btn-sm"><Plus size={14} /> Invite a friend</button>}
+                            />
                         )}
 
                         {panel.kind === 'detail' && (() => {
                             const g = panel.grant;
                             const editable = canEditInMode(g, mode, fullCaps);
                             return (
-                                <div className="card p-6 max-w-xl">
-                                    <div className="flex items-center gap-2 flex-wrap mb-1">
-                                        <h2 className="text-sm font-medium text-(--base-09)">{g.username}</h2>
-                                        <span className="mono-label bg-(--base-03) text-(--base-07) px-1.5 rounded-sm">
-                                            {g.accountWide ? 'Account-wide' : g.serverName}
-                                        </span>
+                                <div className="srv-surface max-w-xl space-y-3 p-6">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                        <h2 className="text-[15px] font-semibold text-(--base-09)">{g.username}</h2>
+                                        <span className="tk-pill">{g.accountWide ? 'Account-wide' : g.serverName}</span>
                                     </div>
-                                    <p className="text-sm text-(--base-07) mb-1">
-                                        Access: {describeGrantAccess(g, fullCaps)}
-                                    </p>
+                                    <p className="text-sm text-(--base-07)">Access: {describeGrantAccess(g, fullCaps)}</p>
                                     {isProxyScope(ownedServers, g.serverId) && g.inherit && (
-                                        <p className="text-xs text-(--base-06) mb-1">
-                                            Cascades to the servers behind this proxy
-                                        </p>
+                                        <p className="text-xs text-(--base-06)">Cascades to the servers behind this proxy</p>
                                     )}
                                     {!editable && (
-                                        <p className="text-xs text-(--base-06) mb-3">
-                                            This grant predates full-only mode; revoke and re-invite to change it.
-                                        </p>
+                                        <p className="text-xs text-(--base-06)">This grant predates full-only mode; revoke and re-invite to change it.</p>
                                     )}
-                                    <div className="flex items-center gap-2 mt-4">
+                                    <div className="flex items-center gap-2 pt-1">
                                         {editable && (
-                                            <button
-                                                onClick={() => setPanel({ kind: 'form', editing: g })}
-                                                className="btn btn-secondary btn-sm"
-                                            >
-                                                <Pencil size={12} />
-                                                Edit
+                                            <button type="button" onClick={() => setPanel({ kind: 'form', editing: g })} className="btn btn-secondary btn-sm">
+                                                <Pencil size={12} /> Edit
                                             </button>
                                         )}
-                                        <button
-                                            onClick={() => handleRevoke(g)}
-                                            className="btn btn-secondary btn-sm"
-                                        >
-                                            <Trash2 size={12} className="text-(--error-light)" />
-                                            Revoke
+                                        <button type="button" onClick={() => handleRevoke(g)} className="btn btn-secondary btn-sm">
+                                            <Trash2 size={12} className="text-(--error-light)" /> Revoke
                                         </button>
                                     </div>
                                 </div>
@@ -300,7 +255,6 @@ export default function AccessPage() {
                     </div>
                 </div>
             )}
-
-        </main>
+        </div>
     );
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { Plus, Trash2, Pencil, X, HardDrive, Cloud, Save, Cable, Server, Info, AlertTriangle, Link2, Archive, Loader2, Wrench } from 'lucide-react';
+import { Plus, Trash2, Pencil, X, HardDrive, Cloud, Save, Cable, Server, Info, AlertTriangle, Link2, Archive, Loader2, Wrench, MoreHorizontal, TriangleAlert } from 'lucide-react';
 import {
     BackupStorage,
     BackupConfig,
@@ -14,7 +14,6 @@ import {
 import { LimitField, LimitHelp } from '@/components/settings/LimitField';
 import HelpTip from '@/components/ui/HelpTip';
 import { useAppData } from '@/lib/AppDataContext';
-import { SkeletonHeader, SkeletonCard, SkeletonList } from '@/components/Skeleton';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import { useBusy } from '@/lib/useBusy';
 import { toast } from '@/components/ui/Toast';
@@ -27,6 +26,14 @@ import ModalPanel from '@/components/ui/ModalPanel';
 import StorageUploadCap from '@/components/settings/StorageUploadCap';
 import StorageMaintenance from '@/components/settings/StorageMaintenance';
 import { supportsStorageMaintenance } from '@/lib/storageOrphans';
+import Select from '@/components/ui/Select';
+import Switch from '@/components/ui/Switch';
+import Checkbox from '@/components/ui/Checkbox';
+import Menu from '@/components/ui/Menu';
+import EmptyState from '@/components/ui/EmptyState';
+import { RowList, Row } from '@/components/ui/RowList';
+import Callout from '@/components/server/Callout';
+import '@/styles/settings-storage.css';
 
 interface LocalConfig {
     basePath: string;
@@ -39,6 +46,15 @@ interface S3Config {
     secretAccessKey: string;
     forcePathStyle: boolean;
 }
+
+const S3_LABELS: Record<keyof S3Config, string> = {
+    endpoint: 'Endpoint',
+    region: 'Region',
+    bucket: 'Bucket',
+    accessKeyId: 'Access key ID',
+    secretAccessKey: 'Secret access key',
+    forcePathStyle: 'Force path style',
+};
 
 const EMPTY_LOCAL: LocalConfig = { basePath: '/var/lib/dylaris/backups' };
 const EMPTY_S3: S3Config = {
@@ -85,7 +101,7 @@ function StorageModeCard({
             description="Where backup archives live. Per-job credentials (S3 keys, NFS paths) still come from the storages list below."
             form={form}
         >
-            <div className="space-y-2">
+            <div className="space-y-2" role="group" aria-label="Storage mode">
                 <ModeOption
                     selected={config.mode === 's3'}
                     onClick={() => setMode('s3')}
@@ -116,7 +132,7 @@ function StorageModeCard({
             {/* Outside the node-local block on purpose: this one is per OWNER
                 and applies in every mode, while the panel above bounds one
                 server's folder on one node's disk. */}
-            <div className="mt-4 border-t border-(--base-04) pt-4">
+            <div className="set-sto-divide">
                 <div className="flex flex-wrap items-start justify-between gap-4">
                     <div className="min-w-0 max-w-md">
                         <label className="input-label flex items-center gap-1.5" htmlFor="backup-default-user-quota">
@@ -170,7 +186,7 @@ function StorageModeCard({
 // (Settings, Nodes); these two shape what is done with it.
 function BackupPacingFields({ config, onChange }: { config: BackupConfig; onChange: (next: BackupConfig) => void }) {
     return (
-        <div className="mt-4 border-t border-(--base-04) pt-4 space-y-4">
+        <div className="set-sto-divide space-y-4">
             <div>
                 <h3 className="text-sm font-medium text-(--base-09)">While players are online</h3>
                 <p className="text-xs text-(--base-06) mt-1 max-w-xl">
@@ -252,16 +268,11 @@ function ModeOption({
         <button
             type="button"
             onClick={onClick}
-            className={`w-full text-left rounded-md border px-3 py-2.5 transition flex items-start gap-3
-                ${selected
-                    ? 'border-(--accent) bg-(--accent)/8 shadow-[0_0_0_3px_rgba(112,72,200,0.10)]'
-                    : 'border-(--base-04) bg-(--base-03) hover:border-(--base-05)'}`}
+            className="set-sto-option"
+            aria-pressed={selected}
+            data-selected={selected ? '' : undefined}
         >
-            <span
-                aria-hidden
-                className={`mt-1 inline-flex w-3.5 h-3.5 rounded-full border-2 shrink-0
-                    ${selected ? 'border-(--accent) bg-(--accent)' : 'border-(--base-05) bg-transparent'}`}
-            />
+            <span aria-hidden className="set-sto-option-dot" />
             <span className="mt-0.5 shrink-0">{icon}</span>
             <span className="min-w-0">
                 <span className="block text-sm font-medium text-(--base-09)">{title}</span>
@@ -285,7 +296,7 @@ function NodeLocalQuotaPanel({
     onChange: (next: BackupConfig) => void;
 }) {
     return (
-        <div className="rounded-md border border-(--base-04) bg-(--base-02) p-3 space-y-3">
+        <div className="set-sto-panel space-y-3">
             <div className="flex items-start gap-2 text-xs text-(--base-06)">
                 <Info size={13} className="mt-0.5 shrink-0" />
                 <span>
@@ -321,20 +332,12 @@ function NodeLocalQuotaPanel({
                 />
             </div>
 
-            <label className="flex items-start gap-2 text-xs text-(--base-08) cursor-pointer">
-                <input
-                    type="checkbox"
-                    checked={config.shareQuotaWithServer}
-                    onChange={(e) => onChange({ ...config, shareQuotaWithServer: e.target.checked })}
-                    className="checkbox mt-0.5"
-                />
-                <span>
-                    <span className="block">Share quota with server container storage</span>
-                    <span className="block text-(--base-06)">
-                        When on, the backup folder is folded into the server's main disk quota — one combined cap covers both, no separate budget.
-                    </span>
-                </span>
-            </label>
+            <Checkbox
+                checked={config.shareQuotaWithServer}
+                onChange={c => onChange({ ...config, shareQuotaWithServer: c })}
+                label="Share quota with server container storage"
+                hint="When on, the backup folder is folded into the server's main disk quota — one combined cap covers both, no separate budget."
+            />
         </div>
     );
 }
@@ -489,15 +492,18 @@ export default function BackupsTab() {
 
     useUnsavedChanges({ dirty: configDirty, save: handleConfigSave, discard: handleConfigDiscard, saving });
 
-    if (loading || !config) return (
-        <div className="max-w-3xl space-y-6">
-            <SkeletonHeader />
-            <SkeletonCard height="h-64" />
-            <div className="card card-pad space-y-3">
-                <SkeletonHeader />
-                <SkeletonList rows={3} />
-            </div>
-        </div>
+    if (loading) return <SettingsPage title="Server Backups" icon={Archive} loading skeletonCards={2}>{null}</SettingsPage>;
+
+    if (!config) return (
+        <SettingsPage title="Server Backups" icon={Archive}>
+            <EmptyState
+                tone="error"
+                icon={<TriangleAlert size={20} />}
+                title="Backup settings could not be loaded"
+                description="The values are not shown, so nothing can be saved from here. Check the connection to Core and try again."
+                action={<button type="button" onClick={() => { reload(); }} className="btn btn-secondary btn-sm">Retry</button>}
+            />
+        </SettingsPage>
     );
 
     const activeProvider = PROVIDER_FOR_MODE[config.mode];
@@ -561,72 +567,92 @@ export default function BackupsTab() {
                 }
             >
                 {storages.length === 0 ? (
-                    <p className="alert alert-info text-xs">No backup storages configured yet. Add one to start scheduling backups.</p>
+                    <EmptyState
+                        bare
+                        icon={<Archive size={20} />}
+                        title="No backup storages yet"
+                        description="Add one to start scheduling backups."
+                    />
                 ) : (
-                    <div className="space-y-2">
-                        {storages.map(s => (
-                            <div key={s.id} className="space-y-1.5">
-                                <div className="flex items-center justify-between gap-3 bg-(--base-03) border border-(--base-04) rounded-md px-3 py-2.5">
-                                    <div className="flex items-center gap-3 min-w-0">
-                                        {s.provider === 'connection'
-                                            ? <Link2 size={16} className="text-(--accent-light) shrink-0" />
-                                            : s.provider === 's3'
-                                            ? <Cloud size={16} className="text-(--accent-light) shrink-0" />
+                    <>
+                        <RowList label="Configured storages">
+                            {storages.map(s => (
+                                <Row
+                                    key={s.id}
+                                    leading={s.provider === 'connection'
+                                        ? <Link2 size={16} className="text-(--accent-light)" />
+                                        : s.provider === 's3'
+                                            ? <Cloud size={16} className="text-(--accent-light)" />
                                             : s.provider === 'node-local'
-                                                ? <Server size={16} className="text-(--primary-light) shrink-0" />
-                                                : <HardDrive size={16} className="text-(--primary-light) shrink-0" />}
-                                        <div className="min-w-0">
-                                            <div className="flex items-center gap-2">
-                                                <span className="text-sm font-medium text-(--base-09)">{s.name}</span>
-                                                {s.isDefault && <span className="badge badge-accent">default</span>}
-                                            </div>
-                                            <div className="mono-label">
-                                                {s.provider === 'local' ? 'shared' : s.provider}
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <div className="flex items-center gap-1.5">
-                                        <button
-                                            onClick={() => handleTest(s.id)}
-                                            className="btn btn-secondary btn-sm disabled:opacity-40 disabled:cursor-not-allowed"
-                                            title="Test connection"
-                                            disabled={testingId !== null}
-                                            aria-busy={testingId === s.id}
-                                        >
-                                            {testingId === s.id
-                                                ? <Loader2 size={12} className="animate-spin" />
-                                                : <Cable size={12} />}
-                                            {testingId === s.id ? 'Testing…' : 'Test'}
-                                        </button>
-                                        {supportsStorageMaintenance(s.provider) && (
+                                                ? <Server size={16} />
+                                                : <HardDrive size={16} />}
+                                    title={
+                                        <>
+                                            {s.name}
+                                            {s.isDefault && <span className="badge badge-accent ml-2 align-middle">default</span>}
+                                        </>
+                                    }
+                                    meta={s.provider === 'local' ? 'shared' : s.provider}
+                                    actions={
+                                        <>
                                             <button
-                                                onClick={() => setMaintenanceId(maintenanceId === s.id ? null : s.id)}
-                                                className="btn btn-secondary btn-sm"
-                                                aria-expanded={maintenanceId === s.id}
-                                                title="Orphaned files and bucket lifecycle rules"
+                                                onClick={() => handleTest(s.id)}
+                                                className="btn btn-secondary btn-sm disabled:opacity-40 disabled:cursor-not-allowed"
+                                                title="Test connection"
+                                                disabled={testingId !== null}
+                                                aria-busy={testingId === s.id}
                                             >
-                                                <Wrench size={12} /> Maintenance
+                                                {testingId === s.id
+                                                    ? <Loader2 size={12} className="animate-spin" />
+                                                    : <Cable size={12} />}
+                                                {testingId === s.id ? 'Testing…' : 'Test'}
                                             </button>
+                                            <Menu
+                                                trigger={
+                                                    <button type="button" className="app-icon-btn" aria-label={`Actions for ${s.name}`}>
+                                                        <MoreHorizontal size={16} />
+                                                    </button>
+                                                }
+                                                items={[
+                                                    { label: 'Edit', icon: <Pencil size={14} />, onSelect: () => setEditing(s) },
+                                                    ...(supportsStorageMaintenance(s.provider)
+                                                        ? [{
+                                                            label: maintenanceId === s.id ? 'Hide maintenance' : 'Maintenance',
+                                                            icon: <Wrench size={14} />,
+                                                            onSelect: () => setMaintenanceId(maintenanceId === s.id ? null : s.id),
+                                                        }]
+                                                        : []),
+                                                    { type: 'separator' as const },
+                                                    { label: 'Delete', icon: <Trash2 size={14} />, danger: true, onSelect: () => handleDelete(s.id) },
+                                                ]}
+                                            />
+                                        </>
+                                    }
+                                />
+                            ))}
+                        </RowList>
+                        {/* Verdicts and panels sit under the list, not inside a
+                            row: a list only holds rows, and each of these is
+                            single-slot or keyed by storage. */}
+                        <div className="set-sto-notes">
+                            {storages.map(s => {
+                                const hasNote = rowResult?.id === s.id || maintenanceId === s.id || !!testWarnings[s.id];
+                                if (!hasNote) return null;
+                                return (
+                                    <div key={s.id} className="space-y-2">
+                                        <div className="srv-label">{s.name}</div>
+                                        {rowResult?.id === s.id && <ConnectionTestNote result={rowResult.result} />}
+                                        {maintenanceId === s.id && <StorageMaintenance storageId={s.id} />}
+                                        {testWarnings[s.id] && (
+                                            <Callout tone="warning" icon={<AlertTriangle size={14} />} role="alert">
+                                                {testWarnings[s.id]}
+                                            </Callout>
                                         )}
-                                        <button onClick={() => setEditing(s)} className="btn btn-secondary btn-sm">
-                                            <Pencil size={12} /> Edit
-                                        </button>
-                                        <button onClick={() => handleDelete(s.id)} className="btn btn-danger btn-sm">
-                                            <Trash2 size={12} />
-                                        </button>
                                     </div>
-                                </div>
-                                {rowResult?.id === s.id && <ConnectionTestNote result={rowResult.result} />}
-                                {maintenanceId === s.id && <StorageMaintenance storageId={s.id} />}
-                                {testWarnings[s.id] && (
-                                    <div className="alert alert-warning text-xs flex items-start gap-2">
-                                        <AlertTriangle size={14} className="shrink-0 mt-0.5" />
-                                        <span>{testWarnings[s.id]}</span>
-                                    </div>
-                                )}
-                            </div>
-                        ))}
-                    </div>
+                                );
+                            })}
+                        </div>
+                    </>
                 )}
             </SettingsCard>
 
@@ -680,25 +706,24 @@ export default function BackupsTab() {
                             )}
 
                             {editing.provider === 'node-local' && (
-                                <div className="alert alert-info text-xs">
-                                    Node-local stores have no per-instance config — backups live inside each server's container folder on whichever Node hosts it. This row exists so the rest of the system can reference a storage id; you can name it whatever helps you tell instances apart.
-                                </div>
+                                <Callout tone="info" icon={<Info size={14} />}>
+                                    Node-local stores have no per-instance config — backups live inside each server&apos;s container folder on whichever Node hosts it. This row exists so the rest of the system can reference a storage id; you can name it whatever helps you tell instances apart.
+                                </Callout>
                             )}
 
                             {editing.provider === 'connection' && (
                                 <>
                                     <div className="form-group">
                                         <label className="input-label">Storage Connection</label>
-                                        <select
-                                            className="input-field"
-                                            value={(editing.config as unknown as BackupConnectionConfig).connectionId || 0}
-                                            onChange={e => setEditing({
+                                        <Select
+                                            ariaLabel="Storage Connection"
+                                            value={String((editing.config as unknown as BackupConnectionConfig).connectionId || 0)}
+                                            onChange={v => setEditing({
                                                 ...editing,
-                                                config: { ...(editing.config as object), connectionId: Number(e.target.value) },
+                                                config: { ...(editing.config as object), connectionId: Number(v) },
                                             })}
-                                        >
-                                            {connections.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                                        </select>
+                                            options={connections.map(c => ({ value: String(c.id), label: c.name }))}
+                                        />
                                         <p className="text-xs text-(--base-06)">
                                             Credentials come from the connection, so rotating them there updates every
                                             subsystem that uses it. Nothing is copied into this backup target.
@@ -754,7 +779,7 @@ export default function BackupsTab() {
                                         const secretStored = isSecret && editing.secretSet;
                                         return (
                                             <div key={field} className="form-group">
-                                                <label className="input-label">{field}</label>
+                                                <label className="input-label">{S3_LABELS[field]}</label>
                                                 <input
                                                     type={isSecret ? 'password' : 'text'}
                                                     value={isSecret ? String((editing.config as unknown as S3Config).secretAccessKey ?? '') : String((editing.config as unknown as S3Config)[field] ?? '')}
@@ -772,15 +797,11 @@ export default function BackupsTab() {
                                     })}
                                     <div className="flex items-center justify-between">
                                         <label className="input-label">Force Path Style</label>
-                                        <button
-                                            type="button"
-                                            onClick={() => setEditing({ ...editing, config: { ...(editing.config as object), forcePathStyle: !(editing.config as unknown as S3Config).forcePathStyle } })}
-                                            className={`toggle-track ${(editing.config as unknown as S3Config).forcePathStyle ? 'toggle-track-on' : 'toggle-track-off'}`}
-                                            role="switch"
-                                            aria-checked={(editing.config as unknown as S3Config).forcePathStyle}
-                                        >
-                                            <span className={`toggle-knob ${(editing.config as unknown as S3Config).forcePathStyle ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
-                                        </button>
+                                        <Switch
+                                            ariaLabel="Force Path Style"
+                                            checked={!!(editing.config as unknown as S3Config).forcePathStyle}
+                                            onChange={c => setEditing({ ...editing, config: { ...(editing.config as object), forcePathStyle: c } })}
+                                        />
                                     </div>
                                     <p className="text-xs text-(--base-06)">Hetzner Object Storage needs path-style ON. AWS S3 / Cloudflare R2 typically OFF.</p>
                                 </>
@@ -817,15 +838,11 @@ export default function BackupsTab() {
                                         </p>
                                     </HelpTip>
                                 </label>
-                                <button
-                                    type="button"
-                                    onClick={() => setEditing({ ...editing, isDefault: !editing.isDefault })}
-                                    className={`toggle-track ${editing.isDefault ? 'toggle-track-on' : 'toggle-track-off'}`}
-                                    role="switch"
-                                    aria-checked={editing.isDefault}
-                                >
-                                    <span className={`toggle-knob ${editing.isDefault ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
-                                </button>
+                                <Switch
+                                    ariaLabel="Use as Default"
+                                    checked={!!editing.isDefault}
+                                    onChange={c => setEditing({ ...editing, isDefault: c })}
+                                />
                             </div>
                         </div>
                         <div className="modal-footer">

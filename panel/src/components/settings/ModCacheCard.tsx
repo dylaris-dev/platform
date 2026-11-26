@@ -62,7 +62,7 @@ export default function ModCacheCard() {
             form={form}
         >
             <SettingsGroup title="Location" first>
-                <div className="flex items-start justify-between gap-4 rounded-md border border-(--base-04) bg-(--base-01) px-3 py-2.5">
+                <div className="flex items-start justify-between gap-4 rounded-lg bg-(--base-03) px-4 py-3">
                     <div className="min-w-0">
                         <div className="text-sm text-(--base-09)">
                             {status.dedicated

@@ -57,10 +57,10 @@ export default function StandaloneTabProxyPage() {
 
     return (
         <div className="flex flex-col h-screen bg-(--base-00) text-(--base-09) font-body overflow-hidden">
-            <header className="shrink-0 h-12 bg-(--base-01) border-b border-(--base-03) flex items-center px-4">
+            <header className="shrink-0 h-12 bg-(--base-01) flex items-center px-4">
                 <a
                     href="/"
-                    className="px-3 py-0.5 rounded-md bg-(--accent-dim) border border-(--accent-border) inline-flex items-center transition-colors hover:border-(--accent-light) focus-visible:outline-hidden focus-visible:shadow-(--focus-ring)"
+                    className="rounded-md inline-flex items-center focus-visible:outline-hidden focus-visible:shadow-(--focus-ring)"
                 >
                     <span className="text-xl font-logo tracking-widest select-none">
                         <span className="text-(--accent-light)">D</span>
@@ -75,7 +75,7 @@ export default function StandaloneTabProxyPage() {
                 )}
                 {state === 'notfound' && (
                     <div className="h-full flex items-center justify-center p-6">
-                        <div className="card p-6 max-w-md text-center">
+                        <div className="app-auth-card text-center">
                             <AlertTriangle size={20} className="text-(--warning-light) mx-auto mb-2" />
                             <p className="text-sm text-(--base-07)">This link is not valid.</p>
                         </div>
@@ -83,7 +83,7 @@ export default function StandaloneTabProxyPage() {
                 )}
                 {state === 'expired' && (
                     <div className="h-full flex items-center justify-center p-6">
-                        <div className="card p-6 max-w-md text-center">
+                        <div className="app-auth-card text-center">
                             <AlertTriangle size={20} className="text-(--warning-light) mx-auto mb-2" />
                             <p className="text-sm text-(--base-07)">This share link has expired.</p>
                         </div>

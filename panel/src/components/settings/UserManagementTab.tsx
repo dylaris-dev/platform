@@ -23,6 +23,8 @@ import HelpTip from '@/components/ui/HelpTip';
 import AccountPolicyCard from '@/components/settings/AccountPolicyCard';
 import SettingsCard, { SettingsRow, StatusBadge } from '@/components/settings/SettingsCard';
 import { toast } from '@/components/ui/Toast';
+import Select from '@/components/ui/Select';
+import Callout from '@/components/server/Callout';
 
 type UserTab = 'signin' | 'accounts' | 'retention' | 'questions';
 
@@ -91,10 +93,10 @@ export default function UserManagementTab() {
     ];
 
     return (
-        <div className="flex flex-col h-full min-h-0">
+        <div className="flex flex-col">
             <GuardedTabs items={TABS} active={tab} onChange={setTab} ariaLabel="User settings" />
 
-            <div className="flex-1 overflow-y-auto pt-5">
+            <div className="pt-5">
                 <div className="space-y-6 max-w-3xl">
                     {tab === 'signin' && (
                         <AuthPolicySection form={auth} uncovered={uncovered} mailConfigured={mailConfigured} />
@@ -206,18 +208,15 @@ function AuthPolicySection({
                     has an account. That leaves this screen as the only place an
                     operator can find out. */}
                 {mailConfigured === false && (
-                    <div className="flex items-start gap-2 bg-(--error-ghost) border border-(--error)/30 rounded-md p-3 text-xs">
-                        <AlertTriangle size={14} className="mt-0.5 shrink-0 text-(--error-light)" />
-                        <span className="text-(--error-light)">
-                            <strong>No mail is configured, so nothing on this card can be delivered.</strong>{' '}
-                            Verification links, password resets and inactivity warnings are all
-                            silently dropped. Password reset still reports success to the person
-                            asking, so nobody but you can notice. Set it up under the{' '}
-                            <strong>Email</strong> tab and confirm it with the test send.
-                        </span>
-                    </div>
+                    <Callout tone="error" icon={<AlertTriangle size={15} />} role="alert">
+                        <strong>No mail is configured, so nothing on this card can be delivered.</strong>{' '}
+                        Verification links, password resets and inactivity warnings are all
+                        silently dropped. Password reset still reports success to the person
+                        asking, so nobody but you can notice. Set it up under the{' '}
+                        <strong>Email</strong> tab and confirm it with the test send.
+                    </Callout>
                 )}
-                <h4 className="mono-label text-(--base-07)">Registration</h4>
+                <h4 className="srv-label">Registration</h4>
                 <ToggleRow
                     label="Allow self-registration"
                     description="When enabled, anyone with access to the panel can create an account at /register."
@@ -258,7 +257,7 @@ function AuthPolicySection({
             </div>
 
             <div className="space-y-4 pt-4 border-t border-(--base-03)">
-                <h4 className="mono-label text-(--base-07) flex items-center gap-2">
+                <h4 className="srv-label flex items-center gap-2">
                     <ShieldCheck size={12} /> Two-factor enforcement
                 </h4>
                 <ToggleRow
@@ -279,7 +278,7 @@ function AuthPolicySection({
             </div>
 
             <div className="space-y-4 pt-4 border-t border-(--base-03)">
-                <h4 className="mono-label text-(--base-07) flex items-center gap-2">
+                <h4 className="srv-label flex items-center gap-2">
                     <HelpCircle size={12} /> Security questions
                 </h4>
                 <ToggleRow
@@ -305,13 +304,10 @@ function AuthPolicySection({
                     The moment this is switched on, the second one is every account
                     that existed before it. */}
                 {policy.securityQuestionsRequiredAtReset && uncovered && uncovered.missing > 0 && (
-                    <p className="flex items-start gap-1.5 text-xs text-(--warning-light) -mt-1">
-                        <HelpCircle size={12} className="mt-0.5 shrink-0" />
-                        <span>
-                            {uncovered.missing} of {uncovered.total} accounts have no questions stored,
-                            so their password reset still needs nothing but the email link.
-                        </span>
-                    </p>
+                    <Callout tone="warning" icon={<HelpCircle size={15} />}>
+                        {uncovered.missing} of {uncovered.total} accounts have no questions stored,
+                        so their password reset still needs nothing but the email link.
+                    </Callout>
                 )}
                 <div className="flex items-center gap-3">
                     <label className="input-label mb-0 shrink-0">Required answers</label>
@@ -328,7 +324,7 @@ function AuthPolicySection({
             </div>
 
             <div className="space-y-4 pt-4 border-t border-(--base-03)">
-                <h4 className="mono-label text-(--base-07) flex items-center gap-2">
+                <h4 className="srv-label flex items-center gap-2">
                     <KeyRound size={12} /> Password reset
                 </h4>
                 <div className="flex items-center gap-3">
@@ -470,14 +466,15 @@ function AutoDeleteSection({ form }: { form: SettingsForm<AuthPolicy> }) {
                 </div>
                 <div className="flex flex-col gap-[5px]">
                     <label className="input-label">Deletion mode</label>
-                    <select
+                    <Select
+                        ariaLabel="Deletion mode"
                         value={policy.deletionMode}
-                        onChange={e => set({ deletionMode: e.target.value as 'anonymize' | 'hard_delete' })}
-                        className="input-field w-full"
-                    >
-                        <option value="anonymize">Anonymize (DSGVO-friendly, keeps row + id)</option>
-                        <option value="hard_delete">Hard delete (permanent, cascades)</option>
-                    </select>
+                        onChange={v => set({ deletionMode: v as 'anonymize' | 'hard_delete' })}
+                        options={[
+                            { value: 'anonymize', label: 'Anonymize (DSGVO-friendly, keeps row + id)' },
+                            { value: 'hard_delete', label: 'Hard delete (permanent, cascades)' },
+                        ]}
+                    />
                     <p className="text-xs text-(--base-06)">Anonymize wipes PII but preserves audit references. Hard delete removes the row.</p>
                 </div>
             </div>
@@ -611,16 +608,16 @@ function SecurityQuestionsPoolSection() {
                     <p className="text-sm text-(--base-06) italic text-center py-4">Pool is empty. Add some questions below.</p>
                 )}
                 {pool.map((q, idx) => (
-                    <div key={idx} className="flex items-center gap-2 p-2 rounded-md bg-(--base-02) border border-(--base-03)">
+                    <div key={idx} className="flex items-center gap-2 rounded-lg bg-(--base-03) p-2">
                         <span className="font-mono text-xs text-(--base-06) w-6 text-center">{idx + 1}</span>
                         <span className="flex-1 text-sm text-(--base-09)">{q}</span>
                         <button
                             type="button"
                             onClick={() => form.patch({ pool: pool.filter((_, i) => i !== idx) })}
                             aria-label={`Remove question ${idx + 1}`}
-                            className="p-1.5 rounded text-(--error-light) hover:bg-(--error-ghost)"
+                            className="app-icon-btn hover:!text-(--error-light)"
                         >
-                            <X size={13} />
+                            <X size={14} />
                         </button>
                     </div>
                 ))}

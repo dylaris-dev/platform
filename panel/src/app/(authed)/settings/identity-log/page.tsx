@@ -14,6 +14,11 @@ import { History, RefreshCw, Loader2, ShieldAlert } from 'lucide-react';
 import { listIdentityAudit, type IdentityAuditEvent } from '@/lib/api/identityAudit';
 import { keyActorLabel } from '@/lib/auditSentences';
 import { SkeletonCard, SkeletonHeader } from '@/components/Skeleton';
+import PageHeader from '@/components/ui/PageHeader';
+import EmptyState from '@/components/ui/EmptyState';
+import Callout from '@/components/server/Callout';
+import { RowList } from '@/components/ui/RowList';
+import Select from '@/components/ui/Select';
 import { fmtDateTime } from '@/lib/time';
 
 // The event types the trail actually produces, most-asked-about first. An
@@ -122,68 +127,56 @@ export default function IdentityLogPage() {
 
     return (
         <div className="space-y-6 max-w-5xl">
-            <header className="flex items-start justify-between gap-4 flex-wrap">
-                <div>
-                    <h2 className="h-section flex items-center gap-2">
-                        <History size={18} className="text-(--accent-light)" /> Identity log
-                    </h2>
-                    <p className="text-sm text-(--base-06) mt-1">
-                        What has happened to accounts: registrations, address and role changes, two-factor
-                        resets and deletions. Append-only. A deleted account keeps its name and address here
-                        and nowhere else.
-                    </p>
-                </div>
-                <button
-                    type="button"
-                    onClick={() => load(true)}
-                    disabled={refreshing}
-                    className="btn btn-secondary btn-sm inline-flex items-center gap-1.5"
-                >
-                    {refreshing ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
-                    Refresh
-                </button>
-            </header>
+            <PageHeader
+                as="h2"
+                icon={<History size={18} />}
+                title="Identity log"
+                description="What has happened to accounts: registrations, address and role changes, two-factor resets and deletions. Append-only. A deleted account keeps its name and address here and nowhere else."
+                actions={
+                    <>
+                        <div className="w-56">
+                            <Select
+                                value={filter}
+                                onChange={setFilter}
+                                options={FILTERS.map(f => ({ value: f.id, label: f.label }))}
+                                ariaLabel="Filter by event type"
+                            />
+                        </div>
+                        <button
+                            type="button"
+                            onClick={() => load(true)}
+                            disabled={refreshing}
+                            className="btn btn-secondary btn-sm inline-flex items-center gap-1.5"
+                        >
+                            {refreshing ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+                            Refresh
+                        </button>
+                    </>
+                }
+            />
 
-            <div className="flex flex-wrap gap-1.5">
-                {FILTERS.map(f => (
-                    <button
-                        key={f.id}
-                        type="button"
-                        onClick={() => setFilter(f.id)}
-                        className={`px-2.5 py-1 rounded text-xs transition-colors ${
-                            filter === f.id
-                                ? 'bg-(--accent-ghost) text-(--accent-light)'
-                                : 'text-(--base-06) hover:text-(--base-08) hover:bg-(--base-03)'
-                        }`}
-                    >
-                        {f.label}
-                    </button>
-                ))}
-            </div>
-
-            {error && (
-                <div className="card p-4 border border-(--base-03) flex items-center gap-2">
-                    <ShieldAlert size={14} className="text-(--error-light) shrink-0" />
-                    <p className="text-sm text-(--error-light)">{error}</p>
-                </div>
+            {/* A failed refresh keeps the rows already shown; only a first load
+                with nothing to show becomes the error state. */}
+            {error && rows.length > 0 && (
+                <Callout tone="error" icon={<ShieldAlert size={16} />} title="The identity log could not be refreshed">{error}</Callout>
             )}
-
-            {loading ? (
-                <div className="card p-5 space-y-3 border border-(--base-03)">
+            {error && rows.length === 0 ? (
+                <EmptyState tone="error" icon={<ShieldAlert size={20} />} title="The identity log could not be loaded" description={error} />
+            ) : loading ? (
+                <div className="srv-surface p-5 space-y-3">
                     <SkeletonHeader />
                     <SkeletonCard height="h-12" />
                     <SkeletonCard height="h-12" />
                     <SkeletonCard height="h-12" />
                 </div>
             ) : rows.length === 0 ? (
-                <div className="card p-10 border border-(--base-03) text-center text-(--base-06)">
-                    <History size={24} className="mx-auto" />
-                    <p className="mt-3 text-sm">Nothing recorded for this filter yet.</p>
-                </div>
+                <EmptyState icon={<History size={20} />} title="Nothing recorded for this filter yet" />
             ) : (
-                <ul className="space-y-2">
-                    {rows.map(ev => <EventRow key={ev.id} ev={ev} />)}
-                </ul>
+                <div className="srv-surface">
+                    <RowList label="Identity events">
+                        {rows.map(ev => <EventRow key={ev.id} ev={ev} />)}
+                    </RowList>
+                </div>
             )}
         </div>
     );
@@ -207,32 +200,33 @@ function who(ev: IdentityAuditEvent): string {
 function EventRow({ ev }: { ev: IdentityAuditEvent }) {
     const label = LABELS[ev.eventType] || ev.eventType;
     const subject = who(ev);
+    const hasMeta = !!ev.metadata && Object.keys(ev.metadata).length > 0;
     return (
-        <li className="card p-3 border border-(--base-03)">
+        <div role="listitem" className="app-row flex-col !items-stretch">
             <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                     <p className="text-sm font-medium text-(--base-09)">
                         {label}
-                        {subject && <> · <span className="font-mono text-(--accent-light)">{subject}</span></>}
+                        {subject && <> &middot; <span className="font-mono text-(--accent-light)">{subject}</span></>}
                     </p>
-                    <p className="text-xs text-(--base-06) mt-0.5 font-mono">
+                    <p className="mt-0.5 font-mono text-xs text-(--base-06)">
                         {ev.actorApiKeyName
                             ? <>by <span className="text-(--base-08)">{keyActorLabel(ev.actorApiKeyName, ev.actorName || ev.actorUserId)}</span></>
                             : ev.actorName
                             ? <>by <span className="text-(--base-08)">{ev.actorName}</span></>
                             : ev.actorUserId ? <>by {ev.actorUserId}</> : 'by the system'}
-                        {ev.ipAddress && <> · {ev.ipAddress}</>}
+                        {ev.ipAddress && <> &middot; {ev.ipAddress}</>}
                     </p>
                 </div>
-                <time className="text-[10px] font-mono text-(--base-06) shrink-0" title={ev.createdAt}>
+                <time className="shrink-0 font-mono text-xs text-(--base-06)" title={ev.createdAt}>
                     {fmtDateTime(ev.createdAt)}
                 </time>
             </div>
-            {ev.metadata && Object.keys(ev.metadata).length > 0 && (
-                <pre className="mt-2 text-[10px] font-mono text-(--base-07) bg-(--base-02) border border-(--base-03) rounded p-2 overflow-x-auto">
+            {hasMeta && (
+                <pre className="mt-2 overflow-x-auto rounded-lg bg-(--base-01) p-2 font-mono text-[11px] text-(--base-07)">
 {JSON.stringify(ev.metadata, null, 2)}
                 </pre>
             )}
-        </li>
+        </div>
     );
 }

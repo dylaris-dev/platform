@@ -1,5 +1,6 @@
 "use client";
 
+import { Checkbox } from '@ui-sdk/react/checkbox';
 import { useState } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import {
@@ -66,13 +67,12 @@ export default function WipeChoiceDialog({
                     {WIPE_TOKENS.map(t => (
                         <label
                             key={t}
-                            className="flex items-start gap-3 rounded-md border border-(--base-03) p-3 cursor-pointer hover:border-(--accent)/40 transition-colors"
+                            className="flex items-start gap-3 rounded-md bg-(--base-03) p-3 cursor-pointer hover:bg-(--base-04) transition-colors"
                         >
-                            <input
-                                type="checkbox"
+                            <Checkbox
                                 className="checkbox mt-0.5"
                                 checked={picked.has(t)}
-                                onChange={() => toggle(t)}
+                                onCheckedChange={() => toggle(t)}
                             />
                             <span className="min-w-0">
                                 <span className="text-sm text-(--base-09) flex items-center gap-2">

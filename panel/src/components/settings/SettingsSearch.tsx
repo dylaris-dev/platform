@@ -1,8 +1,15 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Search, X } from 'lucide-react';
+import {
+    Autocomplete,
+    AutocompleteContent,
+    AutocompleteInput,
+    AutocompleteItem,
+    AutocompleteList,
+} from '@ui-sdk/react/autocomplete';
 import { searchSettings, hrefFor, type SettingsHit } from '@/lib/settingsIndex';
 import { useUnsavedChangesState, UnsavedDialog } from '@/components/settings/UnsavedChanges';
 
@@ -17,8 +24,6 @@ import { useUnsavedChangesState, UnsavedDialog } from '@/components/settings/Uns
 export default function SettingsSearch({ onNavigate }: { onNavigate?: () => void }) {
     const router = useRouter();
     const [q, setQ] = useState('');
-    const [active, setActive] = useState(0);
-    const boxRef = useRef<HTMLDivElement>(null);
     // Every other navigation in the panel goes through GuardedLink. This one
     // called router.replace directly, so searching while a form was dirty left
     // the page, unmounted the section and dropped the edits without asking -
@@ -30,15 +35,7 @@ export default function SettingsSearch({ onNavigate }: { onNavigate?: () => void
 
     const hits = searchSettings(q);
 
-    useEffect(() => setActive(0), [q]);
-
-    useEffect(() => {
-        const onDown = (e: MouseEvent) => {
-            if (!boxRef.current?.contains(e.target as Node)) setQ('');
-        };
-        document.addEventListener('mousedown', onDown);
-        return () => document.removeEventListener('mousedown', onDown);
-    }, []);
+    const hitKey = (hit: SettingsHit) => `${hit.page}-${hit.tab ?? ''}-${hit.label}`;
 
     const navigate = (hit: SettingsHit) => {
         setQ('');
@@ -56,23 +53,33 @@ export default function SettingsSearch({ onNavigate }: { onNavigate?: () => void
         navigate(hit);
     };
 
-    const onKeyDown = (e: React.KeyboardEvent) => {
-        if (e.key === 'Escape') { setQ(''); return; }
-        if (hits.length === 0) return;
-        if (e.key === 'ArrowDown') { e.preventDefault(); setActive(i => (i + 1) % hits.length); }
-        if (e.key === 'ArrowUp') { e.preventDefault(); setActive(i => (i - 1 + hits.length) % hits.length); }
-        if (e.key === 'Enter') { e.preventDefault(); go(hits[active]); }
-    };
-
     return (
-        <div ref={boxRef} className="relative px-3">
+        <div className="relative px-3">
+            {/* The index does its own matching (descriptions, synonyms), so the SDK filter is off.
+                Choosing a hit navigates instead of filling the field. */}
+            <Autocomplete
+                filter={false}
+                autoHighlight
+                value={q}
+                onValueChange={(v, details) => {
+                    // On a chosen suggestion `v` is its label text; the key we set as value is on details.item.
+                    if (details.item) {
+                        details.cancel();
+                        const hit = hits.find(h => hitKey(h) === details.item?.value);
+                        if (hit) go(hit);
+                        return;
+                    }
+                    setQ(v);
+                }}
+                open={q.trim().length >= 2}
+                onOpenChange={(open, details) => {
+                    if (!open && (details.reason === 'escape-key' || details.reason === 'outside-press')) setQ('');
+                }}
+            >
             <div className="relative">
                 <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-(--base-06) pointer-events-none" />
-                <input
+                <AutocompleteInput
                     type="search"
-                    value={q}
-                    onChange={e => setQ(e.target.value)}
-                    onKeyDown={onKeyDown}
                     placeholder="Search settings"
                     aria-label="Search settings"
                     className="input-field input-icon-left input-icon-right w-full"
@@ -89,28 +96,27 @@ export default function SettingsSearch({ onNavigate }: { onNavigate?: () => void
                 )}
             </div>
 
-            {q.trim().length >= 2 && (
-                <div className="absolute left-3 right-3 mt-1 z-40 dropdown-menu max-h-80 overflow-y-auto">
-                    {hits.length === 0 ? (
-                        <p className="px-3 py-2.5 text-xs text-(--base-06)">
-                            Nothing matches. Try what the setting does rather than what it is called.
-                        </p>
-                    ) : (
-                        hits.map((hit, i) => (
-                            <button
-                                key={`${hit.page}-${hit.tab ?? ''}-${hit.label}`}
-                                type="button"
-                                onClick={() => go(hit)}
-                                onMouseEnter={() => setActive(i)}
-                                className={`dropdown-item flex-col items-start gap-0 ${i === active ? 'bg-(--base-03) text-(--base-09)' : ''}`}
+            <AutocompleteContent className="ui-popup w-(--anchor-width) max-h-[min(20rem,var(--available-height))] overflow-y-auto p-1.5">
+                {hits.length === 0 ? (
+                    <p className="px-3 py-2.5 text-xs text-(--base-06)">
+                        Nothing matches. Try what the setting does rather than what it is called.
+                    </p>
+                ) : (
+                    <AutocompleteList>
+                        {hits.map(hit => (
+                            <AutocompleteItem
+                                key={hitKey(hit)}
+                                value={hitKey(hit)}
+                                className="dropdown-item flex-col items-start gap-0"
                             >
                                 <span className="text-sm text-(--base-09)">{hit.label}</span>
                                 <span className="text-[11px] text-(--base-06)">{hit.where}</span>
-                            </button>
-                        ))
-                    )}
-                </div>
-            )}
+                            </AutocompleteItem>
+                        ))}
+                    </AutocompleteList>
+                )}
+            </AutocompleteContent>
+            </Autocomplete>
 
             {pending && registration && (
                 <UnsavedDialog

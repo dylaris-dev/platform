@@ -59,7 +59,7 @@ export default function ServerVersionPanel({
 
     if (!current || !loaderKnown) {
         return (
-            <div className="card p-4">
+            <div className="srv-surface p-5">
                 <p className="text-sm text-(--base-09) font-medium mb-1">
                     Declare this server&apos;s loader and Minecraft version first
                 </p>
@@ -72,10 +72,7 @@ export default function ServerVersionPanel({
     }
 
     return (
-        // flex-1 min-h-0 so this fills the height its parent section has and
-        // scrolls inside it. Without them it is as tall as its content, and the
-        // page's overflow-hidden clips the end of it out of reach.
-        <div className="flex-1 min-h-0 flex flex-col gap-4 overflow-y-auto">
+        <div className="flex flex-col gap-6">
             <UnmanagedJars
                 serverId={server.id}
                 serverUuid={server.uuid}

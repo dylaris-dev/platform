@@ -28,13 +28,12 @@ export function parseProperties(text: string): PropertiesDoc {
         const m = trimmed.match(KEY_VALUE_REGEX);
         if (!m) return;
         const key = m[1].trim();
-        // Strip basic backslash escapes for newlines and unicode. Java's
-        // full escape grammar is more elaborate but server.properties
-        // values in the wild almost never use it.
-        const value = m[2]
-            .replace(/\\n/g, '\n')
-            .replace(/\\t/g, '\t')
-            .replace(/\\\\/g, '\\');
+        // Java's rule in one pass: \n \t \r \f and \uXXXX are special, any other
+        // escaped char is itself. Minecraft writes `minecraft\:normal`.
+        const value = m[2].replace(/\\(u[0-9a-fA-F]{4}|[\s\S])/g, (_, c: string) => {
+            if (c.length === 5) return String.fromCharCode(parseInt(c.slice(1), 16));
+            return ({ n: '\n', t: '\t', r: '\r', f: '\f' } as Record<string, string>)[c] ?? c;
+        });
         if (!(key in values)) order.push(key);
         values[key] = value;
         lineIndex[key] = i;

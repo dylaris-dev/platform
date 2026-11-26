@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Gauge, AlertTriangle, Trash2, Globe } from 'lucide-react';
+import Callout from '@/components/server/Callout';
 import SettingsPage from '@/components/settings/SettingsPage';
 import SettingsCard from '@/components/settings/SettingsCard';
 import TrafficAllowanceFields, {
@@ -204,16 +205,10 @@ export default function TrafficLimitsTab() {
                 // Load-bearing, not decorative. The account-wide fallback that
                 // used to stop people is gone: an allowance nobody has set does
                 // not cap anyone and does not bill anyone.
-                <div className="card p-4 flex items-start gap-3 border-(--warning)/40">
-                    <AlertTriangle size={16} className="text-(--warning) mt-0.5 shrink-0" />
-                    <div className="text-sm text-(--base-08)">
-                        <p className="font-medium text-(--base-09)">No allowance is configured anywhere.</p>
-                        <p className="text-xs text-(--base-06) mt-1">
-                            Nothing is capped and nothing is billed until something below is set. There is no
-                            account-wide fallback behind this screen.
-                        </p>
-                    </div>
-                </div>
+                <Callout tone="warning" icon={<AlertTriangle size={16} />} title="No allowance is configured anywhere.">
+                    Nothing is capped and nothing is billed until something below is set. There is no
+                    account-wide fallback behind this screen.
+                </Callout>
             )}
 
             <SettingsCard
@@ -243,7 +238,7 @@ export default function TrafficLimitsTab() {
                                 {regions.map(region => (
                                     <div key={region} className="rounded-md border border-(--base-03) p-3 space-y-3">
                                         <div className="flex flex-wrap items-center gap-2">
-                                            <span className="mono-label text-(--accent-light)">{region}</span>
+                                            <span className="srv-label text-(--accent-light)">{region}</span>
                                             {!liveRegions.includes(region) && (
                                                 <span className="text-xs text-(--base-06)">
                                                     No edge is reporting this region right now. Its allowance still
@@ -297,10 +292,10 @@ export default function TrafficLimitsTab() {
                         {overrides.map(o => (
                             <div key={o.id} className="flex flex-wrap items-center gap-3 p-3 text-sm">
                                 <code className="input-mono text-xs text-(--base-08)">{o.scope.slice(5)}</code>
-                                <span className="mono-label text-(--accent-light)">
+                                <span className="srv-label text-(--accent-light)">
                                     {o.region === TRAFFIC_REGION_ANY ? 'all regions' : o.region}
                                 </span>
-                                <span className="mono-label text-(--base-06)">{KIND_LABELS[o.kind] ?? o.kind}</span>
+                                <span className="srv-label text-(--base-06)">{KIND_LABELS[o.kind] ?? o.kind}</span>
                                 <span className="text-(--base-07)">
                                     included {o.includedGb === null ? 'unlimited' : `${o.includedGb} GB`}
                                     {' · '}

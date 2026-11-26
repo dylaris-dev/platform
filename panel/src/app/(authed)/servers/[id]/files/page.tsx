@@ -8,6 +8,7 @@ import { useAppData } from '@/lib/AppDataContext';
 import { API_URL } from '@/lib/api';
 import FileBrowserView from '@/views/FileBrowserView';
 import { toast } from '@/components/ui/Toast';
+import Tooltip from '@/components/ui/Tooltip';
 import { useRouteId } from '@/lib/routeParams';
 import { downloadBeamApp } from '@/lib/beamDownload';
 import { isWails } from '@/lib/adapters';
@@ -62,15 +63,15 @@ export default function ServerFilesPage() {
     };
 
     return (
-        <div className="flex flex-col gap-3 h-full">
+        <div className="flex flex-col gap-4 h-full">
             {hasInfoBar && (
-                <div className="card px-4 py-3 flex flex-wrap items-center gap-4 shrink-0">
+                <div className="srv-surface px-5 py-4 flex flex-wrap items-center gap-x-6 gap-y-3 shrink-0">
                     {showSftp && (
                         <div className="flex items-center gap-3 min-w-0">
                             <Terminal size={14} className="text-(--base-06) shrink-0" />
                             <div className="min-w-0">
-                                <div className="input-label mb-0.5">SFTP</div>
-                                <div className="flex items-center gap-2 font-mono text-xs text-(--base-08)">
+                                <div className="srv-label mb-1">SFTP</div>
+                                <div className="srv-num flex items-center gap-2 text-xs text-(--base-08)">
                                     <span>{server.nodeAddress}</span>
                                     <span className="text-(--base-05)">:</span>
                                     <span>25520</span>
@@ -82,40 +83,44 @@ export default function ServerFilesPage() {
                                     <Link href="/account/ssh-keys" className="text-(--accent-light) hover:underline">Account &gt; SSH keys</Link>.
                                 </div>
                             </div>
-                            <button
-                                onClick={() => navigator.clipboard.writeText(`sftp ${user?.username}@${server.nodeAddress} -p 25520`)}
-                                className="text-(--base-05) hover:text-(--base-09) transition-colors shrink-0 p-1 rounded"
-                                title="Copy SFTP command"
-                            >
-                                <Copy size={13} />
-                            </button>
+                            <Tooltip content="Copy SFTP command">
+                                <button
+                                    type="button"
+                                    onClick={() => navigator.clipboard.writeText(`sftp ${user?.username}@${server.nodeAddress} -p 25520`)}
+                                    aria-label="Copy SFTP command"
+                                    className="text-(--base-06) hover:text-(--base-09) hover:bg-(--base-03) active:bg-(--base-04) focus-visible:outline-none focus-visible:shadow-(--focus-ring) transition-colors shrink-0 p-1.5 rounded-md"
+                                >
+                                    <Copy size={14} />
+                                </button>
+                            </Tooltip>
                         </div>
                     )}
                     {fileAccessMode === 'both' && beamEnabled && (
-                        <div className="w-px h-8 bg-(--base-03) hidden sm:block" />
+                        <div className="w-px h-8 bg-(--base-04) hidden sm:block" />
                     )}
                     {beamEnabled && (
                         <div className="flex items-center gap-3 min-w-0">
                             <Globe size={14} className="text-(--accent-light) shrink-0" />
                             <div className="min-w-0">
-                                <div className="input-label mb-0.5">Beam Desktop</div>
+                                <div className="srv-label mb-1">Beam Desktop</div>
                                 <div className="text-xs text-(--base-08)">High-speed transfers via the Beam app</div>
                             </div>
                         </div>
                     )}
                     {beamEnabled && (
-                        <button
-                            type="button"
-                            onClick={handleBeamDownload}
-                            disabled={downloading}
-                            className="btn btn-secondary btn-sm ml-auto shrink-0 disabled:opacity-50"
-                            title="Download the Beam Desktop app — connects directly to the relay so transfers don't hit Core"
-                        >
-                            {downloading
-                                ? <Loader2 size={12} className="animate-spin" />
-                                : <FolderOpen size={12} />}
-                            {downloading ? 'Downloading…' : 'Download Beam'}
-                        </button>
+                        <Tooltip content="Connects directly to the relay, so transfers do not hit Core">
+                            <button
+                                type="button"
+                                onClick={handleBeamDownload}
+                                disabled={downloading}
+                                className="btn btn-secondary btn-sm ml-auto shrink-0 disabled:opacity-50"
+                            >
+                                {downloading
+                                    ? <Loader2 size={14} className="animate-spin" />
+                                    : <FolderOpen size={14} />}
+                                {downloading ? 'Downloading…' : 'Download Beam'}
+                            </button>
+                        </Tooltip>
                     )}
                 </div>
             )}
@@ -124,9 +129,11 @@ export default function ServerFilesPage() {
                 currentServerPath={server.activeSubServer || ''}
                 readOnly={server.role === 'demo'}
                 toolbarActions={server.role !== 'demo' && templatesVisible(featureFlags.templates, !!user?.isAdmin) && (
-                    <button type="button" onClick={() => setCapturing(true)} className="btn btn-secondary px-3 h-[37px] text-sm" title="Save files of this server as a template" aria-label="Save as template">
-                        <LayoutTemplate size={16} /> <span className="hidden md:inline">Save as template</span>
-                    </button>
+                    <Tooltip content="Save files of this server as a template">
+                        <button type="button" onClick={() => setCapturing(true)} className="btn btn-secondary px-3 h-[37px] text-sm" aria-label="Save as template">
+                            <LayoutTemplate size={16} /> <span className="hidden md:inline">Save as template</span>
+                        </button>
+                    </Tooltip>
                 )}
             />
             {capturing && <CaptureTemplateDialog serverId={server.id} onClose={() => setCapturing(false)} />}

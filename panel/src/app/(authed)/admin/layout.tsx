@@ -4,6 +4,9 @@ import React, { useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAppData } from '@/lib/AppDataContext';
+import PageHeader from '@/components/ui/PageHeader';
+import EmptyState from '@/components/ui/EmptyState';
+import { ShieldAlert } from 'lucide-react';
 
 // Routes are gateway records only; direct-mode server domains live on each
 // server's Network tab. Without gateway routing the tab led to an empty hint, so
@@ -28,22 +31,17 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     if (!ready) return null;
     if (!user?.isAdmin) {
         return (
-            <main className="flex-1 flex items-center justify-center text-(--error-light) font-semibold text-xl font-display">
-                Access denied. Administrator rights required.
+            <main className="flex-1 flex items-center justify-center p-6">
+                <EmptyState tone="error" icon={<ShieldAlert size={20} />} title="Access denied" description="Administrator rights required." />
             </main>
         );
     }
 
     return (
-        <main className="flex-1 flex flex-col overflow-hidden relative z-10 p-6">
-            <div className="flex items-center justify-between mb-6">
-                <div>
-                    <h2 className="h-page">Admin</h2>
-                    <p className="text-sm text-(--base-06)">Servers, user accounts, gateway routes and storage diagnostics</p>
-                </div>
-            </div>
+        <main className="app-page flex-1 flex flex-col overflow-hidden relative z-10">
+            <PageHeader title="Admin" description="Servers, user accounts, gateway routes and storage diagnostics" className="mb-4" />
 
-            <div className="flex gap-1 mb-4 border-b border-(--base-03) pb-0">
+            <nav aria-label="Admin sections" className="flex gap-0.5 mb-6 shrink-0">
                 {TABS.filter(t => !t.gatewayOnly || gatewayEnabled).map(t => {
                     const href = `/admin/${t.slug}`;
                     const isActive = pathname === href || pathname.startsWith(href + '/');
@@ -52,17 +50,14 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                             key={t.slug}
                             href={href}
                             replace
-                            className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px ${
-                                isActive
-                                    ? 'border-(--accent) text-(--accent-light)'
-                                    : 'border-transparent text-(--base-06) hover:text-(--base-08)'
-                            }`}
+                            aria-current={isActive ? 'page' : undefined}
+                            className="srv-nav-link"
                         >
                             {t.label}
                         </Link>
                     );
                 })}
-            </div>
+            </nav>
 
             <div className="flex-1 min-h-0 overflow-auto">
                 {children}

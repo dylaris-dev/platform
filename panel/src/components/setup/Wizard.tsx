@@ -1,5 +1,6 @@
 "use client";
 
+import OtpInput from '@/components/ui/OtpInput';
 import React, { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { QRCodeSVG } from 'qrcode.react';
@@ -121,7 +122,7 @@ export default function SetupWizard() {
 
     if (uiState === 'disabled') {
         return (
-            <div className="card p-6 w-full max-w-md">
+            <div className="app-auth-card">
                 <header className="mb-4">
                     <div className="flex items-center gap-2 mb-1">
                         <ShieldCheck size={18} className="text-(--accent-light)" />
@@ -149,7 +150,7 @@ export default function SetupWizard() {
 
     if (uiState === 'recovery_closed') {
         return (
-            <div className="card p-6 w-full max-w-md">
+            <div className="app-auth-card">
                 <header className="mb-4">
                     <div className="flex items-center gap-2 mb-1">
                         <ShieldCheck size={18} className="text-(--accent-light)" />
@@ -173,7 +174,7 @@ export default function SetupWizard() {
     }
 
     return (
-        <div className="card p-6 w-full max-w-md">
+        <div className="app-auth-card">
             <header className="mb-5">
                 <div className="flex items-center gap-2 mb-1">
                     <ShieldCheck size={18} className="text-(--accent-light)" />
@@ -192,7 +193,7 @@ export default function SetupWizard() {
             </header>
 
             {needsSecretWarning && (
-                <div className="mb-4 flex items-start gap-2 rounded-md border border-(--error)/40 bg-(--error)/10 p-3">
+                <div className="mb-4 srv-callout" data-tone="error">
                     <CircleAlert size={14} className="mt-0.5 shrink-0 text-(--error-light)" />
                     <div className="text-xs text-(--error-light)">
                         <div className="font-medium">No admin token is configured.</div>
@@ -206,7 +207,7 @@ export default function SetupWizard() {
             )}
 
             {/* Step indicator */}
-            <div className="flex items-center gap-2 text-[10px] font-mono uppercase tracking-[0.08em] text-(--base-06) mb-4">
+            <div className="flex items-center gap-2 srv-label mb-4">
                 <span className={step === 1 ? 'text-(--accent-light)' : ''}>1 - Account</span>
                 <span>·</span>
                 <span className={step === 2 ? 'text-(--accent-light)' : ''}>2 - Two-Factor (optional)</span>
@@ -215,7 +216,7 @@ export default function SetupWizard() {
             {step === 1 && (
                 <div className="space-y-3">
                     <div>
-                        <div className="mono-label">Username</div>
+                        <div className="srv-label mb-1">Username</div>
                         <input
                             type="text"
                             value={username}
@@ -230,7 +231,7 @@ export default function SetupWizard() {
                     </div>
 
                     <div>
-                        <div className="mono-label">Password</div>
+                        <div className="srv-label mb-1">Password</div>
                         <input
                             type="password"
                             value={password}
@@ -241,7 +242,7 @@ export default function SetupWizard() {
                     </div>
 
                     <div>
-                        <div className="mono-label">Repeat password</div>
+                        <div className="srv-label mb-1">Repeat password</div>
                         <input
                             type="password"
                             value={passwordRepeat}
@@ -258,7 +259,7 @@ export default function SetupWizard() {
 
                     {setupCodeRequired && (
                         <div>
-                            <label htmlFor="setup-code" className="mono-label block">Setup code</label>
+                            <label htmlFor="setup-code" className="srv-label mb-1 block">Setup code</label>
                             <input
                                 id="setup-code"
                                 type="text"
@@ -278,7 +279,7 @@ export default function SetupWizard() {
 
                     {secretRequired && (
                         <div>
-                            <div className="mono-label">Admin secret</div>
+                            <div className="srv-label mb-1">Admin secret</div>
                             <input
                                 type="password"
                                 value={adminSecret}
@@ -333,16 +334,8 @@ export default function SetupWizard() {
                         Or enter manually: <span className="text-(--base-09)">{totpSecret}</span>
                     </div>
                     <div>
-                        <div className="mono-label">6-digit code</div>
-                        <input
-                            type="text"
-                            inputMode="numeric"
-                            value={totpCode}
-                            onChange={e => setTotpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                            placeholder="123456"
-                            className="input-mono w-full font-mono"
-                            maxLength={6}
-                        />
+                        <div className="srv-label mb-1">6-digit code</div>
+                        <OtpInput value={totpCode} onChange={setTotpCode} />
                     </div>
                     {error && (
                         <div className="text-xs text-(--error-light) flex items-start gap-1.5">

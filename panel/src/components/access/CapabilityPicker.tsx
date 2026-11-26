@@ -1,5 +1,6 @@
 "use client";
 
+import Checkbox from '@/components/ui/Checkbox';
 import type { CatalogScope } from '@/lib/api/authzCatalog';
 import { filterScopes, capIdsForScopes, withImpliedReads } from '@/lib/access/caps';
 
@@ -38,24 +39,18 @@ export default function CapabilityPicker({ catalog, scopes, selected, onChange, 
                 <div key={scope.scope} className="space-y-4">
                     {scope.categories.map(cat => (
                         <div key={`${scope.scope}.${cat.category}`}>
-                            <div className="mono-label text-(--base-06) mb-1.5">{cat.category}</div>
+                            <div className="srv-label mb-1.5">{cat.category}</div>
                             <div className="space-y-1.5">
                                 {cat.capabilities.map(cap => {
                                     const checked = selected.includes(cap.id);
                                     return (
-                                        <label
+                                        <Checkbox
                                             key={cap.id}
-                                            className={`flex items-center gap-2 select-none ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
-                                        >
-                                            <input
-                                                type="checkbox"
-                                                checked={checked}
-                                                disabled={disabled}
-                                                onChange={e => handleToggle(cap.id, e.target.checked)}
-                                                className="checkbox"
-                                            />
-                                            <span className="text-sm text-(--base-09)">{cap.label}</span>
-                                        </label>
+                                            checked={checked}
+                                            disabled={disabled}
+                                            onChange={c => handleToggle(cap.id, c)}
+                                            label={cap.label}
+                                        />
                                     );
                                 })}
                             </div>

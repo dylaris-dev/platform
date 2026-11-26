@@ -1,6 +1,7 @@
 "use client";
 
 import { useAppData } from '@/lib/AppDataContext';
+import EmptyState from '@/components/ui/EmptyState';
 import PlaceholderView from '@/views/PlaceholderView';
 import { useRouteId } from '@/lib/routeParams';
 
@@ -10,11 +11,11 @@ export default function CustomModulePage() {
     const m = modules.find(x => String(x.id) === String(paramId));
 
     return (
-        <main className="flex-1 flex flex-col overflow-hidden relative z-10 p-6">
+        <main className="flex-1 flex flex-col overflow-hidden relative z-10 app-page">
             {!m ? (
-                <div className="text-center text-(--base-06)">Module not found.</div>
+                <EmptyState title="Module not found" description="This module does not exist or was removed." />
             ) : m.type === 'iframe' && m.url ? (
-                <div className="w-full h-full rounded-xl overflow-hidden border border-(--base-03)">
+                <div className="w-full h-full rounded-(--radius-lg) overflow-hidden bg-(--base-02)">
                     {/* Sandboxed like a custom tab: a third-party page must not
                         navigate the panel or open windows unasked. */}
                     <iframe

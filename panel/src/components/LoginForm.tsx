@@ -119,7 +119,7 @@ export default function LoginForm() {
   };
 
   return (
-    <div className="card w-full max-w-md p-8">
+    <div className="app-auth-card">
       <h1 className="text-4xl text-center mb-8 font-logo tracking-widest select-none">
         <span className="text-(--accent-light)">D</span>
         <span className="text-(--base-09)">ylaris</span>
@@ -135,7 +135,7 @@ export default function LoginForm() {
         <>
           <form onSubmit={handleCredentialsSubmit} className="space-y-5">
             <div className="flex flex-col gap-[5px]">
-              <label htmlFor="username" className="input-label">Username</label>
+              <label htmlFor="username" className="srv-label">Username</label>
               <input
                 type="text"
                 id="username"
@@ -147,7 +147,7 @@ export default function LoginForm() {
               />
             </div>
             <div className="flex flex-col gap-[5px]">
-              <label htmlFor="password" className="input-label">Password</label>
+              <label htmlFor="password" className="srv-label">Password</label>
               <input
                 type="password"
                 id="password"
@@ -193,7 +193,7 @@ export default function LoginForm() {
             Enter the 6-digit code from your authenticator app, or one of your single-use backup codes.
           </p>
           <div className="flex flex-col gap-[5px]">
-            <label htmlFor="totp" className="input-label">Code</label>
+            <label htmlFor="totp" className="srv-label">Code</label>
             <input
               ref={totpRef}
               type="text"

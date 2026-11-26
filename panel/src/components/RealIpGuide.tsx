@@ -1,6 +1,7 @@
 "use client";
 
 import { ChevronRight, ExternalLink, Info } from 'lucide-react';
+import Callout from '@/components/server/Callout';
 import { PROXY_SETUP_ROWS, PROXY_TRUSTED_RANGES, modLabel } from '@/lib/proxyProtocolGuide';
 
 /**
@@ -19,15 +20,12 @@ export default function RealIpGuide({ software, routeOnly = false }: {
 
     return (
         <div className="mt-3 space-y-2">
-            <div className="alert alert-info text-xs">
-                <Info size={14} className="shrink-0 mt-0.5" aria-hidden="true" />
-                <span>
-                    Without it, every player reaches the server from the gateway&apos;s address. IP bans, alt
-                    detection by IP and IP logs then see one address for everyone.
-                </span>
-            </div>
+            <Callout tone="info" icon={<Info size={16} />}>
+                Without it, every player reaches the server from the gateway&apos;s address. IP bans, alt
+                detection by IP and IP logs then see one address for everyone.
+            </Callout>
             <details className="group text-xs">
-                <summary className="cursor-pointer select-none list-none inline-flex items-center gap-1 text-(--base-07) hover:text-(--base-09) focus-visible:outline-2 focus-visible:outline-(--accent) rounded-sm">
+                <summary className="cursor-pointer select-none list-none inline-flex items-center gap-1 text-(--base-07) hover:text-(--base-09) focus-visible:outline-none focus-visible:[box-shadow:var(--focus-ring)] rounded-sm">
                     <ChevronRight size={14} className="transition-transform group-open:rotate-90 motion-reduce:transition-none" aria-hidden="true" />
                     How to set it up
                 </summary>
@@ -45,14 +43,14 @@ export default function RealIpGuide({ software, routeOnly = false }: {
                         </ul>
                     )}
 
-                    <ul className="divide-y divide-(--base-03) border border-(--base-03) rounded-md">
+                    <ul className="rounded-lg bg-(--base-02) p-1 space-y-0.5">
                         {rows.map(r => {
                             const mine = r.software.includes(own);
                             return (
-                                <li key={r.label} className={`px-3 py-2 ${mine ? 'bg-(--accent-ghost)' : ''}`}>
+                                <li key={r.label} className={`rounded-md px-3 py-2 ${mine ? 'bg-(--accent-ghost)' : ''}`}>
                                     <div className="flex items-center gap-2">
                                         <span className="text-(--base-09) font-medium">{r.label}</span>
-                                        {mine && <span className="mono-label text-(--accent-light)">This server</span>}
+                                        {mine && <span className="srv-label text-(--accent-light)">This server</span>}
                                     </div>
                                     <div className="mt-0.5">{r.text}</div>
                                     {r.file && r.line && (

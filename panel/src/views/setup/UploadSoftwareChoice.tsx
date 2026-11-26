@@ -1,5 +1,6 @@
 "use client";
 
+import { SegmentedControl, SegmentedControlItem } from '@ui-sdk/react/segmented-control';
 import React from 'react';
 import type { UploadDetection } from '@/lib/uploadDetect';
 
@@ -36,23 +37,25 @@ export default function UploadSoftwareChoice({ detection, keepJar, onKeepJarChan
     return (
         <div className="space-y-3">
             <div>
-                <label className="input-label mb-2 block">Server software</label>
-                <div role="radiogroup" aria-label="Server software" className="flex bg-(--base-03) p-1 rounded-md max-w-md">
-                    <button type="button" role="radio" aria-checked={!keepJar} onClick={() => onKeepJarChange(false)} className={tab(!keepJar)}>
+                <span className="srv-label mb-2 block">Server software</span>
+                <SegmentedControl
+                    aria-label="Server software"
+                    value={keepJar ? 'keep' : 'install'}
+                    onValueChange={v => { if (v != null) onKeepJarChange(v === 'keep'); }}
+                    className="flex bg-(--base-03) p-1 rounded-md max-w-md"
+                >
+                    <SegmentedControlItem value="install" className={tab(!keepJar)}>
                         Install software
-                    </button>
-                    <button
-                        type="button"
-                        role="radio"
-                        aria-checked={keepJar}
+                    </SegmentedControlItem>
+                    <SegmentedControlItem
+                        value="keep"
                         disabled={!keepAllowed}
                         title={keepAllowed ? undefined : 'Your upload has no server jar in its top folder.'}
-                        onClick={() => onKeepJarChange(true)}
                         className={tab(keepJar)}
                     >
                         {serverPack ? "Use the pack's loader" : 'Keep my server jar'}
-                    </button>
-                </div>
+                    </SegmentedControlItem>
+                </SegmentedControl>
                 <p className="text-xs text-(--base-06) mt-2">
                     {keepJar && serverPack
                         ? 'Modpack server pack detected (for example a CurseForge "Server Pack"). The mod loader it declares is installed for it; pick the Java version the pack needs above.'

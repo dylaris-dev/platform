@@ -12,6 +12,11 @@ import {
 } from '@/lib/api/templates';
 import { formatTemplateSize, softwareVersionField, TEMPLATE_SOFTWARE, templateCap, usesMinecraftVersion } from '@/lib/templates';
 import { SkeletonHeader, SkeletonList } from '@/components/Skeleton';
+import PageHeader from '@/components/ui/PageHeader';
+import EmptyState from '@/components/ui/EmptyState';
+import Callout from '@/components/server/Callout';
+import Select from '@/components/ui/Select';
+import '@/styles/modpacks.css';
 import { Badge } from '@/components/ui/Badge';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import { toast } from '@/components/ui/Toast';
@@ -61,18 +66,15 @@ export default function TemplateDetailPage() {
 
     if (error || !id) {
         return (
-            <main className="flex-1 min-h-0 overflow-y-auto p-5">
+            <main className="flex-1 min-h-0 overflow-y-auto app-page space-y-4">
                 <BackLink />
-                <div className="card p-8 flex flex-col items-center text-center gap-2 max-w-lg mx-auto mt-6" role="alert">
-                    <CircleAlert size={28} className="text-(--base-05)" />
-                    <p className="text-sm text-(--base-07)">{error || 'Template not found'}</p>
-                </div>
+                <EmptyState tone="error" icon={<CircleAlert size={20} />} title={error || 'Template not found'} className="mx-auto mt-6 max-w-lg" />
             </main>
         );
     }
     if (!t || !draft) {
         return (
-            <main className="flex-1 min-h-0 overflow-y-auto p-5 space-y-4" aria-busy="true">
+            <main className="flex-1 min-h-0 overflow-y-auto app-page space-y-4" aria-busy="true">
                 <SkeletonHeader />
                 <SkeletonList rows={6} />
             </main>
@@ -130,53 +132,48 @@ export default function TemplateDetailPage() {
         ? [draft.software, ...TEMPLATE_SOFTWARE] : [...TEMPLATE_SOFTWARE];
 
     return (
-        <main className="flex-1 min-h-0 overflow-y-auto p-5 space-y-4">
+        <main className="flex-1 min-h-0 overflow-y-auto app-page space-y-6">
             <BackLink />
-            <header className="flex items-center gap-3 flex-wrap">
-                <LayoutTemplate size={20} className="text-(--accent-light)" />
-                <h1 className="text-base font-display font-semibold text-(--base-09) truncate">{t.name}</h1>
-                <Badge variant="neutral">{t.kind}</Badge>
-                <Badge variant="neutral">{t.visibility}</Badge>
-                <Badge variant="neutral">{storageLabel(t.backupStorageId, own, !!featureFlags.hosted)}</Badge>
-                {t.ownerId !== user?.id && t.visibility === 'personal' && <span className="text-xs text-(--base-06)">by {t.ownerName || 'unknown'}</span>}
-                <span className="text-xs text-(--base-06) ml-auto">{formatTemplateSize(t.sizeBytes, templateCap(t, maxSize))}</span>
-                <a href={templateDownloadUrl(t.id)} download className="btn btn-secondary btn-sm">
-                    <Download size={12} /> Download
-                </a>
-            </header>
+            <PageHeader
+                title={t.name}
+                icon={<LayoutTemplate size={18} />}
+                description={
+                    <span className="flex flex-wrap items-center gap-2">
+                        <Badge variant="neutral">{t.kind}</Badge>
+                        <Badge variant="neutral">{t.visibility}</Badge>
+                        <Badge variant="neutral">{storageLabel(t.backupStorageId, own, !!featureFlags.hosted)}</Badge>
+                        {t.ownerId !== user?.id && t.visibility === 'personal' && <span className="text-xs">by {t.ownerName || 'unknown'}</span>}
+                    </span>
+                }
+                actions={<>
+                    <span className="srv-num text-xs text-(--base-06)">{formatTemplateSize(t.sizeBytes, templateCap(t, maxSize))}</span>
+                    <a href={templateDownloadUrl(t.id)} download className="btn btn-secondary btn-sm">
+                        <Download size={12} /> Download
+                    </a>
+                </>}
+            />
 
             {t.writeRefusal && (
-                <div className="alert alert-warning" role="status">
-                    <AlertTriangle size={14} className="shrink-0 mt-0.5" />
-                    <div className="text-xs">
-                        <p className="font-medium">This template is read-only</p>
-                        <p>{t.writeRefusal} You can still download{canDelete ? ' and delete' : ''} it.</p>
-                    </div>
-                </div>
+                <Callout tone="warning" role="status" icon={<AlertTriangle size={14} />} title="This template is read-only">
+                    {t.writeRefusal} You can still download{canDelete ? ' and delete' : ''} it.
+                </Callout>
             )}
 
             {skipped.length > 0 && <SkippedAlert skipped={skipped} onDismiss={() => setSkipped([])} />}
 
-            <form onSubmit={(e) => runSave(() => save(e))} className="card p-4 space-y-3">
+            <form onSubmit={(e) => runSave(() => save(e))} className="srv-surface p-4 space-y-3">
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                     {field('name', 'Name')}
                     <div>
                         <label htmlFor="tpl-software" className="input-label">Software</label>
-                        <select id="tpl-software" className="input-field w-full" value={draft.software} disabled={!canWrite} onChange={(e) => setDraft({ ...draft, software: e.target.value })}>
-                            <option value="">None yet</option>
-                            {softwareOptions.map((s) => <option key={s} value={s}>{s}</option>)}
-                        </select>
+                        <Select id="tpl-software" ariaLabel="Software" className="w-full" value={draft.software} disabled={!canWrite} onChange={(v) => setDraft({ ...draft, software: v })} options={[{ value: '', label: 'None yet' }, ...softwareOptions.map((s) => ({ value: s, label: s }))]} />
                     </div>
                     {usesMinecraftVersion(draft.software) && field('mcVersion', 'Minecraft version', '1.21.4')}
                     {versionField && field('softwareVersion', versionField.label, versionField.placeholder)}
                     {isAdmin && (
                         <div>
                             <label htmlFor="tpl-visibility" className="input-label">Visibility</label>
-                            <select id="tpl-visibility" className="input-field w-full" value={draft.visibility} onChange={(e) => setDraft({ ...draft, visibility: e.target.value as TemplateVisibility })}>
-                                <option value="personal">Personal</option>
-                                <option value="admin">Admin</option>
-                                <option value="platform">Platform</option>
-                            </select>
+                            <Select id="tpl-visibility" ariaLabel="Visibility" className="w-full" value={draft.visibility} onChange={(v) => setDraft({ ...draft, visibility: v as TemplateVisibility })} options={[{ value: 'personal', label: 'Personal' }, { value: 'admin', label: 'Admin' }, { value: 'platform', label: 'Platform' }]} />
                         </div>
                     )}
                 </div>
@@ -191,14 +188,14 @@ export default function TemplateDetailPage() {
                 )}
             </form>
 
-            <section className="card p-4 flex flex-col min-h-112" aria-label="Template files">
+            <section className="srv-surface p-4 flex flex-col min-h-112" aria-label="Template files">
                 <TemplateFiles templateId={t.id} software={t.software} mcVersion={t.mcVersion} canEdit={canWrite} maxSizeBytes={templateCap(t, maxSize)} onChanged={onChanged} onSkipped={onSkipped} />
             </section>
 
             {t.canShare && <TemplateShares templateId={t.id} />}
 
             {canDelete && (
-                <div className="pt-4 border-t border-(--base-03)">
+                <div className="pt-2">
                     <button className="btn btn-danger btn-sm disabled:opacity-40" disabled={deleting} onClick={() => runDelete(remove)}>
                         <Trash2 size={12} /> Delete template
                     </button>

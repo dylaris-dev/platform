@@ -18,6 +18,12 @@ import { DISK_SCALE_GB, cpuScale, ramScale } from '@/lib/resourceSlider';
 import { formatMB } from '@/lib/format';
 import { MAX_RAM_PADDING_MB, RAM_PADDING_HELP, inheritedRamPadding, parseRamPaddingInput } from '@/lib/ramPadding';
 import { pinMismatch } from '@/lib/cpuset';
+import Select from '@/components/ui/Select';
+import Switch from '@/components/ui/Switch';
+import Segmented from '@/components/ui/Segmented';
+import NumberField from '@/components/ui/NumberField';
+import EmptyState from '@/components/ui/EmptyState';
+import RadioCards from '@/components/settings/RadioCards';
 
 interface StoragePathInfo {
     path: string;
@@ -296,42 +302,32 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
             <ModalPanel className="modal-panel w-full max-w-4xl flex flex-col max-h-[90vh]">
 
                 {/* Header */}
-                <div className="modal-header flex justify-between items-center">
+                <div className="flex items-start justify-between gap-4 px-6 pt-6">
                     <div>
-                        <h2 className="modal-title">Create Container</h2>
-                        <p className="input-label mt-1">Step {step} of 2 — Software setup happens after deployment</p>
+                        <h2 className="modal-title">Create server</h2>
+                        <p className="srv-label mt-1">Step {step} of 2. Software setup happens after deployment.</p>
                     </div>
-                    <button onClick={onClose} className="text-(--base-06) hover:text-(--error-light) transition-colors">
-                        <X size={24} />
+                    <button type="button" onClick={onClose} aria-label="Close" className="app-icon-btn">
+                        <X size={16} />
                     </button>
                 </div>
 
-                {/* Progress Bar */}
-                <div className="flex w-full h-0.5 bg-(--base-03)">
-                    <div className="h-full bg-(--accent) transition-all duration-300" style={{ width: `${step * 50}%` }} />
+                {/* Progress */}
+                <div className="mx-6 mt-4 srv-meter-track" role="progressbar" aria-label="Create server progress" aria-valuemin={0} aria-valuemax={2} aria-valuenow={step}>
+                    <div className="srv-meter-fill" style={{ width: `${step * 50}%`, background: 'var(--accent)' }} />
                 </div>
 
                 {/* Body */}
-                <div className="modal-body overflow-y-auto flex-1 p-8">
+                <div className="modal-body overflow-y-auto flex-1 p-6">
                     {showNoNodeMsg ? (
-                        <div className="flex flex-col items-center justify-center text-center gap-3 py-12 px-6">
-                            <div className="w-14 h-14 rounded-xl bg-(--base-03) flex items-center justify-center">
-                                <Server size={26} className="text-(--accent-light)" />
-                            </div>
-                            <h3 className="text-lg font-display font-bold text-(--base-09)">No nodes yet</h3>
-                            {hosted ? (
-                                <>
-                                    <p className="text-sm text-(--base-06) max-w-sm">
-                                        To host a server you need your own node. Adding a node requires a subscription.
-                                    </p>
-                                    <p className="text-xs text-(--base-05) italic">Renting a managed server is coming soon.</p>
-                                </>
-                            ) : (
-                                <p className="text-sm text-(--base-06) max-w-sm">
-                                    No node is online. Ask an administrator to add one.
-                                </p>
-                            )}
-                        </div>
+                        <EmptyState
+                            bare
+                            icon={<Server size={20} />}
+                            title="No nodes yet"
+                            description={hosted
+                                ? 'To host a server you need your own node. Adding a node requires a subscription. Renting a managed server is coming soon.'
+                                : 'No node is online. Ask an administrator to add one.'}
+                        />
                     ) : (
                     <form onSubmit={(e) => e.preventDefault()}>
 
@@ -341,9 +337,9 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                                 {/* Left: Owner (admin assigns; a tenant owns what they create) */}
                                 {isAdmin && (
                                 <section className="space-y-2 min-h-80 flex flex-col">
-                                    <div className="flex items-center justify-between border-b border-(--base-03) pb-2 min-h-9">
-                                        <h3 className="text-base font-display font-bold text-(--base-09)">Assign Owner</h3>
-                                        <span className="font-mono text-[10px] text-(--base-06)">
+                                    <div className="flex items-center justify-between pb-1 min-h-9">
+                                        <h3 className="text-[15px] font-semibold text-(--base-09)">Assign owner</h3>
+                                        <span className="srv-num text-xs text-(--base-06)">
                                             {filteredUsers.length} / {users.length}
                                         </span>
                                     </div>
@@ -355,7 +351,7 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                                         onChange={e => setSearchTerm(e.target.value)}
                                         className="input-field w-full"
                                     />
-                                    <div className="flex-1 flex flex-col gap-1 overflow-y-auto rounded-md border border-(--base-03) bg-(--base-02) p-1.5">
+                                    <div className="flex-1 flex flex-col gap-0.5 overflow-y-auto rounded-lg bg-(--base-01) p-1.5">
                                         {filteredUsers.length === 0 ? (
                                             <p className="text-xs text-(--base-06) text-center py-6 italic">No matching users.</p>
                                         ) : (
@@ -368,16 +364,16 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                                                         onClick={() => setOwnerId(user.id)}
                                                         className={`flex items-center gap-2 px-2 py-1.5 rounded-md text-left transition-colors ${
                                                             selected
-                                                                ? 'bg-(--accent-ghost) border border-(--accent-border)'
-                                                                : 'border border-transparent hover:bg-(--base-03)'
+                                                                ? 'bg-(--base-03) [box-shadow:inset_0_0_0_1px_var(--accent)]'
+                                                                : 'hover:bg-(--base-03)'
                                                         }`}
                                                     >
-                                                        <div className="w-7 h-7 rounded-md bg-(--base-03) flex items-center justify-center font-medium text-xs text-(--base-08) shrink-0">
+                                                        <div className="w-7 h-7 rounded-md bg-(--base-02) flex items-center justify-center font-medium text-xs text-(--base-08) shrink-0">
                                                             {user.username.charAt(0).toUpperCase()}
                                                         </div>
                                                         <span className="flex-1 truncate text-sm text-(--base-09)">{user.username}</span>
                                                         {user.isAdmin && (
-                                                            <span className="font-mono text-[9px] uppercase text-(--accent-light)">admin</span>
+                                                            <span className="srv-chip h-5 px-2 text-[11px]">Admin</span>
                                                         )}
                                                         {selected && <CircleCheck size={14} className="text-(--accent-light) shrink-0" />}
                                                     </button>
@@ -391,25 +387,15 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                                 {/* Right: Target. Tenants only ever pick a node;
                                     the Node|Tag scheduler toggle is admin-only. */}
                                 <section className="space-y-2 min-h-80 flex flex-col">
-                                    <div className="flex items-center justify-between border-b border-(--base-03) pb-2 min-h-9">
-                                        <h3 className="text-base font-display font-bold text-(--base-09)">Target</h3>
+                                    <div className="flex items-center justify-between pb-1 min-h-9">
+                                        <h3 className="text-[15px] font-semibold text-(--base-09)">Target</h3>
                                         {isAdmin && (
-                                        <div className="flex bg-(--base-03) p-0.5 rounded-md">
-                                            <button
-                                                type="button"
-                                                onClick={() => setTargetMode('node')}
-                                                className={`px-2.5 py-1 text-[11px] rounded-sm transition-colors inline-flex items-center gap-1 ${targetMode === 'node' ? 'bg-(--accent) text-white' : 'text-(--base-07)'}`}
-                                            >
-                                                <Server size={11} /> Node
-                                            </button>
-                                            <button
-                                                type="button"
-                                                onClick={() => setTargetMode('tag')}
-                                                className={`px-2.5 py-1 text-[11px] rounded-sm transition-colors inline-flex items-center gap-1 ${targetMode === 'tag' ? 'bg-(--accent) text-white' : 'text-(--base-07)'}`}
-                                            >
-                                                <TagIcon size={11} /> Tag
-                                            </button>
-                                        </div>
+                                        <Segmented
+                                            ariaLabel="Placement"
+                                            value={targetMode}
+                                            onChange={setTargetMode}
+                                            options={[{ id: 'node', label: 'Node' }, { id: 'tag', label: 'Tag' }]}
+                                        />
                                         )}
                                     </div>
 
@@ -422,7 +408,7 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                                                 onChange={e => setNodeSearch(e.target.value)}
                                                 className="input-field w-full"
                                             />
-                                            <div className="flex-1 flex flex-col gap-1 overflow-y-auto rounded-md border border-(--base-03) bg-(--base-02) p-1.5">
+                                            <div className="flex-1 flex flex-col gap-0.5 overflow-y-auto rounded-lg bg-(--base-01) p-1.5">
                                                 {filteredNodes.length === 0 ? (
                                                     <p className="text-xs text-(--base-06) text-center py-6 italic">
                                                         No online nodes{nodeSearch ? ' matching search' : ''}.
@@ -438,12 +424,12 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                                                                 onClick={() => setNodeId(String(node.id))}
                                                                 className={`flex items-center gap-2 px-2 py-1.5 rounded-md text-left transition-colors ${
                                                                     isSelected
-                                                                        ? 'bg-(--accent-ghost) border border-(--accent-border)'
-                                                                        : 'border border-transparent hover:bg-(--base-03)'
+                                                                        ? 'bg-(--base-03) [box-shadow:inset_0_0_0_1px_var(--accent)]'
+                                                                        : 'hover:bg-(--base-03)'
                                                                 }`}
                                                             >
-                                                                <div className="w-7 h-7 rounded-md bg-(--base-03) flex items-center justify-center shrink-0">
-                                                                    <Server size={14} className="text-(--accent-light)" />
+                                                                <div className="w-7 h-7 rounded-md bg-(--base-02) flex items-center justify-center shrink-0">
+                                                                    <Server size={14} className="text-(--base-07)" />
                                                                 </div>
                                                                 <div className="flex-1 min-w-0">
                                                                     <div className="text-sm text-(--base-09) truncate">{nodeLabel(node)}</div>
@@ -471,7 +457,7 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                                     {targetMode === 'tag' && (
                                         <>
                                             {availableTags.length === 0 ? (
-                                                <div className="flex-1 flex items-center justify-center rounded-md border border-dashed border-(--base-04) bg-(--base-02) p-6 text-center">
+                                                <div className="flex-1 flex items-center justify-center rounded-lg bg-(--base-01) p-6 text-center">
                                                     <p className="text-xs text-(--base-06)">
                                                         No tags advertised by any online node.<br/>The server is placed automatically on any eligible node.
                                                     </p>
@@ -488,10 +474,9 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                                                                     onClick={() => setSelectedTags(prev =>
                                                                         prev.includes(t) ? prev.filter(x => x !== t) : [...prev, t]
                                                                     )}
-                                                                    className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors border ${
-                                                                        active
-                                                                            ? 'bg-(--accent-ghost) border-(--accent-border) text-(--accent-light)'
-                                                                            : 'bg-(--base-02) border-(--base-03) text-(--base-07) hover:text-(--base-09)'
+                                                                    aria-pressed={active}
+                                                                    className={`srv-chip h-7 cursor-pointer hover:bg-(--base-03) focus-visible:outline-none focus-visible:[box-shadow:var(--focus-ring)] ${
+                                                                        active ? 'bg-(--base-03) text-(--accent-light) [box-shadow:inset_0_0_0_1px_var(--accent)]' : ''
                                                                     }`}
                                                                 >
                                                                     {active && <CircleCheck size={11} className="inline mr-1 -mt-0.5" />}
@@ -500,12 +485,12 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                                                             );
                                                         })}
                                                     </div>
-                                                    <p className="mono-label">
+                                                    <p className="srv-label">
                                                         {selectedTags.length === 0
                                                             ? 'any tag - every eligible node is a candidate'
                                                             : `${selectedTags.length} selected — node must have all of them (AND)`}
                                                     </p>
-                                                    <div className="flex-1 rounded-md border border-(--base-03) bg-(--base-02) p-3 text-sm">
+                                                    <div className="flex-1 rounded-lg bg-(--base-01) p-3 text-sm">
                                                         {tagPreview ? (
                                                             <div className="space-y-2">
                                                                 <div className="flex items-center gap-2 text-(--base-09)">
@@ -545,65 +530,27 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                             <div className="space-y-6 animate-fade-in">
                                 {/* Server Type */}
                                 <section className="space-y-3">
-                                    <h3 className="text-base font-display font-bold text-(--base-09) border-b border-(--base-03) pb-2">Server Type</h3>
-                                    <div className={`grid gap-3 ${proxiesEnabled ? 'grid-cols-2' : 'grid-cols-1'}`}>
-                                        <button
-                                            type="button"
-                                            onClick={() => setServerType('game')}
-                                            className={`card text-left p-4 cursor-pointer transition-all flex items-center gap-3 ${
-                                                serverType === 'game'
-                                                    ? 'border-(--accent-border) bg-(--accent-ghost)'
-                                                    : 'hover:border-(--base-05)'
-                                            }`}
-                                        >
-                                            <div className="w-10 h-10 rounded-md bg-(--base-03) flex items-center justify-center">
-                                                <Server size={20} className="text-(--primary-light)" />
-                                            </div>
-                                            <div>
-                                                <div className="font-medium text-sm text-(--base-09)">Game Server</div>
-                                                <div className="text-xs text-(--base-06)">Minecraft, Paper, Forge, etc.</div>
-                                            </div>
-                                            {serverType === 'game' && <CircleCheck size={16} className="text-(--accent-light) ml-auto" />}
-                                        </button>
-                                        {proxiesEnabled && (
-                                            <button
-                                                type="button"
-                                                onClick={() => setServerType('proxy')}
-                                                className={`card text-left p-4 cursor-pointer transition-all flex items-center gap-3 ${
-                                                    serverType === 'proxy'
-                                                        ? 'border-(--accent-border) bg-(--accent-ghost)'
-                                                        : 'hover:border-(--base-05)'
-                                                }`}
-                                            >
-                                                <div className="w-10 h-10 rounded-md bg-(--base-03) flex items-center justify-center">
-                                                    <Network size={20} className="text-(--accent-light)" />
-                                                </div>
-                                                <div>
-                                                    <div className="font-medium text-sm text-(--base-09)">Proxy Server</div>
-                                                    <div className="text-xs text-(--base-06)">BungeeCord, Waterfall, Velocity</div>
-                                                </div>
-                                                {serverType === 'proxy' && <CircleCheck size={16} className="text-(--accent-light) ml-auto" />}
-                                            </button>
-                                        )}
-                                    </div>
+                                    <h3 className="text-[15px] font-semibold text-(--base-09)">Server type</h3>
+                                    <RadioCards
+                                        ariaLabel="Server type"
+                                        value={serverType}
+                                        onChange={setServerType}
+                                        className={`grid gap-3 ${proxiesEnabled ? 'grid-cols-2' : 'grid-cols-1'}`}
+                                        cardClassName={checked => `flex cursor-pointer items-center gap-3 rounded-lg bg-(--base-01) p-4 transition-colors hover:bg-(--base-03) ${checked ? '[box-shadow:inset_0_0_0_1px_var(--accent)]' : ''}`}
+                                        options={[
+                                            { value: 'game', label: 'Game server', description: 'Minecraft, Paper, Forge, etc.' },
+                                            ...(proxiesEnabled ? [{ value: 'proxy' as const, label: 'Proxy server', description: 'BungeeCord, Waterfall, Velocity' }] : []),
+                                        ]}
+                                    />
                                 </section>
 
                                 {/* Resources */}
                                 <section className="space-y-4">
-                                    <h3 className="text-base font-display font-bold text-(--base-09) border-b border-(--base-03) pb-2">Resources</h3>
+                                    <h3 className="text-[15px] font-semibold text-(--base-09)">Resources</h3>
 
                                     <div className="grid grid-cols-3 gap-4">
                                         <div className="flex flex-col gap-[5px]">
-                                            <label className="input-label">RAM Limit (MB)</label>
-                                            <div className="relative">
-                                                <input
-                                                    type="number"
-                                                    value={ram}
-                                                    onChange={e => setRam(Number(e.target.value))}
-                                                    className="input-field w-full [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                                                />
-                                                <span className="absolute right-3 top-[9px] text-(--base-06) font-mono text-sm pointer-events-none">MB</span>
-                                            </div>
+                                            <NumberField label="RAM limit (MB)" value={ram} onChange={setRam} min={0} />
                                             <ResourceSlider label="RAM" value={ram} onChange={setRam} scale={ramScale(pickedNode?.totalRamMb)} format={formatMB} />
                                             <p className="text-xs text-(--base-06)">
                                                 {paddingOverride !== null && !Number.isNaN(paddingOverride)
@@ -614,33 +561,12 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                                             </p>
                                         </div>
                                         <div className="flex flex-col gap-[5px]">
-                                            <label className="input-label">CPU Limit (Cores)</label>
-                                            <div className="relative">
-                                                <input
-                                                    type="number"
-                                                    step="0.5"
-                                                    value={cpuLimit}
-                                                    onChange={e => setCpuLimit(Number(e.target.value))}
-                                                    className="input-field w-full [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                                                />
-                                                <span className="absolute right-3 top-[9px] text-(--base-06) font-mono text-sm pointer-events-none">Cores</span>
-                                            </div>
+                                            <NumberField label="CPU limit (cores)" value={cpuLimit} onChange={setCpuLimit} min={0} step={0.5} />
                                             <ResourceSlider label="CPU limit" value={cpuLimit} onChange={setCpuLimit} scale={cpuScale(pickedNode?.totalCpu)} format={v => `${v} cores`} />
                                             <p className="text-xs text-(--base-06)">0 = no limit</p>
                                         </div>
                                         <div className="flex flex-col gap-[5px]">
-                                            <label className="input-label">Storage Limit (GB)</label>
-                                            <div className="relative">
-                                                <input
-                                                    type="number"
-                                                    min={0}
-                                                    step={1}
-                                                    value={diskLimit}
-                                                    onChange={e => setDiskLimit(Number(e.target.value))}
-                                                    className="input-field w-full [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                                                />
-                                                <span className="absolute right-3 top-[9px] text-(--base-06) font-mono text-sm pointer-events-none">GB</span>
-                                            </div>
+                                            <NumberField label="Storage limit (GB)" value={diskLimit} onChange={setDiskLimit} min={0} step={1} />
                                             <ResourceSlider label="Storage limit" value={diskLimit} onChange={setDiskLimit} scale={DISK_SCALE_GB} format={v => `${v} GB`} />
                                             <p className="text-xs text-(--base-06)">0 = unlimited</p>
                                         </div>
@@ -653,7 +579,7 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                                         </button>
                                         {advancedOpen && (
                                             <div className="mt-3 flex flex-col gap-[5px] max-w-xs">
-                                                <label htmlFor="create-ram-padding" className="input-label">RAM headroom (MB)</label>
+                                                <label htmlFor="create-ram-padding" className="srv-label">RAM headroom (MB)</label>
                                                 <input
                                                     id="create-ram-padding"
                                                     type="number"
@@ -674,21 +600,18 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                                     {/* Storage Path Selection */}
                                     {storagePaths.length > 1 && (
                                         <div className="flex flex-col gap-[5px]">
-                                            <label className="input-label flex items-center gap-1.5">
-                                                <HardDrive size={13} /> Storage Path
+                                            <label className="srv-label flex items-center gap-1.5">
+                                                <HardDrive size={13} /> Storage path
                                             </label>
-                                            <select
+                                            <Select
                                                 value={storagePath}
-                                                onChange={e => setStoragePath(e.target.value)}
-                                                className="input-field"
-                                            >
-                                                <option value="auto">Auto (most free space)</option>
-                                                {storagePaths.map(s => (
-                                                    <option key={s.path} value={s.path}>
-                                                        {s.path} ({fmtGB(s.free_bytes)} GB free, {s.server_count} servers)
-                                                    </option>
-                                                ))}
-                                            </select>
+                                                onChange={setStoragePath}
+                                                ariaLabel="Storage path"
+                                                options={[
+                                                    { value: 'auto', label: 'Auto (most free space)' },
+                                                    ...storagePaths.map(s => ({ value: s.path, label: `${s.path} (${fmtGB(s.free_bytes)} GB free, ${s.server_count} servers)` })),
+                                                ]}
+                                            />
                                             <p className="text-xs text-(--base-06)">Auto distributes servers evenly across storage paths.</p>
                                         </div>
                                     )}
@@ -698,8 +621,8 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                                     mode; in tag mode the grid is hidden and Shared/Auto
                                     still work (Manual falls back to a raw cpuset input). */}
                                 <section className="space-y-3">
-                                    <h3 className="text-base font-display font-bold text-(--base-09) border-b border-(--base-03) pb-2 flex items-center gap-2">
-                                        <Cpu size={16} className="text-(--accent-light)" /> CPU Pinning
+                                    <h3 className="text-[15px] font-semibold text-(--base-09) flex items-center gap-2">
+                                        <Cpu size={16} className="text-(--base-06)" /> CPU pinning
                                     </h3>
                                     <CpuPinningControl
                                         nodeId={targetMode === 'node' ? Number(nodeId) || undefined : undefined}
@@ -710,29 +633,21 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                                     />
                                 </section>
 
-                                <section className="card p-3 flex items-center justify-between gap-4">
+                                <section className="srv-surface p-4 flex items-center justify-between gap-4">
                                     <div className="flex items-start gap-2.5 min-w-0">
-                                        <Move size={16} className={`shrink-0 mt-0.5 ${autoMove ? 'text-(--accent-light)' : 'text-(--base-06)'}`} />
+                                        <Move size={16} className="shrink-0 mt-0.5 text-(--base-06)" />
                                         <div className="min-w-0">
-                                            <div className="text-sm font-medium text-(--base-09)">Auto-Move enabled</div>
+                                            <div className="text-sm font-medium text-(--base-09)">Auto-move enabled</div>
                                             <p className="text-xs text-(--base-06)">
                                                 Allow the rebalance worker to migrate this server to a less-loaded node when the current node is overloaded. Migration only runs while the server is stopped/idle. Default off.
                                             </p>
                                         </div>
                                     </div>
-                                    <button
-                                        type="button"
-                                        role="switch"
-                                        aria-checked={autoMove}
-                                        onClick={() => setAutoMove(v => !v)}
-                                        className={`shrink-0 toggle-track ${autoMove ? 'toggle-track-on' : 'toggle-track-off'}`}
-                                    >
-                                        <span className={`toggle-knob ${autoMove ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
-                                    </button>
+                                    <Switch checked={autoMove} onChange={setAutoMove} ariaLabel="Auto-Move enabled" className="shrink-0" />
                                 </section>
 
-                                <div className="alert alert-info text-(--base-07)">
-                                    <Info size={14} className="inline align-middle mr-1 text-(--primary-light)" />
+                                <div className="srv-callout" data-tone="info">
+                                    <Info size={14} className="mt-0.5 shrink-0 text-(--accent-light)" />
                                     Java version, Minecraft software, and server name are configured in the Setup tab after deployment.
                                 </div>
                             </div>
@@ -779,16 +694,16 @@ export default function CreateServerWizard({ isOpen, onClose, proxiesEnabled = t
                             }}
                             className="btn btn-primary"
                         >
-                            Next <ArrowRight size={18} className="ml-1" />
+                            Next <ArrowRight size={16} />
                         </button>
                     ) : (
                         <button
                             onClick={handleCreate}
                             disabled={loading || !!pinMismatch(cpuLimit, cpuMode, cpuset)}
                             title={pinMismatch(cpuLimit, cpuMode, cpuset) ? 'Pin exactly as many cores as the CPU limit' : undefined}
-                            className="btn bg-(--success) text-white border-(--success) hover:bg-(--success-light) disabled:opacity-40"
+                            className="btn btn-primary"
                         >
-                            {loading ? 'Creating...' : 'CREATE SERVER'} <Rocket size={18} className="ml-1" />
+                            {loading ? 'Creating...' : 'Create server'} <Rocket size={16} />
                         </button>
                     )}
                     </>

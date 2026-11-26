@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
+import { Popover, PopoverContent, PopoverTrigger } from '@ui-sdk/react/popover';
 import Link from 'next/link';
 import { Package, X, CircleCheck, CircleAlert, Trash2, Loader2, Send } from 'lucide-react';
 import { useModInstalls } from '@/lib/modInstallManager';
@@ -11,21 +12,6 @@ import { isPending, jobLabel, type InstallJob } from '@/lib/modInstallJobs';
 export default function ModInstallWidget() {
     const mgr = useModInstalls();
     const [open, setOpen] = useState(false);
-    const wrapRef = useRef<HTMLDivElement>(null);
-
-    useEffect(() => {
-        if (!open) return;
-        const onClick = (e: MouseEvent) => {
-            if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
-        };
-        const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
-        document.addEventListener('click', onClick);
-        document.addEventListener('keydown', onKey);
-        return () => {
-            document.removeEventListener('click', onClick);
-            document.removeEventListener('keydown', onKey);
-        };
-    }, [open]);
 
     if (mgr.jobs.length === 0) return null;
 
@@ -35,22 +21,19 @@ export default function ModInstallWidget() {
         ? `${active} mod install${active !== 1 ? 's' : ''} running`
         : 'Mod installs finished';
     const tone = active > 0
-        ? 'bg-(--accent-ghost) text-(--accent-light) border-(--accent-border)'
+        ? 'text-(--accent-light)'
         : failed
-            ? 'bg-(--warning-ghost) text-(--warning-light) border-(--warning)/30'
-            : 'bg-(--success)/10 text-(--success-light) border-(--success)/20';
+            ? 'text-(--warning-light)'
+            : 'text-(--success-light)';
 
     return (
-        <div ref={wrapRef} className="relative mr-2">
-            <button
-                type="button"
-                onClick={() => setOpen(o => !o)}
+        <div className="relative">
+          <Popover open={open} onOpenChange={setOpen}>
+            <PopoverTrigger
+                render={<button type="button" />}
                 title={label}
                 aria-label={label}
-                aria-expanded={open}
-                className={`relative flex items-center justify-center w-9 h-9 rounded-md transition-colors border hover:brightness-110 focus-visible:outline-2 focus-visible:outline-(--accent) ${
-                    open ? 'bg-(--base-03) border-(--base-04) text-(--base-09)' : tone
-                }`}
+                className={`app-icon-btn relative ${open ? '' : tone}`}
             >
                 {active > 0 ? <Loader2 size={16} className="animate-spin motion-reduce:animate-none" /> : <Package size={16} />}
                 {active > 0 && (
@@ -58,12 +41,12 @@ export default function ModInstallWidget() {
                         {active}
                     </span>
                 )}
-            </button>
+            </PopoverTrigger>
 
-            {open && (
-                <div className="dropdown-menu right-0 mt-3 w-96 animate-fade-in origin-top-right" role="region" aria-label="Mod installs">
-                    <div className="flex items-center justify-between px-4 py-2 border-b border-(--base-03)">
-                        <div className="font-mono text-[10px] uppercase tracking-[0.08em] text-(--base-06)">
+            <PopoverContent side="bottom" align="end" sideOffset={12} aria-label="Mod installs" className="ui-popup w-96 max-w-[calc(100vw-1rem)]">
+                <div>
+                    <div className="flex items-center justify-between px-4 py-2.5">
+                        <div className="text-sm font-medium text-(--base-09)">
                             Mod installs ({mgr.jobs.length})
                         </div>
                         <div className="flex items-center gap-1">
@@ -94,7 +77,8 @@ export default function ModInstallWidget() {
                         ))}
                     </ul>
                 </div>
-            )}
+            </PopoverContent>
+          </Popover>
         </div>
     );
 }

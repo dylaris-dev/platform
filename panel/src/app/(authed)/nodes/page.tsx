@@ -1,6 +1,7 @@
 "use client";
 
 import { Suspense, useState, useEffect, useCallback } from 'react';
+import Tooltip from '@/components/ui/Tooltip';
 import { useRouter, useSearchParams } from 'next/navigation';
 import {
     HardDrive, Globe, Server, Plus, Trash2, AlertTriangle, Clock,
@@ -38,6 +39,10 @@ import DataBudgetCard from '@/components/infra/DataBudgetCard';
 import RemoveMachineDialog from '@/components/infra/RemoveMachineDialog';
 import NodeBackupThrottle from '@/components/settings/NodeBackupThrottle';
 import { fmtDate } from '@/lib/time';
+import PageHeader from '@/components/ui/PageHeader';
+import EmptyState from '@/components/ui/EmptyState';
+import Tabs from '@/components/ui/Tabs';
+import Callout from '@/components/server/Callout';
 
 // ---------------------------------------------------------------------------
 // "My infrastructure" - hardware that is not in the cluster, in three tabs.
@@ -421,12 +426,13 @@ function MyNodesInner() {
     // turned off" with the routes tab unreachable behind it.
     if (tab === null) {
         return (
-            <div className="p-6 max-w-2xl">
-                <h1 className="text-lg font-display font-bold text-(--base-09) mb-2">My infrastructure</h1>
-                <p className="text-sm text-(--base-07)">
-                    Running Minecraft on your own hardware, and pointing protected addresses at your own
-                    server, are both turned off on this platform.
-                </p>
+            <div className="space-y-6">
+                <PageHeader title="My infrastructure" />
+                <EmptyState
+                    icon={<Server size={20} />}
+                    title="Turned off on this platform"
+                    description="Running Minecraft on your own hardware, and pointing protected addresses at your own server, are both turned off on this platform."
+                />
             </div>
         );
     }
@@ -448,28 +454,21 @@ function MyNodesInner() {
     ].filter(t => have[t.id as keyof typeof have]) as { id: InfraTab; label: string; icon: typeof HardDrive }[];
 
     return (
-        /* The SCROLL container is full width and unpadded, so the scrollbar sits
-           at the outer edge of the content area. With max-w on the scroller it
-           rode the inside of the centred box instead, floating mid-screen. */
-        <div className="flex-1 min-w-0 overflow-y-auto">
-        <div className="@container p-6 max-w-[92rem] space-y-6">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="min-w-0">
-                    <h1 className="text-lg font-display font-bold text-(--base-09) mb-1">My infrastructure</h1>
-                    <p className="text-sm text-(--base-07) max-w-2xl">
-                        Hardware that is not in the cluster. Everything here connects outwards through an
-                        encrypted tunnel, so nothing needs a public IP or port forwarding — and you can
-                        hold several of each, one per location.
-                    </p>
-                </div>
-                {/* Always offered, entitled or not: the person most likely to buy a
-                    second location is the one who already has the first. */}
-                {featureFlags.store && storeUrl && (
-                    <a href={storeUrl} target="_blank" rel="noopener noreferrer" className="btn btn-secondary btn-sm shrink-0">
-                        <ShoppingCart size={13} /> Store <ExternalLink size={11} />
-                    </a>
-                )}
-            </div>
+        /* The page padding and centering come from main.app-page. */
+        <div className="@container space-y-6">
+            <PageHeader
+                title="My infrastructure"
+                description="Hardware that is not in the cluster. Everything here connects outwards through an encrypted tunnel, so nothing needs a public IP or port forwarding, and you can hold several of each, one per location."
+                actions={
+                    /* Always offered, entitled or not: the person most likely to buy a
+                       second location is the one who already has the first. */
+                    featureFlags.store && storeUrl ? (
+                        <a href={storeUrl} target="_blank" rel="noopener noreferrer" className="btn btn-secondary btn-sm">
+                            <ShoppingCart size={14} /> Store <ExternalLink size={12} />
+                        </a>
+                    ) : undefined
+                }
+            />
 
             {/* Above the tabs, because it is about everything below them: the
                 allowances are the tenant's, not any one location's. */}
@@ -479,46 +478,25 @@ function MyNodesInner() {
             {/* A bar with one tab is decoration. It appears only where the reader
                 actually has somewhere else to go. */}
             {showInfraTabBar(have) && (
-                <div className="flex gap-1 border-b border-(--base-03)">
-                    {TABS.map(t => {
-                        const Icon = t.icon;
-                        return (
-                            <button
-                                key={t.id}
-                                type="button"
-                                onClick={() => selectTab(t.id)}
-                                aria-current={tab === t.id ? 'page' : undefined}
-                                className={`flex items-center gap-2 px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
-                                    tab === t.id
-                                        ? 'border-(--accent) text-(--accent-light)'
-                                        : 'border-transparent text-(--base-06) hover:text-(--base-08)'
-                                }`}
-                            >
-                                <Icon size={14} />
-                                {t.label}
-                            </button>
-                        );
-                    })}
-                </div>
+                <Tabs
+                    ariaLabel="My infrastructure"
+                    items={TABS.map(t => ({ id: t.id, label: t.label, icon: t.icon }))}
+                    active={tab}
+                    onChange={selectTab}
+                />
             )}
 
             {error && (
-                <div className="alert alert-error">
-                    <AlertTriangle size={14} className="shrink-0 mt-0.5" />
-                    <span>{error}</span>
-                </div>
+                <Callout tone="error" icon={<AlertTriangle size={16} />} role="alert">{error}</Callout>
             )}
             {notice && (
-                <div className="alert alert-success" role="status">
-                    <span>{notice}</span>
-                </div>
+                <Callout tone="info" icon={<RefreshCw size={16} />} role="status">{notice}</Callout>
             )}
 
             {suspended && (
-                <div className="alert alert-warning">
-                    <AlertTriangle size={14} className="shrink-0 mt-0.5" />
-                    <span>Your account is suspended. Everything below is paused until it is reactivated.</span>
-                </div>
+                <Callout tone="warning" icon={<AlertTriangle size={16} />}>
+                    Your account is suspended. Everything below is paused until it is reactivated.
+                </Callout>
             )}
 
             {tab === 'external' ? (
@@ -544,18 +522,18 @@ function MyNodesInner() {
                to run, and they need it again on every rebuild. The keys join it
                there for the one moment they exist. */
             <div className={byonAllowed && entitlementKnown ? DEPLOY_GRID : ''}>
-            <section className="card p-5 space-y-4">
+            <section className="srv-surface p-5 space-y-4">
                 <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
-                        <h2 className="text-sm font-display font-semibold text-(--accent-light) flex items-center gap-2">
-                            <HardDrive size={15} /> Bring your own node
+                        <h2 className="text-[15px] font-semibold text-(--base-09) flex items-center gap-2">
+                            <HardDrive size={16} className="text-(--base-06)" aria-hidden="true" /> Bring your own node
                         </h2>
-                        <p className="text-sm text-(--base-07) mt-1 max-w-2xl">
+                        <p className="text-[13px] text-(--base-06) mt-1 max-w-2xl leading-relaxed">
                             Dylaris runs Minecraft servers <strong>on your machine</strong>. You keep the
                             hardware and the disk; the panel, backups and player routing stay ours.
                         </p>
                     </div>
-                    <span className="mono-label shrink-0 pt-0.5">{usageLabel(nodesUsed, effectiveNodeLimit)}</span>
+                    <span className="srv-chip shrink-0">{usageLabel(nodesUsed, effectiveNodeLimit)}</span>
                 </div>
 
                 {!entitlementKnown ? (
@@ -598,10 +576,10 @@ function MyNodesInner() {
                             <button
                                 onClick={handleMintNodeKey}
                                 disabled={minting || !nameValid || nodesAtCap || suspended}
-                                className="btn btn-primary disabled:opacity-40 disabled:cursor-not-allowed sm:mt-[22px]"
+                                className="btn btn-primary sm:mt-[22px]"
                                 title={nodesAtCap ? (featureFlags.hosted ? 'You have used every node your plan includes' : 'You have reached the node limit set by the administrator') : undefined}
                             >
-                                <Plus size={14} /> {minting ? 'Creating…' : 'Add a machine'}
+                                <Plus size={14} /> {minting ? 'Creating...' : 'Add a machine'}
                             </button>
                         </div>
 
@@ -610,8 +588,7 @@ function MyNodesInner() {
                             one holds the slot, and the message used to name only the
                             store, so the way out looked like a purchase. */}
                         {nodesAtCap && (
-                            <p className="flex items-start gap-1.5 text-xs text-(--warning-light)">
-                                <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+                            <Callout tone="warning" icon={<AlertTriangle size={16} />}>
                                 <span>
                                     {effectiveNodeLimit === 1
                                         ? <>Your machine below is using the one slot you have. Remove it to set this
@@ -619,13 +596,13 @@ function MyNodesInner() {
                                         : <>All {effectiveNodeLimit} of your slots are in use. Remove a machine below to
                                           replace it, or {featureFlags.store ? 'add another location in the store.' : 'ask an administrator to raise the limit.'}</>}
                                 </span>
-                            </p>
+                            </Callout>
                         )}
                         </>)}
 
                         {nodeKeys.length > 0 && (
                             <div className="border-t border-(--base-03) pt-3 space-y-2">
-                                <div className="mono-label">Overlay keys in use</div>
+                                <div className="srv-label">Overlay keys in use</div>
                                 <p className="text-xs text-(--base-06)">
                                     Each counts towards your {featureFlags.hosted ? 'plan' : 'node limit'} whether or not the machine has connected
                                     yet. Revoke one you never used to free the slot.
@@ -634,26 +611,28 @@ function MyNodesInner() {
                                     <div key={k.id} className="flex items-center justify-between gap-3 text-sm">
                                         <div className="min-w-0">
                                             <div className="text-(--base-08) truncate">{k.name}</div>
-                                            <div className="mono-label truncate">{k.node_id}</div>
+                                            <div className="srv-num truncate text-xs text-(--base-06)">{k.node_id}</div>
                                         </div>
                                         <div className="flex items-center gap-0.5 shrink-0">
                                             {byonAllowed && (
-                                                <button
-                                                    onClick={() => handleRollNodeKey(k.node_id, k.name)}
-                                                    disabled={rollingKey === k.node_id}
-                                                    className="text-(--base-06) hover:text-(--base-09) p-1.5 rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                                                    title="Replace this key with a new one, keeping the machine and its servers"
-                                                >
-                                                    <RefreshCw size={14} className={rollingKey === k.node_id ? 'animate-spin' : undefined} />
-                                                </button>
+                                                <Tooltip content="Replace this key with a new one, keeping the machine and its servers">
+                                                    <button aria-label="Replace this key with a new one, keeping the machine and its servers"
+                                                        onClick={() => handleRollNodeKey(k.node_id, k.name)}
+                                                        disabled={rollingKey === k.node_id}
+                                                        className="app-icon-btn size-8!"
+                                                    >
+                                                        <RefreshCw size={14} className={rollingKey === k.node_id ? 'animate-spin' : undefined} />
+                                                    </button>
+                                                </Tooltip>
                                             )}
-                                            <button
-                                                onClick={() => handleRevokeNodeKey(k.node_id)}
-                                                className="text-(--base-06) hover:text-(--error-light) p-1.5 rounded-md transition-colors"
-                                                title="Revoke this overlay key"
-                                            >
-                                                <Trash2 size={14} />
-                                            </button>
+                                            <Tooltip content="Revoke this overlay key">
+                                                <button aria-label="Revoke this overlay key"
+                                                    onClick={() => handleRevokeNodeKey(k.node_id)}
+                                                    className="app-icon-btn size-8! hover:text-(--error-light)!"
+                                                >
+                                                    <Trash2 size={14} />
+                                                </button>
+                                            </Tooltip>
                                         </div>
                                     </div>
                                 ))}
@@ -662,31 +641,32 @@ function MyNodesInner() {
 
                         {tokens.length > 0 && (
                             <div className="border-t border-(--base-03) pt-3 space-y-2">
-                                <div className="mono-label">Keys waiting to be used</div>
+                                <div className="srv-label">Keys waiting to be used</div>
                                 {tokens.map(t => (
                                     <div key={t.id} className="flex items-center justify-between gap-3 text-sm">
                                         <div className="min-w-0">
                                             <div className="text-(--base-08) truncate">{t.label || '(unnamed)'}</div>
                                             {t.expiresAt && (
                                                 <div className="text-xs text-(--base-06) flex items-center gap-1">
-                                                    <Clock size={10} /> expires {fmtDate(t.expiresAt)}
+                                                    <Clock size={12} /> expires {fmtDate(t.expiresAt)}
                                                 </div>
                                             )}
                                         </div>
-                                        <button
-                                            onClick={() => handleRevokeToken(t.id)}
-                                            className="text-(--base-06) hover:text-(--error-light) p-1.5 rounded-md transition-colors"
-                                            title="Revoke this key"
-                                        >
-                                            <Trash2 size={14} />
-                                        </button>
+                                        <Tooltip content="Revoke this key">
+                                            <button aria-label="Revoke this key"
+                                                onClick={() => handleRevokeToken(t.id)}
+                                                className="app-icon-btn size-8! hover:text-(--error-light)!"
+                                            >
+                                                <Trash2 size={14} />
+                                            </button>
+                                        </Tooltip>
                                     </div>
                                 ))}
                             </div>
                         )}
 
                         <div className="border-t border-(--base-03) pt-3 space-y-2">
-                            <div className="mono-label">Your machines</div>
+                            <div className="srv-label">Your machines</div>
                             {loading ? (
                                 <SkeletonCard height="h-16" />
                             ) : nodes.length === 0 ? (
@@ -697,10 +677,10 @@ function MyNodesInner() {
                                 nodes.map(n => {
                                     const { tier } = nodeConnectivity(n.status, n.lastSeenAt, nodesReadAt);
                                     return (
-                                        <div key={n.id} className="rounded-md bg-(--base-02) border border-(--base-03) px-3 py-2.5">
+                                        <div key={n.id} className="rounded-lg bg-(--base-03) px-4 py-3">
                                         <div className="flex items-center justify-between gap-3">
                                             <div className="flex items-center gap-2.5 min-w-0">
-                                                <div className={`w-2 h-2 rounded-full shrink-0 ${dotFor(tier, 'bg-(--success-light)')}`} />
+                                                <div className={`size-2 rounded-full shrink-0 ${dotFor(tier, 'bg-(--success-light)')}`} />
                                                 <div className="min-w-0">
                                                     <div className="flex items-center gap-1.5 min-w-0">
                                                         <span className="text-sm text-(--base-09) truncate">{nodeLabel(n)}</span>
@@ -710,15 +690,12 @@ function MyNodesInner() {
                                                             gateway routing the Link is the only way in. */}
                                                         <LinkBadge state={nodeLinkState(tier === 'ok', n.linkOnline, suspended)} />
                                                     </div>
-                                                    <div className="mono-label">
+                                                    <div className="text-xs text-(--base-06) capitalize">
                                                         {n.status}
                                                         {typeof n.serverCount === 'number' && ` · ${n.serverCount} server${n.serverCount === 1 ? '' : 's'}`}
                                                     </div>
                                                     {n.noMemoryLimit && (
-                                                        <p className="mt-1 flex items-start gap-1.5 text-xs text-(--warning-light)">
-                                                            <AlertTriangle size={12} className="mt-0.5 shrink-0" />
-                                                            <span>{NO_MEMORY_LIMIT_MESSAGE}</span>
-                                                        </p>
+                                                        <div className="mt-2"><Callout tone="warning" icon={<AlertTriangle size={16} />}>{NO_MEMORY_LIMIT_MESSAGE}</Callout></div>
                                                     )}
                                                 </div>
                                             </div>
@@ -732,7 +709,7 @@ function MyNodesInner() {
                                                         onClick={() => openLinkSetup(n)}
                                                         disabled={!!revealedNode}
                                                         title={revealedNode ? 'Save the keys shown first' : undefined}
-                                                        className="btn btn-secondary btn-sm disabled:opacity-40 disabled:cursor-not-allowed"
+                                                        className="btn btn-secondary btn-sm"
                                                     >
                                                         {keyBoundTo(n.id) ? 'Deploy file' : 'Update this machine'}
                                                     </button>
@@ -740,16 +717,16 @@ function MyNodesInner() {
                                                 {/* The way back out. Without it a machine could be added and
                                                     never removed, so the slot it held was gone for good and
                                                     the cap read as "buy more". */}
-                                                <button
-                                                    type="button"
-                                                    onClick={() => setRemoving({ id: n.id, label: nodeLabel(n) })}
-                                                    title={`Remove ${nodeLabel(n)}`}
-                                                    aria-label={`Remove ${nodeLabel(n)}`}
-                                                    className="shrink-0 text-(--base-06) hover:text-(--error-light) p-1.5 rounded-md transition-colors
-                                                               focus-visible:outline-none focus-visible:[box-shadow:var(--focus-ring)]"
-                                                >
-                                                    <Trash2 size={14} />
-                                                </button>
+                                                <Tooltip content={`Remove ${nodeLabel(n)}`}>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setRemoving({ id: n.id, label: nodeLabel(n) })}
+                                                        aria-label={`Remove ${nodeLabel(n)}`}
+                                                        className="app-icon-btn size-8! hover:text-(--error-light)!"
+                                                    >
+                                                        <Trash2 size={14} />
+                                                    </button>
+                                                </Tooltip>
                                                 {byonAllowed && <ResetPairingButton nodeId={n.id} label={nodeLabel(n)} onDone={pairingDone} />}
                                             </div>
                                         </div>
@@ -770,7 +747,7 @@ function MyNodesInner() {
             {/* One machine's Link, moved out of its node: pick its key if it has
                 none bound yet, then its file. */}
             {byonAllowed && entitlementKnown && !revealedNode && linkFor && (
-                <aside className={`card p-5 space-y-3 min-w-0 ${DEPLOY_ASIDE_STICKY}`}>
+                <aside className={`srv-surface p-5 space-y-3 min-w-0 ${DEPLOY_ASIDE_STICKY}`}>
                     <div className="text-sm font-medium text-(--base-09)">
                         {nodeLabel(linkFor)}: the Link beside the node
                     </div>
@@ -798,14 +775,13 @@ function MyNodesInner() {
                             />
                         </>
                     ) : freeKeys.length === 0 ? (
-                        <p className="flex items-start gap-1.5 text-xs text-(--warning-light)">
-                            <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+                        <Callout tone="warning" icon={<AlertTriangle size={16} />}>
                             <span>
                                 None of your overlay keys is free. This machine needs the key its warp service runs
                                 with; if that key is not under Overlay keys in use, it was revoked. The machine keeps
                                 running as it is.
                             </span>
-                        </p>
+                        </Callout>
                     ) : (
                         <div className="space-y-2">
                             <span id="bind-key-label" className="input-label">Overlay key of this machine</span>
@@ -826,9 +802,9 @@ function MyNodesInner() {
                                 type="button"
                                 onClick={handleBindKey}
                                 disabled={!bindKey || binding}
-                                className="btn btn-primary btn-sm disabled:opacity-40 disabled:cursor-not-allowed"
+                                className="btn btn-primary btn-sm"
                             >
-                                {binding ? 'Saving…' : 'Use this key'}
+                                {binding ? 'Saving...' : 'Use this key'}
                             </button>
                         </div>
                     )}
@@ -848,12 +824,12 @@ function MyNodesInner() {
                 to be at enrol. */}
             {byonAllowed && entitlementKnown && !revealedNode && !linkFor && (
                 !showGenericKit ? (
-                    <aside className={`card p-5 space-y-2 min-w-0 ${DEPLOY_ASIDE_STICKY}`}>
+                    <aside className={`srv-surface p-5 space-y-2 min-w-0 ${DEPLOY_ASIDE_STICKY}`}>
                         <div className="text-sm font-medium text-(--base-09)">Your machines are set up</div>
                         <p className="text-xs text-(--base-07)">
                             Each of your machines has its own file, with its Link in it. Open{' '}
                             <span className="font-medium text-(--base-09)">Deploy file</span> on the machine above to
-                            get the one that belongs to it. The keys themselves cannot be shown again — paste the ones
+                            get the one that belongs to it. The keys themselves cannot be shown again. Paste the ones
                             you saved where the file says <code className="font-mono">&lt;...&gt;</code>.
                         </p>
                     </aside>
@@ -861,7 +837,7 @@ function MyNodesInner() {
                     <aside className={`space-y-3 min-w-0 ${DEPLOY_ASIDE_STICKY}`}>
                         {(nodeKeys.length > 0 || tokens.length > 0) && (
                             <p className="text-xs text-(--base-06)">
-                                The keys cannot be shown again — only their hashes are stored. Paste the ones you saved where the file says <code className="font-mono">&lt;...&gt;</code>, or revoke the key and create a new one.
+                                The keys cannot be shown again, only their hashes are stored. Paste the ones you saved where the file says <code className="font-mono">&lt;...&gt;</code>, or revoke the key and create a new one.
                             </p>
                         )}
                         <DeployKit kind="node" warpKey={null} enrollUrl={enrollUrl} config={deployConfig} />
@@ -869,11 +845,11 @@ function MyNodesInner() {
                 )
             )}
             {revealedNode && (
-                <aside className={`card p-5 space-y-3 border-(--accent-border) bg-(--accent-ghost) ${DEPLOY_ASIDE_STICKY}`}>
+                <aside className={`srv-surface p-5 space-y-3 ring-1 ring-(--accent-border) ${DEPLOY_ASIDE_STICKY}`}>
                     <div className="text-sm font-medium text-(--base-09)">
                         {revealedNode.rolled
-                            ? <>{revealedNode.label} — new overlay key, shown once.</>
-                            : <>{revealedNode.label} — two keys, shown once.</>}
+                            ? <>{revealedNode.label}: new overlay key, shown once.</>
+                            : <>{revealedNode.label}: two keys, shown once.</>}
                     </div>
                     {revealedNode.rolled ? (
                         <p className="text-xs text-(--base-07)">
@@ -949,7 +925,6 @@ function MyNodesInner() {
                 />
             )}
         </div>
-        </div>
     );
 }
 
@@ -960,7 +935,7 @@ function MyNodesInner() {
 export default function MyNodesPage() {
     return (
         <Suspense fallback={
-            <div className="p-6 max-w-[92rem] space-y-6">
+            <div className="space-y-6" aria-busy="true">
                 <SkeletonCard height="h-10" />
                 <SkeletonCard height="h-64" />
             </div>

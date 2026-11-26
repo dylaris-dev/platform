@@ -467,7 +467,13 @@ func main() {
 	// In the background: each stale container sits out a full graceful stop,
 	// and inline that kept the heartbeat and the command listener down for
 	// minutes. It takes each server's power lock, so commands do not race it.
-	go dockerMgr.ReconcileRedisEnv(rdb)
+	// Then every running server still on a profile from before the tenant
+	// seccomp profile, one at a time; after the Redis pass, which already
+	// recreates the stale ones it finds.
+	go func() {
+		dockerMgr.ReconcileRedisEnv(rdb)
+		dockerMgr.ReconcileSeccomp(rdb)
+	}()
 
 	// Shared agent monitor for heartbeat + system stats (single gopsutil instance)
 	mon, monErr := agent.NewMonitor(agent.MonitorConfig{})

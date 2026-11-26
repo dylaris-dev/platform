@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { CloudOff } from 'lucide-react';
+import { Meter, MeterIndicator, MeterTrack } from '@ui-sdk/react/meter';
 import ConsentRow from '@/components/billing/ConsentRow';
 import { usagePct, backupSwitch } from '@/lib/storeAccount';
 import { setStoreBillingConsent, type StoreAccountSummary } from '@/lib/api/store';
@@ -25,18 +26,20 @@ function Allowance({ label, usedGb, ceilingGb, note }: {
     note?: string;
 }) {
     const pct = usagePct(usedGb, ceilingGb);
-    const tone = pct >= 100 ? 'bg-(--error)' : pct >= 80 ? 'bg-(--warning)' : 'bg-(--accent)';
+    const tone = pct >= 100 ? 'error' : pct >= 80 ? 'warning' : undefined;
     return (
         <div>
             <div className="flex items-baseline justify-between gap-3">
-                <span className="text-sm text-(--base-08)">{label}</span>
+                <span className="text-[13px] text-(--base-07)">{label}</span>
                 <span className="text-sm font-mono tabular-nums text-(--base-09)">
                     {usedGb} <span className="text-(--base-06)">/ {ceilingGb > 0 ? `${ceilingGb} GB` : 'none'}</span>
                 </span>
             </div>
-            <div className="mt-1.5 h-1.5 rounded-full bg-(--base-03) overflow-hidden">
-                <div className={`h-full rounded-full transition-all ${tone}`} style={{ width: `${pct}%` }} />
-            </div>
+            <Meter value={pct} min={0} max={100} aria-label={label} className="mt-2">
+                <MeterTrack className="srv-meter-track">
+                    <MeterIndicator className="srv-meter-fill" data-tone={tone} />
+                </MeterTrack>
+            </Meter>
             {note && <p className="mt-1.5 text-xs text-(--base-06)">{note}</p>}
         </div>
     );
@@ -54,7 +57,7 @@ export default function StoreAccountCard({ summary, onChanged, onError }: {
     // happened and sends the reader to buy something they already own.
     if (summary.reachable === false) {
         return (
-            <div className="card p-5 flex items-start gap-2.5">
+            <div className="srv-surface p-5 flex items-start gap-2.5">
                 <CloudOff size={16} className="text-(--base-06) mt-0.5 shrink-0" />
                 <p className="text-sm text-(--base-07) leading-relaxed">
                     {summary.message || 'The store could not be reached, so your subscription details are not shown.'}
@@ -65,7 +68,7 @@ export default function StoreAccountCard({ summary, onChanged, onError }: {
 
     if (!summary.subscribed) {
         return (
-            <div className="card p-5">
+            <div className="srv-surface p-5">
                 <p className="text-sm text-(--base-07)">
                     No active subscription on this account. Servers you run on your own hardware are
                     unaffected; a subscription is what buys nodes, addresses and the allowances below.
@@ -91,10 +94,10 @@ export default function StoreAccountCard({ summary, onChanged, onError }: {
     ].filter(Boolean).join(' + ');
 
     return (
-        <div className="space-y-4">
-            <div className="card p-5 space-y-4">
+        <div className="space-y-6">
+            <div className="srv-surface p-5 space-y-5">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="text-sm text-(--base-08)">
+                    <div className="text-sm font-medium text-(--base-09)">
                         Subscription
                         {units && <span className="text-(--base-06)"> - {units}</span>}
                     </div>
@@ -129,7 +132,7 @@ export default function StoreAccountCard({ summary, onChanged, onError }: {
                 )}
             </div>
 
-            <div className="card p-5 space-y-4">
+            <div className="srv-surface p-5 space-y-4">
                 <div className="text-sm font-medium text-(--base-09)">When an allowance runs out</div>
                 <ConsentRow
                     title="Bill me for extra backup storage"

@@ -8,6 +8,62 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.25.2
+
+### Features
+- Nothing.
+
+### Breaking
+- Once, after this node update: every running server created before 2026.11.25 is restarted (world saved first)
+  so it runs under the tenant seccomp profile. One server at a time, 30 seconds apart; players are disconnected. `node`
+
+### Security
+- Servers that were already running when 2026.11.25 arrived kept their old container profile and could still move
+  files into another server's disk quota. The node now moves every such container onto the profile, and a stopped
+  one gets it at its next start. `node`
+
+### Fixes
+- Nothing.
+
+## 2026.11.25
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- On project-quota storage, code inside a server could move its own files out of the server's quota project, so
+  the disk limit and the disk guard stopped counting them. Server and installer containers now run under Docker's
+  default seccomp profile minus the two ioctls that change a file's quota project. A running server gets it at its
+  next restart. `node`
+- gorilla/websocket and OpenTelemetry are updated past two published advisories (GO-2026-6278, GO-2026-6974).
+  Tabs and their live connections work as before. `core` `node`
+
+### Fixes
+- Nothing.
+
+## 2026.11.23
+
+### Features
+- The panel has a new look: calmer pages, lists as rows with an action menu per row, a server header with one
+  Server settings panel, and menus, dialogs and selects that work by keyboard. Nothing was removed. `panel`
+- Server Content filters sit in a sidebar next to the results, each scrolling on its own, and the server state
+  shows Starting, Stopping or Restarting while a power action runs. `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Several settings, account and infrastructure pages showed an empty list when loading failed; they now say it
+  failed and offer Try again. `panel`
+- World Type and other server.properties values written with escapes (`minecraft\:normal`) show the saved
+  value instead of a wrong one. `panel`
+
 ## 2026.11.18
 
 ### Features

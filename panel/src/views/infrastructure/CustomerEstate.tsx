@@ -22,14 +22,14 @@ function Count({ label, counts }: { label: string; counts?: CustomerCounts }) {
     const total = counts?.total ?? 0;
     const online = counts?.online;
     return (
-        <div className="flex flex-col gap-0.5">
-            <span className="mono-label">{label}</span>
-            <span className="text-lg font-semibold tabular-nums text-(--base-09)">
+        <div className="flex flex-col gap-1">
+            <span className="srv-label">{label}</span>
+            <span className="srv-num text-2xl font-medium leading-none text-(--base-09)">
                 {online === null || online === undefined
                     ? total
                     : `${online}/${total}`}
             </span>
-            <span className="text-[11px] text-(--base-06)">
+            <span className="text-xs text-(--base-06)">
                 {/* Absent and zero are different answers, and only one of them
                     is safe to render as a fraction. A warp leader that has not
                     been updated reports no liveness at all, and printing 0/12
@@ -51,10 +51,10 @@ export default function CustomerEstate({ customers }: { customers: CustomerSumma
     if (nothing) return null;
 
     return (
-        <div className="card p-4 flex flex-col gap-3">
-            <div className="flex flex-col gap-0.5">
-                <span className="text-sm font-medium text-(--base-09)">Customer estate</span>
-                <span className="text-[11px] text-(--base-06) max-w-2xl leading-snug">
+        <div className="srv-surface p-5 flex flex-col gap-4">
+            <div className="flex flex-col gap-1">
+                <h2 className="text-[15px] font-semibold text-(--base-09)">Customer estate</h2>
+                <span className="text-[13px] text-(--base-06) max-w-2xl leading-relaxed">
                     Machines your customers run themselves. Tracked here and nowhere else:
                     one of these being offline is not an incident on this platform, so it
                     never raises a warning and never counts against the status page.

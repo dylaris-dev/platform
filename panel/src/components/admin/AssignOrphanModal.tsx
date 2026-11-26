@@ -10,6 +10,7 @@ import { useAppData } from '@/lib/AppDataContext';
 import { OrphanFileBrowser } from './OrphanFileBrowser';
 import { Skeleton } from '@/components/Skeleton';
 import ModalPanel from '@/components/ui/ModalPanel';
+import Select from '@/components/ui/Select';
 
 interface AssignOrphanModalProps {
     nodeId: number;
@@ -191,7 +192,7 @@ export function AssignOrphanModal({ nodeId, uuid, onClose, onAssigned }: AssignO
 
                             {/* Name */}
                             <div>
-                                <label className="mono-label mb-1.5 block">Name</label>
+                                <label className="srv-label mb-1.5 block">Name</label>
                                 <input
                                     type="text"
                                     className="input-field w-full"
@@ -203,8 +204,8 @@ export function AssignOrphanModal({ nodeId, uuid, onClose, onAssigned }: AssignO
 
                             {/* Owner mode toggle */}
                             <div>
-                                <label className="mono-label mb-1.5 block">Owner</label>
-                                <div className="flex rounded-md border border-(--base-03) overflow-hidden mb-3">
+                                <label className="srv-label mb-1.5 block">Owner</label>
+                                <div className="flex rounded-lg bg-(--base-03) p-0.5 overflow-hidden mb-3">
                                     <button
                                         type="button"
                                         onClick={() => setOwnerMode('existing')}
@@ -239,20 +240,17 @@ export function AssignOrphanModal({ nodeId, uuid, onClose, onAssigned }: AssignO
                                             Failed to load users.
                                         </div>
                                     ) : (
-                                        <select
-                                            className="input-field w-full"
+                                        <Select
+                                            className="w-full"
+                                            ariaLabel="Owner"
                                             value={selectedUserId}
-                                            onChange={e => setSelectedUserId(e.target.value)}
-                                        >
-                                            {users.length === 0 && (
-                                                <option value="">- No users found -</option>
-                                            )}
-                                            {users.map(u => (
-                                                <option key={u.id} value={u.id}>
-                                                    {u.username}{u.email ? ` (${u.email})` : ''}
-                                                </option>
-                                            ))}
-                                        </select>
+                                            onChange={setSelectedUserId}
+                                            placeholder="- No users found -"
+                                            options={users.map(u => ({
+                                                value: u.id,
+                                                label: `${u.username}${u.email ? ` (${u.email})` : ''}`,
+                                            }))}
+                                        />
                                     )
                                 ) : (
                                     <div className="space-y-2.5">
@@ -279,7 +277,7 @@ export function AssignOrphanModal({ nodeId, uuid, onClose, onAssigned }: AssignO
                             {/* Resources */}
                             <div className="grid grid-cols-2 gap-3">
                                 <div>
-                                    <label className="mono-label mb-1.5 block">Memory (MB)</label>
+                                    <label className="srv-label mb-1.5 block">Memory (MB)</label>
                                     <input
                                         type="number"
                                         className="input-field w-full"
@@ -291,7 +289,7 @@ export function AssignOrphanModal({ nodeId, uuid, onClose, onAssigned }: AssignO
                                     />
                                 </div>
                                 <div>
-                                    <label className="mono-label mb-1.5 block">CPU limit</label>
+                                    <label className="srv-label mb-1.5 block">CPU limit</label>
                                     <input
                                         type="number"
                                         className="input-field w-full"

@@ -13,7 +13,7 @@
 // writes. Groups inside one card keep everything the button touches on screen.
 
 import { useEffect, useState } from 'react';
-import { Package, Plus, X, AlertTriangle } from 'lucide-react';
+import { Package, Plus, X, AlertTriangle, Info } from 'lucide-react';
 import { useSettingsForm } from '@/lib/useSettingsForm';
 import SettingsPage from '@/components/settings/SettingsPage';
 import SettingsCard, { SettingsGroup, SettingsRow } from '@/components/settings/SettingsCard';
@@ -23,6 +23,9 @@ import {
     type ModpackSettings,
 } from '@/lib/api/modpackSettings';
 import { listStorageConnections, type StorageConnection } from '@/lib/api';
+import Select from '@/components/ui/Select';
+import Tooltip from '@/components/ui/Tooltip';
+import Callout from '@/components/server/Callout';
 
 const PROVIDER_OPTIONS = [
     { value: 'local' as const, label: 'Local paths', desc: 'Archives on disk, mirrored across the paths below' },
@@ -94,10 +97,10 @@ export default function ModpacksTab() {
                 feature_modpacks_enabled key as Settings -> Features, so the
                 platform had one switch behind two controls. Features owns the
                 flags; this shows the resulting state so the config has context. */}
-            <div className="flex items-start justify-between gap-4 rounded-md border border-(--base-04) bg-(--base-01) px-4 py-3">
+            <div className="srv-surface flex items-start justify-between gap-4 px-5 py-4">
                 <div className="min-w-0">
                     <div className="text-sm font-medium text-(--base-09)">Subsystem state</div>
-                    <div className="text-xs text-(--base-06) mt-0.5">
+                    <div className="mt-0.5 text-xs text-(--base-06)">
                         {settings.featureEnabled
                             ? 'Modpacks are enabled. Whether users may author, rather than admins only, is the "Open authoring to users" switch under Settings, Features.'
                             : 'Modpacks are disabled: write endpoints return 503 and the Modpacks nav entry is hidden. Existing modpacks stay readable and downloadable. Enable it under Settings, Features.'}
@@ -134,13 +137,10 @@ export default function ModpacksTab() {
 
                 <SettingsGroup title="Storage provider">
                     {!settings.provider && (
-                        <p className="alert alert-warning text-xs">
-                            <AlertTriangle size={14} className="shrink-0 mt-0.5" />
-                            <span>
-                                Not configured. Modpacks cannot be created until archives have
-                                somewhere to go: pick one below.
-                            </span>
-                        </p>
+                        <Callout tone="warning" icon={<AlertTriangle size={15} />}>
+                            Not configured. Modpacks cannot be created until archives have
+                            somewhere to go: pick one below.
+                        </Callout>
                     )}
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                         {PROVIDER_OPTIONS.map(opt => {
@@ -151,10 +151,10 @@ export default function ModpacksTab() {
                                     type="button"
                                     aria-pressed={active}
                                     onClick={() => patch({ provider: opt.value })}
-                                    className={`p-3 rounded-md border text-left transition-colors ${
+                                    className={`rounded-lg border p-3 text-left transition-colors focus-visible:outline-none focus-visible:[box-shadow:var(--focus-ring)] ${
                                         active
-                                            ? 'border-(--accent) bg-(--accent)/10'
-                                            : 'border-(--base-03) bg-(--base-02) hover:border-(--base-05)'
+                                            ? 'border-(--accent-border) bg-(--accent-ghost)'
+                                            : 'border-transparent bg-(--base-03) hover:bg-(--base-04)'
                                     }`}
                                 >
                                     <div className={`text-sm font-medium ${active ? 'text-(--accent-light)' : 'text-(--base-09)'}`}>{opt.label}</div>
@@ -167,7 +167,7 @@ export default function ModpacksTab() {
                     {/* Local - mirrored paths */}
                     {settings.provider === 'local' && (
                         <div className="pt-1">
-                            <div className="mono-label mb-1">Paths</div>
+                            <div className="srv-label mb-1">Paths</div>
                             <p className="text-xs text-(--base-06) mb-2">
                                 Absolute paths. The provider writes to ALL paths (mirror) and reads from the first hit.
                             </p>
@@ -192,7 +192,7 @@ export default function ModpacksTab() {
                                             placeholder="/var/lib/dylaris/modpacks"
                                             className="input-mono flex-1"
                                         />
-                                        <button
+                                        <Tooltip content="Remove path"><button
                                             type="button"
                                             onClick={() => form.update(prev => ({
                                                 ...prev,
@@ -200,10 +200,10 @@ export default function ModpacksTab() {
                                             }))}
                                             className="btn btn-secondary btn-sm px-2"
                                             aria-label={`Remove path ${i + 1}`}
-                                            title="Remove path"
+                                            
                                         >
                                             <X size={13} />
-                                        </button>
+                                        </button></Tooltip>
                                     </div>
                                 ))}
                                 <button
@@ -227,16 +227,14 @@ export default function ModpacksTab() {
                     {settings.provider === 's3' && (
                         <div className="space-y-3 pt-1">
                             <div className="flex flex-col gap-[5px]">
-                                <label className="mono-label" htmlFor="modpack-connection">Storage connection</label>
-                                <select
+                                <label className="srv-label" htmlFor="modpack-connection">Storage connection</label>
+                                <Select
                                     id="modpack-connection"
-                                    value={settings.connectionId ?? 0}
-                                    onChange={e => patch({ connectionId: Number(e.target.value) })}
-                                    className="input-field w-full"
-                                >
-                                    <option value={0}>Select a connection</option>
-                                    {connections.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                                </select>
+                                    ariaLabel="Storage connection"
+                                    value={String(settings.connectionId ?? 0)}
+                                    onChange={v => patch({ connectionId: Number(v) })}
+                                    options={[{ value: '0', label: 'Select a connection' }, ...connections.map(c => ({ value: String(c.id), label: c.name }))]}
+                                />
                                 <p className="text-xs text-(--base-06)">
                                     Buckets and credentials are defined once under Settings, Storage
                                     connections and referenced here, so a rotation happens in one place.
@@ -244,19 +242,16 @@ export default function ModpacksTab() {
                             </div>
 
                             {usingConnection ? (
-                                <div className="alert alert-info text-xs">
+                                <Callout tone="info" icon={<Info size={15} />}>
                                     Credentials come from the selected connection. Manage or test it on the
                                     Storage connections page.
-                                </div>
+                                </Callout>
                             ) : (
-                                <div className="alert alert-warning text-xs">
-                                    <AlertTriangle size={14} className="shrink-0 mt-0.5" />
-                                    <span>
-                                        {connections.length === 0
-                                            ? 'No storage connections exist yet. Create one under Settings, Storage connections, then pick it here: modpack storage cannot use S3 until you do.'
-                                            : 'Pick a connection above. S3 storage is not configured until you do.'}
-                                    </span>
-                                </div>
+                                <Callout tone="warning" icon={<AlertTriangle size={15} />}>
+                                    {connections.length === 0
+                                        ? 'No storage connections exist yet. Create one under Settings, Storage connections, then pick it here: modpack storage cannot use S3 until you do.'
+                                        : 'Pick a connection above. S3 storage is not configured until you do.'}
+                                </Callout>
                             )}
                         </div>
                     )}
@@ -325,7 +320,7 @@ function Field({
 }) {
     return (
         <div className="flex flex-col gap-[5px]">
-            <label className="mono-label" htmlFor={id}>{label}</label>
+            <label className="srv-label" htmlFor={id}>{label}</label>
             <input
                 id={id}
                 type="text"

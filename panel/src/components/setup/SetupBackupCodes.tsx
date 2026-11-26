@@ -1,5 +1,6 @@
 "use client";
 
+import Checkbox from '@/components/ui/Checkbox';
 import { useState } from 'react';
 import { ShieldCheck, Copy, Check, AlertTriangle } from 'lucide-react';
 
@@ -18,7 +19,7 @@ export default function SetupBackupCodes({ codes, onDone }: { codes: string[]; o
     };
 
     return (
-        <div className="card p-6 w-full max-w-md">
+        <div className="app-auth-card">
             <header className="mb-4">
                 <div className="flex items-center gap-2 mb-1">
                     <ShieldCheck size={18} className="text-(--accent-light)" />
@@ -46,10 +47,7 @@ export default function SetupBackupCodes({ codes, onDone }: { codes: string[]; o
                 <button type="button" onClick={copyAll} className="btn btn-secondary btn-sm w-full">
                     {copied ? <><Check size={12} /> Copied</> : <><Copy size={12} /> Copy all codes</>}
                 </button>
-                <label className="flex items-start gap-2 text-xs text-(--base-07) cursor-pointer pt-1">
-                    <input type="checkbox" className="checkbox mt-0.5" checked={acknowledged} onChange={e => setAcknowledged(e.target.checked)} />
-                    <span>I have saved these codes in a secure location.</span>
-                </label>
+                <Checkbox className="pt-1" checked={acknowledged} onChange={setAcknowledged} label="I have saved these codes in a secure location." />
                 <button
                     type="button"
                     onClick={onDone}
