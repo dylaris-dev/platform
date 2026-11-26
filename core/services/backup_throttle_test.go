@@ -83,7 +83,8 @@ func TestPublishBackupPoliciesWireShape(t *testing.T) {
 
 // R54-02/R54-04: the share mode rides on the policy every node gets, so a
 // node without backups learns a change. R54-03: an unreadable setting leaves
-// the field out (the node keeps its mode) instead of sending false.
+// the field out (the node keeps its mode) instead of sending false; R56-06:
+// and flags it, so the node does not take it for an older Core.
 func TestPublishBackupPoliciesCarriesTheShareMode(t *testing.T) {
 	tests := []struct {
 		name string
@@ -103,10 +104,10 @@ func TestPublishBackupPoliciesCarriesTheShareMode(t *testing.T) {
 			t.Fatalf("%s: %v", tt.name, err)
 		}
 		if tt.want == "" {
-			if strings.Contains(got, "shareQuotaWithServer") {
-				t.Errorf("%s: got %s, want no share field", tt.name, got)
+			if strings.Contains(got, "shareQuotaWithServer") || !strings.Contains(got, `"shareQuotaUnreadable":true`) {
+				t.Errorf("%s: got %s, want no share field and the unreadable flag", tt.name, got)
 			}
-		} else if !strings.Contains(got, tt.want) {
+		} else if !strings.Contains(got, tt.want) || strings.Contains(got, "shareQuotaUnreadable") {
 			t.Errorf("%s: got %s, want %s", tt.name, got, tt.want)
 		}
 	}

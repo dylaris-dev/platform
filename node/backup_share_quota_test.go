@@ -332,6 +332,9 @@ func TestRedeliveredRunAfterFailedFirstPolicyRead(t *testing.T) {
 	}{
 		{"policy said separate: old share run stays out", `{"shareQuotaWithServer":false}`, false},
 		{"older Core policy cleared the marker: the run decides", `{"headroomPct":30}`, true},
+		// R56-06: a newer Core that could not read the setting says so; that is
+		// not an older Core, so the marker stays and the old run stays out.
+		{"Core could not read the setting: old share run stays out", `{"headroomPct":30,"shareQuotaUnreadable":true}`, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			nodeSecretDir = t.TempDir()

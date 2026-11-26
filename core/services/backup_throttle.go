@@ -128,6 +128,9 @@ type backupPolicy struct {
 	// ShareQuotaWithServer reaches a node that gets no backup_run, and
 	// overrides the copy a backup_run carries. Omitted when unreadable.
 	ShareQuotaWithServer *bool `json:"shareQuotaWithServer,omitempty"`
+	// ShareQuotaUnreadable marks the omission, so the node keeps treating the
+	// policy as the source instead of taking it for an older Core's.
+	ShareQuotaUnreadable bool `json:"shareQuotaUnreadable,omitempty"`
 }
 
 // BackupPolicyJSON is what a node with these values is sent.
@@ -136,7 +139,7 @@ func BackupPolicyJSON(t NodeBackupThrottle, headroomPct int64, saveOffMaxMin *in
 		UplinkMbit: t.UplinkMbit, ReadMBps: t.ReadMBps,
 		HeadroomPct: headroomPct, SaveOffMaxMin: saveOffMaxMin,
 		SpoolEnabled: t.SpoolEnabled, SpoolMaxGB: t.SpoolMaxGB,
-		ShareQuotaWithServer: share,
+		ShareQuotaWithServer: share, ShareQuotaUnreadable: share == nil,
 	})
 	return string(b)
 }

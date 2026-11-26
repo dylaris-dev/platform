@@ -60,6 +60,9 @@ type backupPolicy struct {
 	// mode reaches a node that gets no backup_run. Nil is an older Core, or one
 	// that could not read the setting: the node keeps the mode it has.
 	ShareQuotaWithServer *bool `json:"shareQuotaWithServer"`
+	// ShareQuotaUnreadable is a Core that carries the mode but could not read
+	// it this time: the policy stays the source, the mode stays as it is.
+	ShareQuotaUnreadable bool `json:"shareQuotaUnreadable"`
 }
 
 const (
@@ -127,6 +130,8 @@ func watchBackupPolicy(ctx context.Context, rdb *redis.Client, nodeID, spoolDir 
 			case p.ShareQuotaWithServer != nil:
 				markBackupSharePolicySeen(true)
 				setBackupShareQuota(p.ShareQuotaWithServer)
+			case p.ShareQuotaUnreadable:
+				markBackupSharePolicySeen(true)
 			default:
 				markBackupSharePolicySeen(false)
 			}
