@@ -31,6 +31,7 @@ func NewQuotaSet(storage *StorageManager) *QuotaSet {
 	}
 	for _, p := range storage.Paths() {
 		qp := NewQuotaProvider(p)
+		qp.rdb = storage.rdb
 		qp.reconcileExisting(storage.rdb, storage)
 		// Off the boot: the heartbeat and the command listener start after
 		// this returns (R59-05).

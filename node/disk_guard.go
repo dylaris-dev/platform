@@ -621,7 +621,7 @@ func forgetDiskLimit(ctx context.Context, rdb *redis.Client, uuid string) {
 	if rdb == nil {
 		return
 	}
-	rdb.Del(ctx, diskLimitKey(uuid), diskGraceKey(uuid), diskCountedKey(uuid), diskLiftedKey(uuid))
+	rdb.Del(ctx, diskLimitKey(uuid), diskGraceKey(uuid), diskCountedKey(uuid), diskLiftedKey(uuid), inodeAnchorKey(uuid))
 }
 
 // loadDiskLimit returns the cached limit in MB, or 0 for "no limit known".

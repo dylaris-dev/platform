@@ -313,11 +313,51 @@ func TestSetLimitNeverPutsTheInodeLimitBelowTheFiles(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, limits := fakeQuotaTools(t, tc.report, tc.reportErr)
-			qp := &QuotaProvider{fsType: "ext4", mountPoint: "/mnt", available: true}
+			qp := &QuotaProvider{fsType: "ext4", mountPoint: "/mnt", available: true, rdb: newDiskGuardRedis(t)}
 			if err := qp.SetLimit("srv", tc.limitMB); err != nil {
 				t.Fatal(err)
 			}
 			want := fmt.Sprintf("setquota -P %d %s /mnt", projectID("srv"), tc.want)
+			if len(*limits) != 1 || (*limits)[0] != want {
+				t.Fatalf("limit commands %q, want [%q]", *limits, want)
+			}
+		})
+	}
+}
+
+// R60-04/05: the file cap a server holds over its formula is granted once,
+// when its project had no inode limit yet, and kept in Redis. Later SetLimits
+// (a lift's put-back, a resize, a restart) never recompute it from the files
+// held now, so files made while the limit was off do not raise it.
+func TestInodeAnchorIsGrantedOnce(t *testing.T) {
+	prevNodeID := nodeID
+	t.Cleanup(func() { nodeID = prevNodeID })
+	nodeID = "node-1"
+	rdb := newDiskGuardRedis(t)
+	const gb10 = 10240 * 1024
+	for _, step := range []struct {
+		name    string
+		uuid    string
+		report  string
+		limitMB int64
+		want    int64 // ihard set
+	}{
+		{"new server", "new", repquotaLine("new", 0, 0, 0, 0), 10240, 1000000},
+		{"new server grows past the formula, put back", "new", repquotaLine("new", 1024, 0, 1500000, 0), 10240, 1000000},
+		{"pre-inode server over the formula", "old", repquotaLine("old", 1024, gb10, 1500000, 0), 10240, 1875000},
+		{"repeated SetLimit", "old", repquotaLine("old", 1024, gb10, 1800000, 1875000), 10240, 1875000},
+		{"lift put-back after files made while off", "old", repquotaLine("old", 1024, 0, 2400000, 0), 10240, 1875000},
+		{"larger disk limit: formula wins", "old", repquotaLine("old", 1024, gb10, 1800000, 1875000), 40960, 2621440},
+		{"back down: anchor kept", "old", repquotaLine("old", 1024, 4*gb10, 1800000, 2621440), 10240, 1875000},
+		{"restart: a new provider keeps the anchor", "old", repquotaLine("old", 1024, 0, 2400000, 0), 10240, 1875000},
+	} {
+		t.Run(step.name, func(t *testing.T) {
+			_, limits := fakeQuotaTools(t, step.report, nil)
+			qp := &QuotaProvider{fsType: "ext4", mountPoint: "/mnt", available: true, rdb: rdb}
+			if err := qp.SetLimit(step.uuid, step.limitMB); err != nil {
+				t.Fatal(err)
+			}
+			want := fmt.Sprintf("setquota -P %d 0 %d 0 %d /mnt", projectID(step.uuid), step.limitMB*1024, step.want)
 			if len(*limits) != 1 || (*limits)[0] != want {
 				t.Fatalf("limit commands %q, want [%q]", *limits, want)
 			}
@@ -344,7 +384,7 @@ func TestInodeBackfillReadsOneReportPerMount(t *testing.T) {
 	reports, limits := fakeQuotaTools(t, report, nil)
 	rdb := newDiskGuardRedis(t)
 	rdb.Set(context.Background(), diskLiftedKey("lifted"), 1, 0)
-	qp := &QuotaProvider{fsType: "ext4", mountPoint: "/mnt", basePath: base, available: true}
+	qp := &QuotaProvider{fsType: "ext4", mountPoint: "/mnt", basePath: base, available: true, rdb: rdb}
 
 	qp.backfillInodeLimits(rdb, nil)
 

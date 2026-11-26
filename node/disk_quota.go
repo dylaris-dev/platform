@@ -22,6 +22,7 @@ type QuotaProvider struct {
 	basePath   string // absolute path to dylaris_data/servers/
 	mountPoint string
 	available  bool
+	rdb        *redis.Client // keeps inode anchors; nil keeps none
 }
 
 // NewQuotaProvider detects the filesystem type and quota support for basePath.
@@ -146,12 +147,58 @@ func projectInodeLimit(limitMB int64) int64 {
 // millions of tiles) keeps a quarter of headroom over them instead (owner
 // ruling 2026-11-26): put below them, the node update that brought the inode
 // limit failed its every create and the guard stopped a running server.
+// Granted once, not on every SetLimit: see inodeAnchor.
 func projectInodeLimitFor(limitMB, inodes int64) int64 {
 	l := projectInodeLimit(limitMB)
 	if l > 0 && inodes > l {
 		return (inodes*5 + 3) / 4
 	}
 	return l
+}
+
+// inodeAnchorKeyFmt holds the file cap a server was granted over its formula,
+// 0 for none (R60-04/05). Node-scoped next to the disk limit, so it survives a
+// restart and a storage move, and not in .node_config.json: the server's
+// directory is the tenant's /data.
+const inodeAnchorKeyFmt = "node:%s:server:%s:inode_anchor"
+
+func inodeAnchorKey(uuid string) string { return fmt.Sprintf(inodeAnchorKeyFmt, nodeID, uuid) }
+
+// inodeAnchor is the file cap a project keeps over its formula; files and
+// ihard are what it holds and its inode limit before this SetLimit. Granted
+// from the files only once, when there is no anchor yet and the project has
+// no inode limit (one limited before inode limits existed). A lift's put-back
+// or a resize reuses it: files made while the limit was off never raise it.
+// Without Redis's answer it is the limit the project has, never a new count.
+func (qp *QuotaProvider) inodeAnchor(uuid string, limitMB, files, ihard int64) int64 {
+	if qp.rdb == nil {
+		return ihard
+	}
+	ctx := context.Background()
+	v, err := qp.rdb.Get(ctx, inodeAnchorKey(uuid)).Int64()
+	if err == nil {
+		return v
+	}
+	if err != redis.Nil {
+		log.Printf("quota: %s: inode anchor not read (%v) - keeping its inode limit", uuid, err)
+		return ihard
+	}
+	anchor := ihard
+	if ihard == 0 {
+		anchor = projectInodeLimitFor(limitMB, files)
+	}
+	if anchor <= projectInodeLimit(limitMB) {
+		anchor = 0
+	}
+	if ok, err := qp.rdb.SetNX(ctx, inodeAnchorKey(uuid), anchor, 0).Result(); err != nil {
+		log.Printf("quota: %s: inode anchor not saved: %v", uuid, err)
+	} else if !ok {
+		// A concurrent SetLimit granted it first; that one stands.
+		if v, err := qp.rdb.Get(ctx, inodeAnchorKey(uuid)).Int64(); err == nil {
+			return v
+		}
+	}
+	return anchor
 }
 
 // projectLimitCommand is the command that sets a project's block hard limit to
@@ -250,7 +297,7 @@ func (qp *QuotaProvider) backfillInodeLimits(rdb *redis.Client, storage *Storage
 		if diskLiftHeld(uuid) || (rdb != nil && rdb.Exists(ctx, diskLiftedKey(uuid)).Val() != 0) {
 			continue
 		}
-		if err := qp.setLimit(uuid, limit>>20, inodes); err != nil {
+		if err := qp.setLimit(uuid, limit>>20, inodes, inodeLimit); err != nil {
 			log.Printf("quota: add the inode limit of %s: %v", uuid, err)
 		}
 	}
@@ -484,26 +531,27 @@ func (qp *QuotaProvider) SetLimit(uuid string, limitMB int64) error {
 		return nil
 	}
 
-	inodes := int64(-1)
+	inodes, inodeLimit := int64(-1), int64(0)
 	if limitMB > 0 {
-		// The files the project holds now, so its inode limit never lands
-		// below them; see projectInodeLimitFor.
+		// The files the project holds now and its inode limit, for its
+		// anchor; see inodeAnchor.
 		if report, err := qp.report(); err != nil {
 			log.Printf("quota: %s: files not read (%v) - setting its disk limit without an inode limit", uuid, err)
 		} else {
-			_, _, inodes, _ = qp.usageIn(report, uuid, projectID(uuid))
+			_, _, inodes, inodeLimit = qp.usageIn(report, uuid, projectID(uuid))
 		}
 	}
-	return qp.setLimit(uuid, limitMB, inodes)
+	return qp.setLimit(uuid, limitMB, inodes, inodeLimit)
 }
 
-// setLimit is SetLimit for a project holding inodes files; -1 is not known,
-// which sets no inode limit rather than one that may be below them.
-func (qp *QuotaProvider) setLimit(uuid string, limitMB, inodes int64) error {
+// setLimit is SetLimit for a project holding inodes files under inodeLimit;
+// inodes -1 is not known, which sets no inode limit rather than one that may
+// be below them.
+func (qp *QuotaProvider) setLimit(uuid string, limitMB, inodes, inodeLimit int64) error {
 	pid := projectID(uuid)
 	ihard := int64(0)
-	if inodes >= 0 {
-		ihard = projectInodeLimitFor(limitMB, inodes)
+	if inodes >= 0 && limitMB > 0 {
+		ihard = max(projectInodeLimit(limitMB), qp.inodeAnchor(uuid, limitMB, inodes, inodeLimit))
 	}
 	if err := qp.setProjectLimit(pid, limitMB, ihard); err != nil {
 		return fmt.Errorf("quota: %s set limit %d MB: %w", qp.fsType, limitMB, err)
@@ -513,7 +561,7 @@ func (qp *QuotaProvider) setLimit(uuid string, limitMB, inodes int64) error {
 		return nil
 	}
 	if ihard > projectInodeLimit(limitMB) {
-		log.Printf("quota: %s holds %d files, more than the %d its disk limit allows - its inode limit is %d so it keeps running", uuid, inodes, projectInodeLimit(limitMB), ihard)
+		log.Printf("quota: %s was granted %d files, more than the %d its disk limit allows (it holds %d)", uuid, ihard, projectInodeLimit(limitMB), inodes)
 	}
 	log.Printf("quota: set disk limit %d MB, %d inodes for %s (project %d)", limitMB, ihard, uuid, pid)
 	return nil
