@@ -29,6 +29,7 @@ type teardownFakeStore struct {
 	serversOnNode map[int]int
 	deletedNodes  []int
 	deleteNodeErr error
+	onDeleteNode  func(id int)
 }
 
 func (f *teardownFakeStore) CountServersByOwner(string) (int, error)        { return f.ownedServers, nil }
@@ -37,6 +38,9 @@ func (f *teardownFakeStore) CountServersByNode(id int) (int, error)         { re
 func (f *teardownFakeStore) DeleteNode(id int) error {
 	if f.deleteNodeErr != nil {
 		return f.deleteNodeErr
+	}
+	if f.onDeleteNode != nil {
+		f.onDeleteNode(id)
 	}
 	f.deletedNodes = append(f.deletedNodes, id)
 	return nil
@@ -202,6 +206,38 @@ func TestTeardownRemovesTheNodesTheTenantBrought(t *testing.T) {
 	}
 	if n, _ := rdb.Exists(ctx, other).Result(); n != 1 {
 		t.Error("a key belonging to a different node was removed; the teardown is not scoped")
+	}
+}
+
+// The teardown drops a node's Redis keys BEFORE its row (credentials first).
+// A publisher tick that listed the node before the row went could EXEC in that
+// gap and SET backup_policy / storage_placement again, with no TTL and nothing
+// that ever removes them. After the row goes the keys must be gone again, and
+// the save generation bumped, so a tick still in flight fails its EXEC.
+func TestTeardownLeavesNoNodeKeysATickWroteBeforeTheRowWent(t *testing.T) {
+	ctx := context.Background()
+	rdb := newQueueTestRedis(t)
+	tok := "node-token-7"
+	late := []string{NodeBackupPolicyKey(tok), NodePlacementKey(tok)}
+
+	var genAtDelete int
+	fs := &teardownFakeStore{nodes: []models.Node{{ID: 7, Name: "kitchen-box", Token: tok}}}
+	fs.onDeleteNode = func(int) {
+		for _, k := range late {
+			rdb.Set(ctx, k, "tick write", 0)
+		}
+		genAtDelete, _ = rdb.Get(ctx, nodeModeSaveGenKey).Int()
+	}
+	if err := TeardownTenantInfrastructure(ctx, fs, nil, rdb, redisacl.NewProvisioner(rdb), &peerRecorder{}, "owner-1"); err != nil {
+		t.Fatalf("teardown: %v", err)
+	}
+	for _, k := range late {
+		if n, _ := rdb.Exists(ctx, k).Result(); n != 0 {
+			t.Errorf("%s re-created by a tick outlived the node row", k)
+		}
+	}
+	if gen, _ := rdb.Get(ctx, nodeModeSaveGenKey).Int(); gen <= genAtDelete {
+		t.Errorf("save generation = %d after the row delete, want it bumped past %d", gen, genAtDelete)
 	}
 }
 

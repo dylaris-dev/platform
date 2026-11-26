@@ -52,13 +52,23 @@ func RemoveNodeRedisState(ctx context.Context, rdb *redis.Client, prov *redisacl
 	if prov != nil {
 		prov.RemoveNodeACL(ctx, token)
 	}
-	// A tick that listed the node before its row went would otherwise SET its
-	// backup policy and placement again after this DEL, with no TTL.
+	dropNodeKeys(ctx, rdb, token)
+	removeNodePortKeys(ctx, rdb, token)
+}
+
+// dropNodeKeys bumps the save generation and DELs NodeRedisKeys. A tick that
+// listed the node before its row went would otherwise SET its backup policy
+// and placement again after the DEL, with no TTL. That only holds once the row
+// is gone, so a caller that runs RemoveNodeRedisState BEFORE the row delete
+// runs this again after it.
+func dropNodeKeys(ctx context.Context, rdb *redis.Client, token string) {
+	if rdb == nil || token == "" {
+		return
+	}
 	MarkNodeModeSave(ctx, rdb)
 	if err := rdb.Del(ctx, NodeRedisKeys(token)...).Err(); err != nil {
 		log.Printf("node teardown: leftover Redis keys for node token %.8s... could not be removed: %v", token, err)
 	}
-	removeNodePortKeys(ctx, rdb, token)
 }
 
 // removeNodePortKeys drops the node's per-server port keys

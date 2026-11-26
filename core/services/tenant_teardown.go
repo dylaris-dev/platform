@@ -224,6 +224,9 @@ func TeardownTenantInfrastructure(ctx context.Context, st store.Store, gw Gatewa
 			if derr := st.DeleteNode(n.ID); derr != nil {
 				return fmt.Errorf("remove node %d (%s): %w", n.ID, n.Name, derr)
 			}
+			// The keys went before the row, so a tick that listed the node in
+			// between may have written them back.
+			dropNodeKeys(ctx, rdb, n.Token)
 		}
 	}
 	// Whatever addresses are left. A route can outlive the link it was created
